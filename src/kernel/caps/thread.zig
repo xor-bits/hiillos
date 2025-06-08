@@ -67,9 +67,7 @@ pub const Thread = struct {
         obj.* = .{ .proc = from_proc };
 
         try obj.extra_regs.resize(caps.slab_allocator.allocator(), 128);
-        for (0..128) |i| {
-            obj.extra_regs.set(i, .{ .val = 0 });
-        }
+        for (0..128) |i| obj.extra_regs.set(i, .{ .val = 0 });
 
         obj.lock.unlock();
 
@@ -90,9 +88,7 @@ pub const Thread = struct {
 
         self.proc.deinit();
 
-        for (0..128) |i| {
-            self.getExtra(@truncate(i)).deinit();
-        }
+        for (0..128) |i| self.getExtra(@truncate(i)).deinit();
         self.extra_regs.deinit(caps.slab_allocator.allocator());
 
         caps.slab_allocator.allocator().destroy(self);
@@ -110,11 +106,6 @@ pub const Thread = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.extra_regs.len == 0) {
-            @branchHint(.cold);
-            return .{ .val = 0 };
-        }
-
         const val = self.extra_regs.get(idx);
         self.extra_regs.set(idx, .{ .val = 0 });
         return val;
@@ -124,6 +115,7 @@ pub const Thread = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
+        self.extra_regs.get(idx).deinit();
         self.extra_regs.set(idx, data);
     }
 
@@ -143,7 +135,11 @@ pub const Thread = struct {
         for (0..count) |idx| {
             const val = src.extra_regs.get(@truncate(idx));
             src.extra_regs.set(@truncate(idx), .{ .val = 0 });
+
+            const old_val = dst.extra_regs.get(idx);
             dst.extra_regs.set(@truncate(idx), val);
+
+            old_val.deinit();
         }
     }
 
