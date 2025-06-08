@@ -17,6 +17,8 @@ pub fn main() !void {
     log.info("hello from init", .{});
 
     try spinner.spinnerMain();
+
+    
 }
 
 comptime {

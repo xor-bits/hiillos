@@ -382,16 +382,6 @@ comptime {
 
 // SYSCALLS
 
-pub fn setExtra(i: u7, val: usize, is_cap: bool) void {
-    _ = .{ i, val, is_cap };
-    unreachable;
-}
-
-pub fn getExtra(i: u7) usize {
-    _ = .{i};
-    unreachable;
-}
-
 pub fn log(s: []const u8) void {
     _ = syscall(.log, .{ @intFromPtr(s.ptr), s.len }) catch unreachable;
 }
