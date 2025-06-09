@@ -254,7 +254,8 @@ fn createInitfsTarGz(
             .name = name,
             .root_source_file = b.path(source),
             .target = opts.target,
-            .optimize = opts.optimize,
+            // FIXME: manifest/imports/exports rely on symtab
+            .optimize = if (opts.optimize == .ReleaseSmall) .ReleaseFast else opts.optimize,
             .pic = true,
         });
         compile.root_module.addImport("abi", abi);

@@ -9,9 +9,10 @@ const spin = @import("spin.zig");
 
 const caps_ipc = @import("caps/ipc.zig");
 const caps_thread = @import("caps/thread.zig");
-const caps_vmem = @import("caps/vmem.zig");
 const caps_proc = @import("caps/proc.zig");
+const caps_vmem = @import("caps/vmem.zig");
 const caps_frame = @import("caps/frame.zig");
+const caps_mapping = @import("caps/mapping.zig");
 const caps_x86 = @import("caps/x86.zig");
 
 const conf = abi.conf;
@@ -25,6 +26,7 @@ pub const Thread = caps_thread.Thread;
 pub const Process = caps_proc.Process;
 pub const Frame = caps_frame.Frame;
 pub const Vmem = caps_vmem.Vmem;
+pub const Mapping = caps_mapping.Mapping;
 pub const Receiver = caps_ipc.Receiver;
 pub const Reply = caps_ipc.Reply;
 pub const Sender = caps_ipc.Sender;
@@ -53,7 +55,7 @@ pub fn init() !void {
     debugType(Thread);
     debugType(Frame);
     debugType(Vmem);
-    debugType(Vmem.Mapping);
+    debugType(Mapping);
     debugType(Receiver);
     debugType(Reply);
     debugType(Sender);

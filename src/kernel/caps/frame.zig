@@ -19,6 +19,7 @@ pub const Frame = struct {
     is_physical: bool,
     lock: spin.Mutex = .new(),
     pages: []u32,
+    // mappings: caps.Mapping,
 
     pub fn init(size_bytes: usize) !*@This() {
         if (conf.LOG_OBJ_CALLS)

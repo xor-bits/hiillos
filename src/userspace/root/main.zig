@@ -67,7 +67,7 @@ pub fn main() !void {
     var servers = std.ArrayList(Server).init(abi.mem.slab_allocator);
 
     var resources = std.ArrayHashMap(
-        [107]u8,
+        [99]u8,
         Resource,
         StringContext,
         true,
@@ -79,43 +79,43 @@ pub fn main() !void {
 
     const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(BOOT_INFO)).*;
 
-    const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ .{0} ** 88).*);
+    const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ .{0} ** 80).*);
     initfsd_entry.value_ptr.* = .{
         .handle = (try initfsd.getReceiver()).cap,
         .type = .receiver,
         .given = 1,
     };
-    const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ .{0} ** 90).*);
+    const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ .{0} ** 82).*);
     hpet_entry.value_ptr.* = .{
         .handle = boot_info.hpet.cap,
         .type = .frame,
         .given = 1,
     };
-    // const hpet_info_entry = try resources.getOrPut(("hiillos.root.hpet_info" ++ .{0} ** 85).*);
+    // const hpet_info_entry = try resources.getOrPut(("hiillos.root.hpet_info" ++ .{0} ** 77).*);
     // hpet_info_entry.value_ptr.* = .{
     //     .handle = boot_info.hpet_info.cap,
     //     .type = .frame,
     //     .given = 1,
     // };
-    const fb_entry = try resources.getOrPut(("hiillos.root.fb" ++ .{0} ** 92).*);
+    const fb_entry = try resources.getOrPut(("hiillos.root.fb" ++ .{0} ** 84).*);
     fb_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer.cap,
         .type = .frame,
         .given = 1,
     };
-    const fb_info_entry = try resources.getOrPut(("hiillos.root.fb_info" ++ .{0} ** 87).*);
+    const fb_info_entry = try resources.getOrPut(("hiillos.root.fb_info" ++ .{0} ** 79).*);
     fb_info_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer_info.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_entry = try resources.getOrPut(("hiillos.root.mcfg" ++ .{0} ** 90).*);
+    const mcfg_entry = try resources.getOrPut(("hiillos.root.mcfg" ++ .{0} ** 82).*);
     mcfg_entry.value_ptr.* = .{
         .handle = boot_info.mcfg.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_info_entry = try resources.getOrPut(("hiillos.root.mcfg_info" ++ .{0} ** 85).*);
+    const mcfg_info_entry = try resources.getOrPut(("hiillos.root.mcfg_info" ++ .{0} ** 77).*);
     mcfg_info_entry.value_ptr.* = .{
         .handle = boot_info.mcfg_info.cap,
         .type = .frame,
@@ -212,7 +212,7 @@ fn collectAllServers(servers: *std.ArrayList(Server)) !void {
 
 fn createAllExports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([107]u8, Resource, StringContext, true),
+    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -253,7 +253,7 @@ fn createAllExports(
 
 fn createAllImports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([107]u8, Resource, StringContext, true),
+    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -321,7 +321,7 @@ fn loadAllServers(
 
 fn grantAllExports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([107]u8, Resource, StringContext, true),
+    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -353,7 +353,7 @@ fn grantAllExports(
 
 fn grantAllImports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([107]u8, Resource, StringContext, true),
+    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -408,10 +408,10 @@ const Resource = packed struct {
 };
 
 const StringContext = struct {
-    pub fn hash(_: @This(), s: [107]u8) u32 {
+    pub fn hash(_: @This(), s: [99]u8) u32 {
         return std.array_hash_map.hashString(s[0..]);
     }
-    pub fn eql(_: @This(), a: [107]u8, b: [107]u8, _: usize) bool {
+    pub fn eql(_: @This(), a: [99]u8, b: [99]u8, _: usize) bool {
         return std.array_hash_map.eqlString(a[0..], b[0..]);
     }
 };

@@ -68,11 +68,11 @@ pub fn spawn(vmem: caps.Vmem, proc: caps.Process, entry: u64) !void {
 /// general server info
 pub const Manifest = extern struct {
     /// manifest symbol magic number
-    magic: u64 = exp_magic,
+    magic: u128 = exp_magic,
     /// server identifier
-    name: [120]u8 = .{0} ** 120,
+    name: [112]u8 = .{0} ** 112,
 
-    pub const exp_magic = 0x5b9061e5c940d983;
+    pub const exp_magic = 0x5b9061e5c940d983eeb14ce5e02618b7;
 
     pub const Info = struct {
         name: []const u8,
@@ -80,7 +80,7 @@ pub const Manifest = extern struct {
 
     pub fn new(comptime info: Info) @This() {
         return @This(){
-            .name = (info.name ++ .{0} ** (120 - info.name.len)).*,
+            .name = (info.name ++ .{0} ** (112 - info.name.len)).*,
         };
     }
 
@@ -91,13 +91,13 @@ pub const Manifest = extern struct {
 
 pub const Resource = extern struct {
     /// resource symbol magic number
-    magic: u64 = exp_magic,
-    ty: abi.ObjectType = .null,
-    handle: u32 = 0,
+    magic: u128 = exp_magic,
     note: u64,
-    name: [107]u8 = .{0} ** 107,
+    handle: u32 = 0,
+    ty: abi.ObjectType = .null,
+    name: [99]u8 = .{0} ** 99,
 
-    pub const exp_magic = 0xc47d27b79d2c8bb9;
+    pub const exp_magic = 0xc47d27b79d2c8bb9469ee8883d14a25c;
 
     pub const Info = struct {
         ty: abi.ObjectType,
@@ -108,7 +108,7 @@ pub const Resource = extern struct {
     pub fn new(comptime info: Info) @This() {
         return .{
             .ty = info.ty,
-            .name = (info.name ++ .{0} ** (107 - info.name.len)).*,
+            .name = (info.name ++ .{0} ** (99 - info.name.len)).*,
             .note = info.note,
         };
     }
@@ -128,6 +128,8 @@ pub const Elf = struct {
 
     symbol_table: ?[]const u8 = null,
     string_table: ?[]const u8 = null,
+    data_table: ?[]const u8 = null,
+    bss_table: ?[]const u8 = null,
     section_header_string_table: ?[]const u8 = null,
     slide: Slide = 0,
 
@@ -200,7 +202,7 @@ pub const Elf = struct {
     ) type {
         return struct {
             data: []const u8,
-            string_table: []const u8,
+            string_table: ?[]const u8,
             sections: []const std.elf.Elf64_Shdr,
             symbols: []const std.elf.Elf64_Sym,
             slide: Slide,
@@ -217,8 +219,17 @@ pub const Elf = struct {
                     defer self.symbols = self.symbols[1..];
 
                     const sym = self.symbols[0];
-                    const sym_name = try getString(self.string_table, sym.st_name);
-                    if (!std.mem.startsWith(u8, sym_name, sym_name_prefix)) continue;
+
+                    // check the size
+                    if (sym.st_size != @sizeOf(T))
+                        continue;
+
+                    // check the name prefix if strtab is found
+                    var sym_name: []const u8 = "???";
+                    if (self.string_table) |strtab| {
+                        sym_name = try getString(strtab, sym.st_name);
+                        if (!std.mem.startsWith(u8, sym_name, sym_name_prefix)) continue;
+                    }
 
                     if (sym.st_shndx >= self.sections.len)
                         return error.OutOfBounds;
@@ -232,8 +243,6 @@ pub const Elf = struct {
                         (std.math.add(u64, sect.sh_addr, sect.sh_size) catch
                             return error.OutOfBounds))
                         return error.OutOfBounds;
-                    if (sym.st_size != @sizeOf(T))
-                        continue;
 
                     const offs = sym.st_value - sect.sh_addr;
                     const bytes = sect_data[offs..][0..sym.st_size];
@@ -257,7 +266,7 @@ pub const Elf = struct {
     ) !ExternStructIterator(T, sym_name_prefix) {
         return .{
             .data = self.data,
-            .string_table = try self.getStringTable(),
+            .string_table = self.getStringTable() catch null,
             .sections = try self.getSections(),
             .symbols = try self.symbols(),
             .slide = self.slide,
@@ -356,33 +365,32 @@ pub const Elf = struct {
     fn getSymbolTable(self: *@This()) ![]const u8 {
         if (self.symbol_table) |tab| return tab;
 
-        const section_header_string_table = try self.getSectionHeaderStringTable();
+        self.symbol_table = try self.getSectionByName(".symtab") orelse
+            return error.MissingSymtab;
 
-        for (try self.getSections()) |sect| {
-            const sh_name = try getString(section_header_string_table, sect.sh_name);
-            if (!std.mem.eql(u8, ".symtab", sh_name)) continue;
-
-            self.symbol_table = try getSectionData(self.data, sect);
-            return self.symbol_table.?;
-        }
-
-        return error.MissingSymtab;
+        return self.symbol_table.?;
     }
 
     fn getStringTable(self: *@This()) ![]const u8 {
         if (self.string_table) |tab| return tab;
 
+        self.string_table = try self.getSectionByName(".strtab") orelse
+            return error.MissingStrtab;
+
+        return self.string_table.?;
+    }
+
+    fn getSectionByName(self: *@This(), name: []const u8) !?[]const u8 {
         const section_header_string_table = try self.getSectionHeaderStringTable();
 
         for (try self.getSections()) |sect| {
             const sh_name = try getString(section_header_string_table, sect.sh_name);
-            if (!std.mem.eql(u8, ".strtab", sh_name)) continue;
+            if (!std.mem.eql(u8, name, sh_name)) continue;
 
-            self.string_table = try getSectionData(self.data, sect);
-            return self.string_table.?;
+            return try getSectionData(self.data, sect);
         }
 
-        return error.MissingStrtab;
+        return null;
     }
 
     fn getSectionHeaderStringTable(self: *@This()) ![]const u8 {

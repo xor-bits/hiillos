@@ -19,79 +19,7 @@ pub const Vmem = struct {
 
     lock: spin.Mutex = .new(),
     cr3: u32,
-    mappings: std.ArrayList(Mapping),
-
-    pub const Mapping = struct {
-        /// refcounted
-        frame: *caps.Frame,
-        /// page offset within the Frame object
-        frame_first_page: u32,
-        /// number of bytes (rounded up to pages) mapped
-        pages: u32,
-        target: packed struct {
-            /// mapping rights
-            rights: abi.sys.Rights,
-            /// mapping flags
-            flags: abi.sys.MapFlags,
-            /// virtual address destination of the mapping
-            /// `mappings` is sorted by this
-            page: u40,
-        },
-
-        fn init(
-            frame: *caps.Frame,
-            frame_first_page: u32,
-            vaddr: addr.Virt,
-            pages: u32,
-            rights: abi.sys.Rights,
-            flags: abi.sys.MapFlags,
-        ) @This() {
-            return .{
-                .frame = frame,
-                .frame_first_page = frame_first_page,
-                .pages = pages,
-                .target = .{
-                    .rights = rights,
-                    .flags = flags,
-                    .page = @truncate(vaddr.raw >> 12),
-                },
-            };
-        }
-
-        fn setVaddr(self: *@This(), vaddr: addr.Virt) void {
-            self.target.page = @truncate(vaddr.raw >> 12);
-        }
-
-        fn getVaddr(self: *const @This()) addr.Virt {
-            return addr.Virt.fromInt(@as(u64, self.target.page) << 12);
-        }
-
-        fn start(self: *const @This()) addr.Virt {
-            return self.getVaddr();
-        }
-
-        fn end(self: *const @This()) addr.Virt {
-            return addr.Virt.fromInt(self.getVaddr().raw + self.pages * 0x1000);
-        }
-
-        /// this is a `any(self AND other)`
-        fn overlaps(self: *const @This(), vaddr: addr.Virt, bytes: u32) bool {
-            const a_beg: usize = self.getVaddr().raw;
-            const a_end: usize = self.getVaddr().raw + self.pages * 0x1000;
-            const b_beg: usize = vaddr.raw;
-            const b_end: usize = vaddr.raw + bytes;
-
-            if (a_end <= b_beg)
-                return false;
-            if (b_end <= a_beg)
-                return false;
-            return true;
-        }
-
-        fn isEmpty(self: *const @This()) bool {
-            return self.pages == 0;
-        }
-    };
+    mappings: std.ArrayList(caps.Mapping),
 
     pub fn init() Error!*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -100,7 +28,7 @@ pub const Vmem = struct {
             caps.incCount(.vmem);
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        const mappings = std.ArrayList(Mapping).init(caps.slab_allocator.allocator());
+        const mappings = std.ArrayList(caps.Mapping).init(caps.slab_allocator.allocator());
 
         obj.* = .{
             .lock = .newLocked(),
@@ -336,7 +264,7 @@ pub const Vmem = struct {
         if (fixed_vaddr.raw == 0)
             return Error.InvalidAddress;
 
-        const mapping = Mapping.init(
+        const mapping = caps.Mapping.init(
             frame,
             frame_first_page,
             fixed_vaddr,
@@ -433,13 +361,13 @@ pub const Vmem = struct {
     }
 
     /// previous mapping, or a fake mapping that represents the address space boundry
-    fn prevBoundry(mappings: []const Mapping, idx: usize) addr.Virt {
+    fn prevBoundry(mappings: []const caps.Mapping, idx: usize) addr.Virt {
         if (idx == 0) return addr.Virt.fromInt(0x1000);
         return mappings[idx - 1].end();
     }
 
     /// next mapping, or a fake mapping that represents the address space boundry
-    fn nextBoundry(mappings: []const Mapping, idx: usize) addr.Virt {
+    fn nextBoundry(mappings: []const caps.Mapping, idx: usize) addr.Virt {
         if (idx + 1 == mappings.len) return addr.Virt.fromInt(0x8000_0000_0000);
         return mappings[idx + 1].start();
     }
@@ -716,11 +644,11 @@ pub const Vmem = struct {
         // self.dump();
 
         const idx = std.sort.partitionPoint(
-            Mapping,
+            caps.Mapping,
             self.mappings.items,
             vaddr,
             struct {
-                fn pred(target_vaddr: addr.Virt, val: Mapping) bool {
+                fn pred(target_vaddr: addr.Virt, val: caps.Mapping) bool {
                     return (val.getVaddr().raw + 0x1000 * val.pages) <= target_vaddr.raw;
                 }
             }.pred,
