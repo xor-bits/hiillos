@@ -428,10 +428,6 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
         .optimize = opts.optimize,
     });
 
-    mod.addAnonymousImport("build-zon", .{
-        .root_source_file = b.path("build.zig.zon"),
-    });
-
     const tests = b.addTest(.{
         .name = "abi-unit-test",
         .root_source_file = b.path("src/abi/lib.zig"),

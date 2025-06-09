@@ -80,6 +80,8 @@ pub fn main() !void {
     };
     defer system.self_vmem.close();
 
+    // const init_elf = try open("initfs:///sbin/init");
+
     const initfs = abi.InitfsProtocol.Client().init(.{ .cap = import_initfs.handle });
     var res, const init_size = try initfs.call(.fileSize, .{
         ("/sbin/init" ++ .{0} ** 22).*,
@@ -122,6 +124,24 @@ pub fn main() !void {
     // inform the root that pm is ready
     log.debug("pm ready", .{});
     try server.run();
+}
+
+fn open(path: []const u8) Error!caps.Sender {
+    const tmp_frame = try caps.Frame.create(path.len);
+    defer tmp_frame.close();
+
+    try tmp_frame.write(0, path);
+
+    const vfs = abi.VfsProtocol.Client().init(.{ .cap = import_vfs.handle });
+    const res, const handle = try vfs.call(.open, .{ tmp_frame, 0, path.len, @bitCast(abi.Vfs.OpenOptions{
+        .mode = .read_only,
+        .type = .file,
+        .file_policy = .use_existing,
+        .dir_policy = .use_existing,
+    }) });
+    try res;
+
+    return handle;
 }
 
 pub const Process = struct {

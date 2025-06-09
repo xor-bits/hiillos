@@ -235,7 +235,7 @@ pub const PmProtocol = util.Protocol(struct {
 //     pub const Server = util.Server;
 // };
 
-pub const File = struct {
+pub const Vfs = struct {
     pub const OpenOptions = packed struct {
         mode: enum(u2) {
             read_only = 1,
@@ -261,6 +261,131 @@ pub const File = struct {
         },
         _: u1 = 0,
     };
+
+    pub const OpenRequest = struct {
+        path: caps.Frame,
+        path_frame_offs: usize,
+        path_len: usize,
+        open_opts: u8,
+
+        pub fn init(path: []const u8, open_opts: OpenOptions) sys.Error!@This() {
+            if (path.len > 0x1000)
+                return sys.Error.InvalidArgument;
+
+            const frame = try caps.Frame.create(path.len);
+            try frame.write(0, path);
+            return .{
+                .path = frame,
+                .path_frame_offs = 0,
+                .path_len = path.len,
+                .open_opts = @bitCast(open_opts),
+            };
+        }
+
+        pub fn encode(self: @This()) sys.Error!sys.Message {
+            try sys.selfSetExtra(0, self.path.cap, true);
+            return .{
+                .extra = 1,
+                .arg0 = self.path_frame_offs,
+                .arg1 = self.path_len,
+                .arg2 = self.open_opts,
+            };
+        }
+
+        pub fn decode(msg: sys.Message) sys.Error!@This() {
+            const path_frame_offs = msg.arg0;
+            const path_len = msg.arg1;
+            const open_opts = msg.arg2;
+
+            if (path_len > 0x1000)
+                return sys.Error.InvalidArgument;
+
+            if (msg.extra != 1)
+                return sys.Error.InvalidArgument;
+
+            const cap = try sys.selfGetExtra(0);
+
+            if (!cap.is_cap)
+                return sys.Error.BadHandle;
+            defer sys.handleClose(@truncate(cap.val));
+
+            if (.frame != sys.handleIdentify(@truncate(cap.val)))
+                return sys.Error.BadHandle;
+
+            const frame = caps.Frame{ .cap = @truncate(cap.val) };
+
+            return .{
+                .path = frame,
+                .path_frame_offs = path_frame_offs,
+                .path_len = path_len,
+                .open_opts = open_opts,
+            };
+        }
+
+        pub fn deinit(self: @This()) void {
+            self.path.close();
+        }
+
+        pub fn getPath(self: *const @This(), buf: []u8) sys.Error!usize {
+            if (buf.len == 0) return self.path_len;
+
+            // TODO: copy-on-write map
+
+            const limit = @min(buf.len, self.path_len);
+            try self.path.read(self.path_frame_offs, buf[0..limit]);
+            return limit;
+        }
+
+        pub fn getOpenOpts(self: *const @This()) OpenOptions {
+            return @bitCast(self.open_opts);
+        }
+    };
+
+    pub const OpenResult = struct {
+        result: sys.Error!caps.Sender,
+
+        pub fn init(result: sys.Error!caps.Sender) sys.Error!@This() {
+            return .{ .result = result };
+        }
+
+        pub fn encode(self: @This()) sys.Error!sys.Message {
+            if (self.result) |ok| {
+                try sys.selfSetExtra(0, ok.cap, true);
+                return .{
+                    .extra = 1,
+                    .arg0 = sys.encode(0),
+                };
+            } else |err| {
+                return .{
+                    .extra = 0,
+                    .arg0 = sys.encode(err),
+                };
+            }
+        }
+
+        pub fn decode(msg: sys.Message) sys.Error!@This() {
+            _ = sys.decode(msg.arg0) catch |err| {
+                return .{ .result = err };
+            };
+
+            const cap = try sys.selfGetExtra(0);
+
+            if (.sender != sys.handleIdentify(@truncate(cap.val)))
+                return sys.Error.BadHandle;
+
+            return .{ .result = caps.Sender{ .cap = cap } };
+        }
+
+        pub fn deinit(self: @This()) void {
+            if (self.result) |sender| {
+                sender.close();
+            } else |_| {}
+        }
+
+        pub fn get(self: @This()) sys.Error!caps.Sender {
+            return self.result;
+        }
+    };
 };
 
 pub const VfsProtocol = util.Protocol(struct {
@@ -273,11 +398,11 @@ pub const FdProtocol = util.Protocol(struct {
     /// create a (possibly shared) handle to contents of a file
     frame: fn () struct { sys.Error!void, caps.Frame },
 
-    // seekRelative: fn (offs: i128) struct {},
+    seekRelative: fn (offs: i128) struct {},
 
-    // seekStart: fn (offs: i128) struct {},
+    seekStart: fn (offs: i128) struct {},
 
-    // seekEnd: fn (offs: i128) struct {},
+    seekEnd: fn (offs: i128) struct {},
 
     read: fn (buf: caps.Frame, buf_offs: usize, buf_len: usize) struct { sys.Error!void, usize },
 

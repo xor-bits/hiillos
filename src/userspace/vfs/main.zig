@@ -117,56 +117,30 @@ pub fn main() !void {
     // inform the root that vfs is ready
     log.debug("vfs ready", .{});
 
-    const recv = caps.Receiver{ .cap = export_vfs.handle };
-
-    var msg = try recv.recv();
-    while (true) {
-        msg = processMsg(msg);
-        msg = try recv.replyRecv(msg);
-    }
-
-    // const server = abi.vfsProtocol.Server(.{}).init(vfs_recv);
-    // try server.run();
+    const server = abi.VfsProtocol.Server(.{}, .{
+        .open = openHandler,
+    }).init({}, .{ .cap = export_vfs.handle });
+    try server.run();
 }
 
-fn processMsg(msg: abi.sys.Message) abi.sys.Message {
-    const frame_path_offs = msg.arg0;
-    const path_len = msg.arg1;
-    const open_opts = msg.arg2;
+fn openHandler(_: void, _: u32, req: struct { caps.Frame, usize, usize, u8 }) struct { Error!void, caps.Sender } {
+    const frame = req.@"0";
+    const frame_path_offs = req.@"1";
+    const path_len = req.@"2";
+    const open_opts: abi.Vfs.OpenOptions = @bitCast(req.@"3");
 
-    if (path_len > 0x1000)
-        return .{ .arg0 = abi.sys.encode(Error.InvalidArgument) };
+    defer frame.close();
 
-    if (msg.extra != 1)
-        return .{ .arg0 = abi.sys.encode(Error.InvalidArgument) };
-
-    const cap = abi.sys.selfGetExtra(0) catch |err| {
-        log.err("could not acquire cap: {}", .{err});
-        return .{ .arg0 = abi.sys.encode(Error.Internal) };
-    };
-
-    if (!cap.is_cap)
-        return .{ .arg0 = abi.sys.encode(Error.InvalidArgument) };
-    defer abi.sys.handleClose(@truncate(cap.val));
-
-    if (.frame != abi.sys.handleIdentify(@truncate(cap.val)))
-        return .{ .arg0 = abi.sys.encode(Error.InvalidArgument) };
-
-    const frame = caps.Frame{ .cap = @truncate(cap.val) };
-
-    // TODO: clone with copy-on-write and then map it
     var buf: [0x1000]u8 = undefined;
     const path = buf[0..path_len];
     frame.read(frame_path_offs, path) catch |err| {
         log.err("could not read from a frame: {}", .{err});
-        return .{ .arg0 = abi.sys.encode(Error.Internal) };
+        return .{ Error.Internal, .{} };
     };
 
-    log.info("opening `{s}`", .{path});
+    log.info("opening `{s}` with `{}`", .{ path, open_opts });
 
-    _ = open_opts;
-
-    return .{ .arg0 = abi.sys.encode(0) };
+    return .{ {}, .{} };
 }
 
 //
