@@ -449,7 +449,7 @@ export fn zigMain() noreturn {
     asm volatile (
         \\ jmp zigMainRealstack
         :
-        : [sp] "{rsp}" (STACK_TOP),
+        : [sp] "{rsp}" (STACK_TOP - 0x100),
     );
     unreachable;
 }
