@@ -19,7 +19,7 @@ pub const Frame = struct {
     is_physical: bool,
     lock: spin.Mutex = .new(),
     pages: []u32,
-    // mappings: caps.Mapping,
+    mappings: std.ArrayList(*const caps.Mapping),
 
     pub fn init(size_bytes: usize) !*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -42,6 +42,7 @@ pub const Frame = struct {
             .is_physical = false,
             .lock = .newLocked(),
             .pages = pages,
+            .mappings = .init(caps.slab_allocator.allocator()),
         };
         obj.lock.unlock();
 
@@ -94,6 +95,9 @@ pub const Frame = struct {
             }
         }
 
+        std.debug.assert(self.mappings.items.len == 0);
+        self.mappings.deinit();
+
         caps.slab_allocator.allocator().free(self.pages);
         caps.slab_allocator.allocator().destroy(self);
     }
@@ -115,16 +119,7 @@ pub const Frame = struct {
                 source.len,
             });
 
-        const limit = std.math.divCeil(usize, offset_bytes + bytes.len, 0x1000) catch
-            return Error.OutOfBounds;
-
-        {
-            self.lock.lock();
-            defer self.lock.unlock();
-
-            if (limit > self.pages.len)
-                return Error.OutOfBounds;
-        }
+        try self.boundsCheck(offset_bytes, bytes.len);
 
         var it = self.data(offset_bytes, true);
         while (try it.next()) |dst_chunk| {
@@ -150,16 +145,7 @@ pub const Frame = struct {
                 dest.len,
             });
 
-        const limit = std.math.divCeil(usize, offset_bytes + bytes.len, 0x1000) catch
-            return Error.OutOfBounds;
-
-        {
-            self.lock.lock();
-            defer self.lock.unlock();
-
-            if (limit > self.pages.len)
-                return Error.OutOfBounds;
-        }
+        try self.boundsCheck(offset_bytes, bytes.len);
 
         var it = self.data(offset_bytes, false);
         while (try it.next()) |src_chunk| {
@@ -179,6 +165,17 @@ pub const Frame = struct {
                 bytes = bytes[src_chunk.len..];
             }
         }
+    }
+
+    fn boundsCheck(self: *@This(), offset_bytes: usize, len: usize) Error!void {
+        const limit = std.math.divCeil(usize, offset_bytes + len, 0x1000) catch
+            return Error.OutOfBounds;
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (limit > self.pages.len)
+            return Error.OutOfBounds;
     }
 
     pub const DataIterator = struct {

@@ -2,6 +2,7 @@ const abi = @import("abi");
 const std = @import("std");
 
 const addr = @import("../addr.zig");
+const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
@@ -19,7 +20,7 @@ pub const Vmem = struct {
 
     lock: spin.Mutex = .new(),
     cr3: u32,
-    mappings: std.ArrayList(caps.Mapping),
+    mappings: std.ArrayList(*caps.Mapping),
 
     pub fn init() Error!*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -28,12 +29,10 @@ pub const Vmem = struct {
             caps.incCount(.vmem);
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        const mappings = std.ArrayList(caps.Mapping).init(caps.slab_allocator.allocator());
-
         obj.* = .{
             .lock = .newLocked(),
             .cr3 = 0,
-            .mappings = mappings,
+            .mappings = .init(caps.slab_allocator.allocator()),
         };
         obj.lock.unlock();
 
@@ -73,14 +72,16 @@ pub const Vmem = struct {
         if (bytes.len == 0)
             return;
 
+        // locking order: Vmem -> Frame
+        //   mapping.frame.write locks a Frame
         self.lock.lock();
         defer self.lock.unlock();
 
-        const idx_beg, const idx_end = try self.data(vaddr, bytes.len);
+        const idx_beg, const idx_end = try self.dataLocked(vaddr, bytes.len);
 
         for (idx_beg..idx_end) |idx| {
             std.debug.assert(bytes.len != 0);
-            const mapping = &self.mappings.items[idx];
+            const mapping = self.mappings.items[idx];
 
             const offset_bytes: usize = if (idx == idx_beg)
                 vaddr.raw - mapping.getVaddr().raw
@@ -105,14 +106,16 @@ pub const Vmem = struct {
         if (bytes.len == 0)
             return;
 
+        // locking order: Vmem -> Frame
+        //   mapping.frame.read locks a Frame
         self.lock.lock();
         defer self.lock.unlock();
 
-        const idx_beg, const idx_end = try self.data(vaddr, bytes.len);
+        const idx_beg, const idx_end = try self.dataLocked(vaddr, bytes.len);
 
         for (idx_beg..idx_end) |idx| {
             if (bytes.len == 0) break;
-            const mapping = &self.mappings.items[idx];
+            const mapping = self.mappings.items[idx];
 
             // log.info("mapping [ 0x{x}..0x{x} ]", .{
             //     mapping.getVaddr().raw,
@@ -133,8 +136,7 @@ pub const Vmem = struct {
         }
     }
 
-    /// assumes `self` is locked
-    fn data(self: *@This(), vaddr: addr.Virt, len: usize) Error!struct { usize, usize } {
+    fn dataLocked(self: *@This(), vaddr: addr.Virt, len: usize) Error!struct { usize, usize } {
         std.debug.assert(len != 0);
 
         if (self.mappings.items.len == 0)
@@ -152,8 +154,8 @@ pub const Vmem = struct {
 
         // make sure the mappings are contiguous (no unmapped holes)
         for (idx_beg..idx_end) |idx| {
-            const prev_mapping = &self.mappings.items[idx];
-            const next_mapping = &self.mappings.items[idx + 1];
+            const prev_mapping = self.mappings.items[idx];
+            const next_mapping = self.mappings.items[idx + 1];
 
             errdefer log.warn("Vmem.write memory not contiguous", .{});
             if (prev_mapping.getVaddr().raw + prev_mapping.pages * 0x1000 != next_mapping.getVaddr().raw)
@@ -223,8 +225,11 @@ pub const Vmem = struct {
                 return Error.OutOfBounds;
         }
 
+        // locking order: Vmem -> Frame
         self.lock.lock();
         defer self.lock.unlock();
+        frame.lock.lock();
+        defer frame.lock.unlock();
 
         const mapped_vaddr: addr.Virt = if (flags.fixed) b: {
             break :b try self.mapFixed(
@@ -264,8 +269,9 @@ pub const Vmem = struct {
         if (fixed_vaddr.raw == 0)
             return Error.InvalidAddress;
 
-        const mapping = caps.Mapping.init(
-            frame,
+        const mapping = try caps.Mapping.init(
+            frame.clone(),
+            self,
             frame_first_page,
             fixed_vaddr,
             pages,
@@ -273,14 +279,18 @@ pub const Vmem = struct {
             flags,
         );
 
+        try frame.mappings.ensureUnusedCapacity(1);
+
         if (self.find(fixed_vaddr)) |idx| {
-            const old_mapping = &self.mappings.items[idx];
+            const old_mapping = self.mappings.items[idx];
             if (old_mapping.overlaps(fixed_vaddr, pages * 0x1000)) {
+                @panic("todo");
+
                 // FIXME: unmap only the specific part
                 // log.debug("replace old mapping", .{});
                 // replace old mapping
-                old_mapping.frame.deinit();
-                old_mapping.* = mapping;
+                // old_mapping.frame.deinit();
+                // old_mapping.* = mapping;
             } else if (old_mapping.getVaddr().raw < fixed_vaddr.raw) {
                 // log.debug("insert new mapping after 0x{x}", .{old_mapping.getVaddr().raw});
                 // insert new mapping
@@ -295,6 +305,8 @@ pub const Vmem = struct {
             // push new mapping
             try self.mappings.append(mapping);
         }
+
+        frame.mappings.append(mapping) catch unreachable; // NOTE: ensureUnusedCapacity above
 
         return fixed_vaddr;
     }
@@ -361,13 +373,13 @@ pub const Vmem = struct {
     }
 
     /// previous mapping, or a fake mapping that represents the address space boundry
-    fn prevBoundry(mappings: []const caps.Mapping, idx: usize) addr.Virt {
+    fn prevBoundry(mappings: []*caps.Mapping, idx: usize) addr.Virt {
         if (idx == 0) return addr.Virt.fromInt(0x1000);
         return mappings[idx - 1].end();
     }
 
     /// next mapping, or a fake mapping that represents the address space boundry
-    fn nextBoundry(mappings: []const caps.Mapping, idx: usize) addr.Virt {
+    fn nextBoundry(mappings: []*caps.Mapping, idx: usize) addr.Virt {
         if (idx + 1 == mappings.len) return addr.Virt.fromInt(0x8000_0000_0000);
         return mappings[idx + 1].start();
     }
@@ -385,6 +397,8 @@ pub const Vmem = struct {
         std.debug.assert(vaddr.toParts().offset == 0);
         try @This().assert_userspace(vaddr, pages);
 
+        // locking order: Vmem -> Frame
+        //   0 or more Frames are locked in case 4 and after all cases
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -393,7 +407,7 @@ pub const Vmem = struct {
         while (true) {
             if (idx >= self.mappings.items.len)
                 break;
-            const mapping = &self.mappings.items[idx];
+            const mapping = self.mappings.items[idx];
 
             // cut the mapping into 0, 1 or 2 mappings
 
@@ -442,8 +456,10 @@ pub const Vmem = struct {
                 // cases 1,2,3 already cover equal start/end bounds
 
                 // log.debug("unmap case 4", .{});
-                var cloned = mapping.*;
-                cloned.frame = mapping.frame.clone();
+                try self.mappings.ensureUnusedCapacity(1);
+                try mapping.frame.mappings.ensureUnusedCapacity(1);
+
+                const cloned = try mapping.clone();
 
                 const trunc: u32 = @intCast((a_end - b_beg) / 0x1000);
                 mapping.pages -= trunc;
@@ -453,23 +469,29 @@ pub const Vmem = struct {
                 cloned.pages -= shift;
                 cloned.frame_first_page += shift;
 
-                _ = try self.mappings.insert(idx + 1, cloned);
+                cloned.frame.lock.lock();
+                cloned.frame.mappings.append(cloned) catch unreachable;
+                cloned.frame.lock.unlock();
+                self.mappings.insert(idx + 1, cloned) catch unreachable;
+
                 break;
             }
 
             if (mapping.pages == 0) {
-                mapping.frame.deinit();
-                _ = self.mappings.orderedRemove(idx); // TODO: batch remove
+                self.orderedRemoveMappingLocked(idx);
+                // TODO: batch remove
             } else {
                 idx += 1;
             }
         }
 
-        // FIXME: track CPUs using this page map
-        // and IPI them out while unmapping
-
         if (self.cr3 == 0)
             return;
+
+        // FIXME: targetted TLB shootdown
+        for (0..255) |i| {
+            apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
+        }
 
         const vmem: *volatile caps.HalVmem = addr.Phys.fromParts(.{ .page = self.cr3 })
             .toHhdm()
@@ -485,6 +507,25 @@ pub const Vmem = struct {
         }
     }
 
+    fn orderedRemoveMappingLocked(self: *@This(), idx: usize) void {
+        const mapping = self.mappings.orderedRemove(idx);
+
+        // remove the mapping from the mapped frame also
+        mapping.frame.lock.lock();
+        for (mapping.frame.mappings.items, 0..) |same, i| {
+            if (same == mapping) {
+                _ = mapping.frame.mappings.swapRemove(i);
+                break;
+            }
+        }
+        for (mapping.frame.mappings.items) |same| {
+            std.debug.assert(same != mapping); // no duplicates
+        }
+        mapping.frame.lock.unlock();
+
+        mapping.deinit();
+    }
+
     pub fn pageFault(
         self: *@This(),
         caused_by: arch.FaultCause,
@@ -496,6 +537,7 @@ pub const Vmem = struct {
             0x1000,
         ));
 
+        // locking order: Vmem -> Frame
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -644,11 +686,11 @@ pub const Vmem = struct {
         // self.dump();
 
         const idx = std.sort.partitionPoint(
-            caps.Mapping,
+            *const caps.Mapping,
             self.mappings.items,
             vaddr,
             struct {
-                fn pred(target_vaddr: addr.Virt, val: caps.Mapping) bool {
+                fn pred(target_vaddr: addr.Virt, val: *const caps.Mapping) bool {
                     return (val.getVaddr().raw + 0x1000 * val.pages) <= target_vaddr.raw;
                 }
             }.pred,

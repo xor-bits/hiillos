@@ -1041,6 +1041,14 @@ pub const Idt = extern struct {
                 hcf();
             }
         }).asInt();
+        entries[apic.IRQ_IPI_TLB_SHOOTDOWN] = Entry.generate(struct {
+            fn handler(_: *const InterruptStackFrame) void {
+                if (conf.LOG_INTERRUPTS) log.debug("kernel panic interrupt", .{});
+
+                flushTlb();
+                apic.eoi();
+            }
+        }).asInt();
 
         inline for (0..apic.IRQ_AVAIL_COUNT) |i| {
             entries[i + apic.IRQ_AVAIL_LOW] = Entry.generate(struct {

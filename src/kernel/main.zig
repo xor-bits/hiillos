@@ -48,6 +48,8 @@ pub const CpuLocalStorage = struct {
         .{apic.Handler{}} ** apic.IRQ_AVAIL_COUNT,
 
     epoch_locals: abi.epoch.Locals = .{},
+
+    // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
 };
 
 pub fn epoch_locals() *abi.epoch.Locals {
