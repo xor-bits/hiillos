@@ -50,8 +50,8 @@ pub fn prepareSpawn(vmem: caps.Vmem, thread: caps.Thread, entry: u64) !void {
     try thread.setPrio(0);
     try thread.writeRegs(&.{
         // .arg0 = sender_there,
-        .user_instr_ptr = entry,
-        .user_stack_ptr = stack_ptr + 1024 * 256 - 0x100,
+        .rip = entry,
+        .rsp = stack_ptr + 1024 * 256 - 0x100,
     });
 }
 

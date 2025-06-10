@@ -175,7 +175,7 @@ var syscall_stats: std.EnumArray(abi.sys.Id, std.atomic.Value(usize)) = .initFil
 
 pub fn syscall(trap: *arch.SyscallRegs) void {
     const log = std.log.scoped(.syscall);
-    // log.info("syscall from cpu={} ip=0x{x} sp=0x{x}", .{ arch.cpuLocal().id, trap.user_instr_ptr, trap.user_stack_ptr });
+    // log.info("syscall from cpu={} ip=0x{x} sp=0x{x}", .{ arch.cpuLocal().id, trap.rip, trap.rsp });
     // defer log.info("syscall done", .{});
 
     // TODO: once every CPU has reached this, bootloader_reclaimable memory could be freed
@@ -466,7 +466,9 @@ fn handle_syscall(
             var regs: abi.sys.ThreadRegs = undefined;
 
             target_thread.lock.lock();
-            regs = @bitCast(target_thread.trap);
+            inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
+                @field(regs, field.name) = @field(target_thread.trap, field.name);
+            }
             target_thread.lock.unlock();
 
             try thread.proc.vmem.write(regs_ptr, std.mem.asBytes(&regs));
@@ -482,7 +484,10 @@ fn handle_syscall(
             try thread.proc.vmem.read(regs_ptr, std.mem.asBytes(&regs));
 
             target_thread.lock.lock();
-            target_thread.trap = @bitCast(regs);
+            inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
+                @field(target_thread.trap, field.name) = @field(regs, field.name);
+            }
+            target_thread.trap.return_mode = .iretq; // only iretq preserves rcx and r11
             target_thread.lock.unlock();
             trap.syscall_id = abi.sys.encode(0);
         },
@@ -500,7 +505,7 @@ fn handle_syscall(
             if (conf.LOG_ENTRYPOINT_CODE) {
                 // dump the entrypoint code
                 var buf: [50]u8 = undefined;
-                _ = target_thread.proc.vmem.read(addr.Virt.fromInt(target_thread.trap.user_instr_ptr), buf[0..]) catch {};
+                _ = target_thread.proc.vmem.read(addr.Virt.fromInt(target_thread.trap.rip), buf[0..]) catch {};
                 var it = std.mem.window(u8, buf[0..], 16, 16);
                 while (it.next()) |bytes| {
                     log.info("{}", .{util.hex(bytes)});

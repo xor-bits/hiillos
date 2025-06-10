@@ -56,8 +56,8 @@ pub fn spawn(comptime function: anytype, args: anytype) !void {
     try thread.setPrio(0);
     try thread.writeRegs(&.{
         .arg0 = instance_ptr,
-        .user_instr_ptr = entry_ptr,
-        .user_stack_ptr = stack_ptr,
+        .rip = entry_ptr,
+        .rsp = stack_ptr,
     });
 
     // std.log.info("spawn ip=0x{x} sp=0x{x} arg0=0x{x}", .{

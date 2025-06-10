@@ -36,7 +36,7 @@ pub fn init() void {
 pub fn enter() noreturn {
     var trap: arch.SyscallRegs = undefined;
     switchNow(&trap, null);
-    arch.sysret(&trap);
+    trap.exitNow();
 }
 
 /// add the current thread back to the ready queue (if ready) and maybe switch to another thread

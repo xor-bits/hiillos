@@ -623,10 +623,11 @@ pub const Entry = packed struct {
         return Self.newAny(isr);
     }
 
+    /// LLVM generated ISR
     pub fn generate(comptime handler: anytype) Self {
-        const handler_wrapper = struct {
+        const HandlerWrapper = struct {
             fn interrupt(interrupt_stack_frame: *const InterruptStackFrame) callconv(.Interrupt) void {
-                const is_user = interrupt_stack_frame.code_segment == @as(u16, GdtDescriptor.user_code_selector);
+                const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (is_user) swapgs();
                 defer if (is_user) swapgs();
 
@@ -634,13 +635,14 @@ pub const Entry = packed struct {
             }
         };
 
-        return Self.new(handler_wrapper.interrupt);
+        return Self.new(HandlerWrapper.interrupt);
     }
 
+    /// LLVM generated ISR
     pub fn generateWithEc(comptime handler: anytype) Self {
-        const handler_wrapper = struct {
+        const HandlerWrapper = struct {
             fn interrupt(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) callconv(.Interrupt) void {
-                const is_user = interrupt_stack_frame.code_segment == @as(u16, GdtDescriptor.user_code_selector);
+                const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (is_user) swapgs();
                 defer if (is_user) swapgs();
 
@@ -648,7 +650,53 @@ pub const Entry = packed struct {
             }
         };
 
-        return Self.newWithEc(handler_wrapper.interrupt);
+        return Self.newWithEc(HandlerWrapper.interrupt);
+    }
+
+    /// custom ISR with `*arch.SyscallRegs` support
+    pub fn generateTrap(comptime handler: anytype) Self {
+        const HandlerWrapper = struct {
+            fn interrupt() callconv(.naked) noreturn {
+                SyscallRegs.isrEntry(true);
+
+                asm volatile (
+                    \\ call %[f:P]
+                    :
+                    : [f] "X" (&wrapper),
+                );
+
+                SyscallRegs.exit();
+            }
+
+            fn wrapper(trap: *SyscallRegs) callconv(.sysv) void {
+                handler.handler(trap);
+            }
+        };
+
+        return Self.newAny(@intFromPtr(&HandlerWrapper.interrupt));
+    }
+
+    /// custom ISR with `*arch.SyscallRegs` support
+    pub fn generateTrapWithEc(comptime handler: anytype) Self {
+        const HandlerWrapper = struct {
+            fn interrupt() callconv(.naked) noreturn {
+                SyscallRegs.isrEntry(false);
+
+                asm volatile (
+                    \\ call %[f:P]
+                    :
+                    : [f] "X" (&wrapper),
+                );
+
+                SyscallRegs.exit();
+            }
+
+            fn wrapper(trap: *SyscallRegs) callconv(.SysV) void {
+                handler.handler(trap);
+            }
+        };
+
+        return Self.newAny(@intFromPtr(&HandlerWrapper.interrupt));
     }
 
     fn newAny(isr: usize) Self {
@@ -815,7 +863,7 @@ pub const Idt = extern struct {
         // general protection fault
         entries[13] = Entry.generateWithEc(struct {
             fn handler(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) void {
-                const is_user = interrupt_stack_frame.code_segment == @as(u16, GdtDescriptor.user_code_selector);
+                const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (conf.LOG_EVERYTHING) log.debug("general protection fault interrupt", .{});
 
                 log.warn(
@@ -826,8 +874,8 @@ pub const Idt = extern struct {
                 , .{
                     ec,
                     is_user,
-                    interrupt_stack_frame.ip,
-                    interrupt_stack_frame.sp,
+                    interrupt_stack_frame.rip,
+                    interrupt_stack_frame.rsp,
                 });
 
                 if (is_user and !conf.KERNEL_PANIC_ON_USER_FAULT) {
@@ -846,17 +894,17 @@ pub const Idt = extern struct {
                     , .{
                         ec,
                         is_user,
-                        interrupt_stack_frame.ip,
-                        interrupt_stack_frame.sp,
-                        logs.Addr2Line{ .addr = interrupt_stack_frame.ip },
+                        interrupt_stack_frame.rip,
+                        interrupt_stack_frame.rsp,
+                        logs.Addr2Line{ .addr = interrupt_stack_frame.rip },
                     });
                 }
             }
         }).withStack(2).asInt();
         // page fault
-        entries[14] = Entry.generateWithEc(struct {
-            fn handler(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) void {
-                const pfec: PageFaultError = @bitCast(ec);
+        entries[14] = Entry.generateTrapWithEc(struct {
+            fn handler(trap: *SyscallRegs) void {
+                const pfec: PageFaultError = @bitCast(trap.error_code);
                 const target_addr = Cr2.read().page_fault_addr;
 
                 if (conf.LOG_EVERYTHING) log.debug("general protection fault interrupt", .{});
@@ -871,26 +919,48 @@ pub const Idt = extern struct {
                 const thread = cpuLocal().current_thread.?;
 
                 const vaddr = addr.Virt.fromUser(target_addr) catch |err| {
+                    log.warn("unhandled page fault: {}", .{err});
                     thread.unhandledPageFault(
                         target_addr,
                         caused_by,
-                        interrupt_stack_frame.ip,
-                        interrupt_stack_frame.sp,
+                        trap.rip,
+                        trap.rsp,
                         err,
                     );
                 };
 
                 if (pfec.user_mode and !conf.KERNEL_PANIC_ON_USER_FAULT) {
                     thread.proc.vmem.pageFault(caused_by, vaddr) catch |err| {
+                        log.warn("unhandled page fault: {}", .{err});
                         thread.unhandledPageFault(
                             target_addr,
                             caused_by,
-                            interrupt_stack_frame.ip,
-                            interrupt_stack_frame.sp,
+                            trap.rip,
+                            trap.rsp,
                             err,
                         );
                     };
 
+                    // log.warn(
+                    //     \\page fault 0x{x}
+                    //     \\ - user: {any}
+                    //     \\ - caused by write: {any}
+                    //     \\ - instruction fetch: {any}
+                    //     \\ - ip: 0x{x}
+                    //     \\ - sp: 0x{x}
+                    //     \\ - pfec: {}
+                    // , .{
+                    //     target_addr,
+                    //     pfec.user_mode,
+                    //     pfec.caused_by_write,
+                    //     pfec.instruction_fetch,
+                    //     interrupt_stack_frame.ip,
+                    //     interrupt_stack_frame.sp,
+                    //     pfec,
+                    // });
+
+                    // log.info("trap={}", .{trap});
+                    // sysret(trap);
                     return;
                 }
 
@@ -901,6 +971,7 @@ pub const Idt = extern struct {
                     \\ - instruction fetch: {any}
                     \\ - ip: 0x{x}
                     \\ - sp: 0x{x}
+                    \\ - pfec: {}
                     \\ - line:
                     \\{}
                 , .{
@@ -908,9 +979,10 @@ pub const Idt = extern struct {
                     pfec.user_mode,
                     pfec.caused_by_write,
                     pfec.instruction_fetch,
-                    interrupt_stack_frame.ip,
-                    interrupt_stack_frame.sp,
-                    logs.Addr2Line{ .addr = interrupt_stack_frame.ip },
+                    trap.rip,
+                    trap.rsp,
+                    pfec,
+                    logs.Addr2Line{ .addr = trap.rip },
                 });
             }
         }).withStack(1).asInt();
@@ -1083,23 +1155,6 @@ pub const Idt = extern struct {
     fn loadRaw(ptr: *anyopaque) void {
         lidt(@intFromPtr(ptr));
     }
-};
-
-pub const InterruptStackFrame = extern struct {
-    /// the instruction right after the instruction that caused this interrupt
-    ip: usize,
-
-    /// code privilege level before the interrupt
-    code_segment: u16,
-
-    /// RFlags
-    cpu_flags: Rflags,
-
-    /// stack pointer before the interrupt
-    sp: usize,
-
-    /// stack(data) privilege level before the interrupt
-    stack_segment: u16,
 };
 
 fn interruptEc(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) callconv(.Interrupt) void {
@@ -1330,23 +1385,63 @@ pub const EferFlags = packed struct {
     reserved: u63 = 0,
 };
 
+pub const InterruptStackFrame = extern struct {
+    /// the instruction right after the instruction that caused this interrupt
+    rip: u64,
+    /// code privilege level before the interrupt
+    code_segment_selector: u16,
+    rflags: Rflags,
+    /// stack pointer before the interrupt
+    rsp: u64,
+    /// stack(data) privilege level before the interrupt
+    stack_segment_selector: u16,
+};
+
 pub const SyscallRegs = extern struct {
-    _r15: u64 = 0,
-    _r14: u64 = 0,
-    _r13: u64 = 0,
-    _r12: u64 = 0,
-    rflags: u64 = @bitCast(Rflags{ .interrupt_enable = 1 }), // r11
-    arg5: u64 = 0, // r10
-    arg4: u64 = 0, // r9
-    arg3: u64 = 0, // r8
-    _rbp: u64 = 0,
-    arg1: u64 = 0, // rsi
-    arg0: u64 = 0, // rdi
-    arg2: u64 = 0, // rdx
-    user_instr_ptr: u64 = 0, // rcx
-    _rbx: u64 = 0,
-    syscall_id: u64 = 0, // rax = 0, also the return register
-    user_stack_ptr: u64 = 0, // rsp
+    r15: u64 = 0,
+    r14: u64 = 0,
+    r13: u64 = 0,
+    r12: u64 = 0,
+    r11: u64 = 0,
+    /// r10
+    arg5: u64 = 0,
+    /// r9
+    arg4: u64 = 0,
+    /// r8
+    arg3: u64 = 0,
+    rbp: u64 = 0,
+    /// rsi
+    arg1: u64 = 0,
+    /// rdi
+    arg0: u64 = 0,
+    /// rdx
+    arg2: u64 = 0,
+    rcx: u64 = 0,
+    rbx: u64 = 0,
+    /// rax, also the return register
+    syscall_id: u64 = 0,
+
+    return_mode: enum(u64) {
+        sysretq = 0,
+        iretq = 1,
+        _,
+    } = .iretq,
+
+    error_code: u64 = 0,
+
+    // automatically pushed by the CPU on interrupt:
+
+    /// the instruction right after the instruction that caused this interrupt
+    /// rcx from syscalls
+    rip: u64 = 0,
+    /// code privilege level before the interrupt
+    code_segment_selector: u16 = GdtDescriptor.user_code_selector,
+    /// r11 from syscalls
+    rflags: Rflags = Rflags{ .interrupt_enable = 1 },
+    /// stack pointer before the interrupt
+    rsp: u64 = 0,
+    /// stack(data) privilege level before the interrupt
+    stack_segment_selector: u16 = GdtDescriptor.user_data_selector,
 
     pub fn readMessage(self: *const @This()) abi.sys.Message {
         return @bitCast([6]u64{
@@ -1368,93 +1463,178 @@ pub const SyscallRegs = extern struct {
         self.arg4 = regs[4];
         self.arg5 = regs[5];
     }
+
+    pub inline fn isrEntry(comptime dummy_error_code: bool) void {
+        if (dummy_error_code) asm volatile (
+            \\ pushq $0
+            ::: "memory");
+
+        asm volatile (std.fmt.comptimePrint(
+                // return type: iretq
+                \\ pushq $1
+                // push all scratch + general purpose registers
+                \\ pushq %rax
+                \\ pushq %rbx
+                \\ pushq %rcx
+                \\ pushq %rdx
+                \\ pushq %rdi
+                \\ pushq %rsi
+                \\ pushq %rbp
+                \\ pushq %r8
+                \\ pushq %r9
+                \\ pushq %r10
+                \\ pushq %r11
+                \\ pushq %r12
+                \\ pushq %r13
+                \\ pushq %r14
+                \\ pushq %r15
+                // optional swapgs if coming from user-space
+                \\ cmpq ${[user_code]d}, {[code]d}(%rsp)
+                \\ jne 1f
+                \\ swapgs
+                \\ 1:
+                // zero base pointer for zig
+                \\ xorq %rbp, %rbp
+                // set up the *SyscallRegs argument
+                \\ movq %rsp, %rdi
+            , .{
+                .code = @offsetOf(@This(), "code_segment_selector"),
+                .user_code = GdtDescriptor.user_code_selector,
+            }) ::: "memory");
+    }
+
+    pub inline fn syscallEntry() void {
+        asm volatile (std.fmt.comptimePrint(
+                // acquire the kernel stack without losing the user stack using KernelGS
+                \\ swapgs
+                \\ movq %rsp, %gs:{[rsp_user]d}
+                \\ movq %gs:{[rsp_kernel]d}, %rsp
+                // push a fake interrupt stack frame
+                \\ pushq ${[user_data]d}
+                \\ pushq %gs:{[rsp_user]d}
+                \\ pushq %r11
+                \\ pushq ${[user_code]d}
+                \\ pushq %rcx
+                // dummy error code
+                \\ pushq $0
+                // return type: sysretq
+                \\ pushq $0
+                // push all scratch + general purpose registers and dummy values where syscallq clobbered them
+                \\ pushq %rax
+                \\ pushq %rbx
+                \\ pushq $0
+                \\ pushq %rdx
+                \\ pushq %rdi
+                \\ pushq %rsi
+                \\ pushq %rbp
+                \\ pushq %r8
+                \\ pushq %r9
+                \\ pushq %r10
+                \\ pushq $0
+                \\ pushq %r12
+                \\ pushq %r13
+                \\ pushq %r14
+                \\ pushq %r15
+                // zero base pointer for zig
+                \\ xorq %rbp, %rbp
+                // set up the *SyscallRegs argument
+                \\ movq %rsp, %rdi
+            , .{
+                .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
+                .rsp_kernel = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_kernel"),
+                .user_code = GdtDescriptor.user_code_selector,
+                .user_data = GdtDescriptor.user_data_selector,
+            }) ::: "memory");
+    }
+
+    pub fn exitNow(trap: *const @This()) noreturn {
+        log.info("abnormal return to user-space, ctx={}", .{trap});
+
+        asm volatile (""
+            :
+            : [trap] "{rsp}" (trap),
+            : "memory"
+        );
+
+        exit();
+        unreachable;
+    }
+
+    pub inline fn exit() void {
+        asm volatile (std.fmt.comptimePrint(
+                // check which return method to use
+                \\ movq {[return_mode]d}(%rsp), %rax
+                \\ testq %rax, %rax
+                // ZF is now: sysretq => 1, iretq => 0
+                // push all scratch + general purpose registers
+                \\ popq %r15
+                \\ popq %r14
+                \\ popq %r13
+                \\ popq %r12
+                \\ popq %r11
+                \\ popq %r10
+                \\ popq %r9
+                \\ popq %r8
+                \\ popq %rbp
+                \\ popq %rsi
+                \\ popq %rdi
+                \\ popq %rdx
+                \\ popq %rcx
+                \\ popq %rbx
+                \\ popq %rax
+                // discard the error code and the return mode
+                \\ addq $16, %rsp
+                // use the ZF set earlier to branch
+                \\ jne 1f
+
+                // sysretq return
+                // decode the isf frame into a sysretq frame
+                \\ popq %rcx
+                \\ addq $8, %rsp
+                \\ popq %r11
+                \\ popq %gs:{[rsp_user]d}
+                \\ movq %gs:{[rsp_user]d}, %rsp
+                \\ swapgs
+                // and finally the actual sysretq
+                // FIXME: NMI,MCE interrupt race condition
+                // (https://wiki.osdev.org/SYSENTER#Security_of_SYSRET)
+                \\ sysretq
+                \\ ud2
+                \\ ud2
+                \\ ud2
+
+                // iretq return
+                \\ 1:
+                // optional swapgs if returning to user-space
+                \\ cmpq ${[user_code]d}, 8(%rsp)
+                \\ jne 2f
+                \\ swapgs
+                \\ 2:
+                \\ iretq
+                \\ ud2
+                \\ ud2
+                \\ ud2
+            , .{
+                .return_mode = @offsetOf(@This(), "return_mode"),
+                .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
+                .user_code = GdtDescriptor.user_code_selector,
+            }) ::: "memory");
+    }
 };
 
-const syscall_enter = std.fmt.comptimePrint(
-    // interrupts get cleared already
-    // \\ cli
-    // save the user stack temporarily into the kernel GS structure
-    // then load the real kernel stack (because syscall keeps RSP from userland)
-    // then push the user stack into SyscallRegs
-    \\ swapgs
-    \\ movq %rsp, %gs:{0d}
-    \\ movq %gs:{1d}, %rsp
-    \\ pushq %gs:{0d}
+fn syscallHandlerWrapperWrapper() callconv(.naked) noreturn {
+    SyscallRegs.syscallEntry();
 
-    // save all (lol thats a lie) registers
-    \\ push %rax
-    \\ push %rbx
-    \\ push %rcx
-    \\ push %rdx
-    \\ push %rdi
-    \\ push %rsi
-    \\ push %rbp
-    \\ push %r8
-    \\ push %r9
-    \\ push %r10
-    \\ push %r11
-    \\ push %r12
-    \\ push %r13
-    \\ push %r14
-    \\ push %r15
-
-    // set up the *SyscallRegs argument
-    \\ xorq %rbp, %rbp
-    \\ movq %rsp, %rdi
-, .{ @offsetOf(CpuConfig, "rsp_user"), @offsetOf(CpuConfig, "rsp_kernel") });
-
-const sysret_instr = std.fmt.comptimePrint(
-    \\ popq %r15
-    \\ popq %r14
-    \\ popq %r13
-    \\ popq %r12
-    \\ popq %r11
-    \\ popq %r10
-    \\ popq %r9
-    \\ popq %r8
-    \\ popq %rbp
-    \\ popq %rsi
-    \\ popq %rdi
-    \\ popq %rdx
-    \\ popq %rcx
-    \\ popq %rbx
-    \\ popq %rax
-
-    // load the user stack by temporarily storing
-    // the user RSP in the kernel GS structure
-    \\ popq %gs:{0d}
-    \\ movq %gs:{0d}, %rsp
-    \\ swapgs
-
-    // and finally the actual sysret
-    // FIXME: NMI,MCE interrupt race condition
-    // (https://wiki.osdev.org/SYSENTER#Security_of_SYSRET)
-    \\ sysretq
-, .{@offsetOf(CpuConfig, "rsp_user")});
-
-pub fn sysret(args: *SyscallRegs) noreturn {
-    const instr =
-        \\ movq %[args], %rsp
-        \\
-    ++ sysret_instr;
-    asm volatile (instr
+    asm volatile (
+        \\ call %[f:P]
         :
-        : [args] "r" (args),
-        : "memory"
+        : [f] "X" (&syscallHandlerWrapper),
     );
-    unreachable;
+
+    SyscallRegs.exit();
 }
 
-fn syscallHandlerWrapperWrapper() callconv(.Naked) noreturn {
-    const instr = syscall_enter ++
-        \\
-        \\ call syscallHandlerWrapper
-        \\
-    ++ sysret_instr;
-    asm volatile (instr ::: "memory");
-}
-
-export fn syscallHandlerWrapper(args: *SyscallRegs) callconv(.SysV) void {
+fn syscallHandlerWrapper(args: *SyscallRegs) callconv(.SysV) void {
     main.syscall(args);
 }
 

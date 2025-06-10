@@ -63,6 +63,12 @@ pub const Vmem = struct {
         return self;
     }
 
+    pub fn halPageTable(self: *const @This()) *volatile caps.HalVmem {
+        return addr.Phys.fromParts(.{ .page = self.cr3 })
+            .toHhdm()
+            .toPtr(*volatile caps.HalVmem);
+    }
+
     pub fn write(self: *@This(), vaddr: addr.Virt, source: []const volatile u8) Error!void {
         if (conf.LOG_OBJ_CALLS)
             log.info("Vmem.write", .{});
@@ -488,14 +494,7 @@ pub const Vmem = struct {
         if (self.cr3 == 0)
             return;
 
-        // FIXME: targetted TLB shootdown
-        for (0..255) |i| {
-            apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
-        }
-
-        const vmem: *volatile caps.HalVmem = addr.Phys.fromParts(.{ .page = self.cr3 })
-            .toHhdm()
-            .toPtr(*volatile caps.HalVmem);
+        const vmem = self.halPageTable();
 
         for (0..pages) |page_idx| {
             // already checked to be in bounds
@@ -504,6 +503,12 @@ pub const Vmem = struct {
                 log.warn("unmap err: {}, should be ok", .{err});
             };
             arch.flushTlbAddr(page_vaddr.raw);
+        }
+
+        // FIXME: targetted TLB shootdown
+        // TODO: proper MMU lock, locking which forces all CPUs using it to context switch away
+        for (0..255) |i| {
+            apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
         }
     }
 
@@ -581,9 +586,7 @@ pub const Vmem = struct {
         std.debug.assert(page_offs < mapping.pages);
         std.debug.assert(self.cr3 != 0);
 
-        const vmem: *volatile caps.HalVmem = addr.Phys.fromParts(.{ .page = self.cr3 })
-            .toHhdm()
-            .toPtr(*volatile caps.HalVmem);
+        const vmem = self.halPageTable();
 
         const entry = (try vmem.entryFrame(vaddr)).*;
 
@@ -681,6 +684,7 @@ pub const Vmem = struct {
         }
     }
 
+    // FIXME: this is a confusing function
     fn find(self: *@This(), vaddr: addr.Virt) ?usize {
         // log.info("find 0x{x}", .{vaddr.raw});
         // self.dump();

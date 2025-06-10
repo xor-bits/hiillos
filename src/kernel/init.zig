@@ -32,7 +32,7 @@ pub fn exec(a: args.Args) !void {
     log.info("creating root thread", .{});
     const init_thread = try caps.Thread.init(init_proc);
     init_thread.priority = 0;
-    init_thread.trap.user_instr_ptr = abi.ROOT_EXE;
+    init_thread.trap.rip = abi.ROOT_EXE;
 
     log.info("creating root boot_info", .{});
     const boot_info = try caps.Frame.init(@sizeOf(abi.BootInfo));

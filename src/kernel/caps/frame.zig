@@ -2,9 +2,13 @@ const abi = @import("abi");
 const std = @import("std");
 
 const addr = @import("../addr.zig");
+const apic = @import("../apic.zig");
+const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
+const proc = @import("../proc.zig");
 const spin = @import("../spin.zig");
+const util = @import("../util.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
@@ -15,6 +19,11 @@ const Error = abi.sys.Error;
 pub const Frame = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
+
+    // flag that tells if this frame is being modified while the lock is not held
+    // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
+    is_transient: bool = false,
+    transient_sleep_queue: util.Queue(caps.Thread, "next", "prev") = .{},
 
     is_physical: bool,
     lock: spin.Mutex = .new(),
@@ -224,8 +233,149 @@ pub const Frame = struct {
     }
 
     pub fn page_hit(self: *@This(), idx: u32, is_write: bool) !u32 {
+        const result = try self.updatePage(idx, is_write);
+
+        switch (result) {
+            .reused => |page| return page,
+            .remap => |info| return info.page,
+            else => {
+                return 0;
+            },
+        }
+
+        switch (result) {
+            .reused => |page| {
+                @branchHint(.likely);
+                return page;
+            },
+            .is_transient => {
+                @panic("TODO: sleep");
+            },
+            .remap => |info| {
+                std.sort.pdq(*caps.Vmem, info.updates, {}, struct {
+                    fn lessThanFn(_: void, lhs: *caps.Vmem, rhs: *caps.Vmem) bool {
+                        return @intFromPtr(lhs) < @intFromPtr(rhs);
+                    }
+                }.lessThanFn);
+
+                var ipi_bitmap: u256 = ~@as(u256, 0);
+
+                var prev: ?*caps.Vmem = null;
+                for (info.updates) |vmem_with_old_mappings| {
+                    // filter out duplicates
+                    if (prev == vmem_with_old_mappings) continue;
+                    prev = vmem_with_old_mappings;
+
+                    vmem_with_old_mappings.lock.lock();
+                    defer vmem_with_old_mappings.lock.unlock();
+
+                    for (vmem_with_old_mappings.mappings.items) |vmem_mapping| {
+                        // check if that specific mapping has this currently transient frame
+                        if (vmem_mapping.frame != self) continue;
+
+                        // check if the `idx` is within this mapping
+                        const mapping_idx = std.math.sub(u32, idx, vmem_mapping.frame_first_page) catch continue;
+                        if (mapping_idx >= vmem_mapping.pages) continue;
+
+                        // found a caps.Mapping in a caps.Vmem that has the old page
+
+                        // unmap from hardware page tables, not from the high-level mappings table
+                        try vmem_with_old_mappings
+                            .halPageTable()
+                            .unmapFrame(.fromInt(vmem_mapping.getVaddr().raw + 0x1000 * mapping_idx));
+                    } else continue;
+
+                    // FIXME: save CPU LAPIC IDs for targetted TLB shootdown
+                }
+
+                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().lapic_id)));
+
+                if (@popCount(ipi_bitmap) == 0) {
+                    @branchHint(.likely);
+                    // no other CPU could have had the old mapping in their TLB
+
+                    self.lock.lock();
+                    defer self.lock.unlock();
+
+                    self.is_transient = false;
+                    while (self.transient_sleep_queue.popBack()) |sleeper| {
+                        proc.ready(sleeper);
+                    }
+
+                    return info.page;
+                }
+
+                // some other CPU might have the old mapping cached
+
+                // FIXME: targetted TLB shootdown: only specific CPUs and only specific `ivlpg`s
+                for (0..255) |i| {
+                    if (ipi_bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
+                        apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
+                    }
+                }
+
+                @panic("todo");
+            },
+        }
+
+        // TODO: on remap/unmap
+        //     1.  lock `Frame`
+        //     2.  copy all mappings that reference the old page to a temporary list
+        //     3.  set `is_transient` flag
+        //     4.  unlock `Frame`
+        //
+        // (par).  between steps 4. and 12. another thread might page fault now and
+        //         lock its own Vmem, and then lock this Frame but it sees the `is_transient`
+        //         being set and adds itself to the `transient_sleep_queue` and switches contexts
+        //
+        //     5.  (maybe) sort all mappings in the temporary list by `Vmem` object address for locking order
+        //     6.  for each vmem in the temporary list
+        //     8.    lock the vmem
+        //     9.    if mapping is no longer valid: skip
+        //    10.    unmap the old page from page tables
+        //    11.    save the CPUs that used this vmem in a bitmap
+        //    12.    unlock the vmem
+        //
+        //    13.  send TLB shootdown IPIs to processors according to the bitmap
+        //    14.  wait for all IPIs to execute
+        //
+        //    15.  for each vmem in the temporary list
+        //    16.    lock the vmem
+        //    17.    if mapping is no longer valid: skip
+        //    18.    map the new page into page tables
+        //    19.    unlock the vmem
+        //
+        //    20.  lock `Frame`
+        //    21.  just a sanity check: debug assert `is_transient` is still set
+        //    22.  unset `is_transient`
+        //    23.  wake up all threads in the `transient_sleep_queue`
+        //    24.  unlock `Frame`
+        //
+        // TODO: better page table HAL where remap and unmap ops do the TLB shootdown
+
+        result.reused;
+
+        return result.phys_page;
+    }
+
+    const UpdatePageResult = union(enum) {
+        /// the page was already set as it should have been and is safe to use immediately
+        reused: u32,
+        /// the page might be moving right now, so this thread has to go sleep
+        is_transient: void,
+        /// the old page needs to be copied (copy-on-write and lazy-alloc) and all active
+        /// mappings need to be updated
+        remap: struct {
+            page: u32,
+            updates: []*caps.Vmem,
+        },
+    };
+
+    fn updatePage(self: *@This(), idx: u32, is_write: bool) !UpdatePageResult {
         self.lock.lock();
         defer self.lock.unlock();
+
+        if (self.is_transient) return .{ .is_transient = {} };
 
         std.debug.assert(idx < self.pages.len);
         const page = &self.pages[idx];
@@ -237,15 +387,29 @@ pub const Frame = struct {
         if (page.* == 0) {
             // writing to a lazy allocated zeroed page
             // => allocate a new exclusive page and set it be the mapping
-            // FIXME: modify existing mappings
+
+            // save all old mappings that need to be updated
+            // TODO: use a per-CPU arena allocator
 
             const new_page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
+            errdefer pmem.deallocChunk(new_page, .@"4KiB");
+            // const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
+
             page.* = new_page.toParts().page;
-            return page.*;
+            // self.is_transient = true;
+
+            // for (self.mappings.items, old) |a, *b| {
+            //     b.* = a.vmem.clone();
+            // }
+
+            return .{ .remap = .{
+                .page = page.*,
+                .updates = &.{},
+            } };
         } else {
             // already mapped AND write to a page that isnt readonly_zero_page or read from any page
             // => use the existing page
-            return page.*;
+            return .{ .reused = page.* };
         }
 
         // else { // page.* == 0

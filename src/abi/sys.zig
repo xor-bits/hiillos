@@ -332,32 +332,31 @@ pub fn decodeVoid(v: usize) Error!void {
 
 /// x86_64 thread registers
 pub const ThreadRegs = extern struct {
-    _r15: u64 = 0,
-    _r14: u64 = 0,
-    _r13: u64 = 0,
-    _r12: u64 = 0,
-    // RFlags, inaccessible to user-space (it is ignored on write and set to 0 on read)
-    _r11: u64 = 0,
+    r15: u64 = 0,
+    r14: u64 = 0,
+    r13: u64 = 0,
+    r12: u64 = 0,
+    r11: u64 = 0,
     /// r10
     arg5: u64 = 0,
     /// r9
     arg4: u64 = 0,
     /// r8
     arg3: u64 = 0,
-    _rbp: u64 = 0,
+    rbp: u64 = 0,
     /// rsi
     arg1: u64 = 0,
     /// rdi
     arg0: u64 = 0,
     /// rdx
     arg2: u64 = 0,
-    /// rcx
-    user_instr_ptr: u64 = 0,
-    _rbx: u64 = 0,
-    /// rax = 0, also the return register
+    rcx: u64 = 0,
+    rbx: u64 = 0,
+    /// rax, also the return register
     syscall_id: u64 = 0,
-    /// rsp
-    user_stack_ptr: u64 = 0,
+
+    rip: u64 = 0,
+    rsp: u64 = 0,
 };
 
 /// small IPC message
