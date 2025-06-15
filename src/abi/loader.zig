@@ -171,7 +171,7 @@ pub const Elf = struct {
         const run_addr = seg_bot + slide;
         const seg_va = run_addr;
 
-        _ = try vmem_dst.map(
+        const real_vaddr = try vmem_dst.map(
             frame,
             0,
             seg_va,
@@ -179,13 +179,15 @@ pub const Elf = struct {
             rights,
             .{},
         );
+        std.debug.assert(real_vaddr == seg_va);
     }
 
     pub fn loadInto(self: *@This(), _: caps.Vmem, vmem: caps.Vmem) !usize {
-        self.slide = 0x4000_0000;
+        self.slide = 0x0000_0000;
 
         const phdrs = try self.getProgram();
         for (phdrs) |ph| try handleLoadableSegment(self.data, ph, vmem, self.slide);
+
         return (try self.getHeader()).entry;
     }
 
