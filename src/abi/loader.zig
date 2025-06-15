@@ -3,7 +3,7 @@ const abi = @import("lib.zig");
 
 const caps = abi.caps;
 const log = std.log.scoped(.loader);
-const relocator = @import("relocator.zig");
+// const relocator = @import("relocator.zig");
 
 const Slide = usize;
 
@@ -27,7 +27,7 @@ pub fn load(vmem: caps.Vmem, elf: []const u8) !usize {
 
     var loader = try Elf.init(elf);
     const entry_addr = try loader.loadInto(self_vmem, vmem);
-    try relocator.relocate(vmem, elf, 0);
+    // try relocator.relocate(vmem, elf, 0);
     return entry_addr;
 }
 
@@ -177,18 +177,21 @@ pub const Elf = struct {
             seg_va,
             seg_size,
             rights,
-            .{},
+            .{ .fixed = true },
         );
         std.debug.assert(real_vaddr == seg_va);
     }
 
     pub fn loadInto(self: *@This(), _: caps.Vmem, vmem: caps.Vmem) !usize {
+        const header = try self.getHeader();
+        log.info("ELF type: {}", .{header.type});
+
         self.slide = 0x0000_0000;
 
         const phdrs = try self.getProgram();
         for (phdrs) |ph| try handleLoadableSegment(self.data, ph, vmem, self.slide);
 
-        return (try self.getHeader()).entry;
+        return (try self.getHeader()).entry + self.slide;
     }
 
     pub fn ExternStructIterator(
@@ -334,7 +337,7 @@ pub const Elf = struct {
         return self.sections.?;
     }
 
-    fn getHeader(self: *@This()) !std.elf.Header {
+    pub fn getHeader(self: *@This()) !std.elf.Header {
         if (self.header) |h| return h;
 
         var stream = std.io.fixedBufferStream(self.data);
@@ -342,7 +345,7 @@ pub const Elf = struct {
         return self.header.?;
     }
 
-    fn getProgram(self: *@This()) ![]const std.elf.Elf64_Phdr {
+    pub fn getProgram(self: *@This()) ![]const std.elf.Elf64_Phdr {
         if (self.program) |s| return s;
 
         const header = try self.getHeader();

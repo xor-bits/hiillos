@@ -66,6 +66,8 @@ inline fn flush(
 ) !void {
     if (new_qwords.len == 0) return;
 
+    std.log.info("relocator write to 0x{x}", .{addr});
+
     const scratch_bytes = scratch[0..new_qwords.len]; // same u64 view
     try vmem.read(addr, std.mem.sliceAsBytes(scratch_bytes));
 
@@ -82,6 +84,7 @@ fn handleRela(
     sh: std.elf.Elf64_Shdr,
     base: usize,
 ) !void {
+    std.log.info("found rela", .{});
     const raw = try loader.Elf.getSectionData(elf.data, sh);
     if (raw.len == 0) return;
 
@@ -122,6 +125,7 @@ fn handleRel(
     sh: std.elf.Elf64_Shdr,
     base: usize,
 ) !void {
+    std.log.info("found rel", .{});
     const raw = try loader.Elf.getSectionData(elf.data, sh);
     if (raw.len == 0) return;
 

@@ -15,7 +15,7 @@ pub const rt = @import("rt.zig");
 pub const sys = @import("sys.zig");
 pub const thread = @import("thread.zig");
 pub const util = @import("util.zig");
-pub const relocator = @import("relocator.zig");
+// pub const relocator = @import("relocator.zig");
 
 //
 
@@ -371,6 +371,6 @@ test {
     _ = sys;
     _ = thread;
     _ = util;
-    _ = relocator;
+    // _ = relocator;
     std.testing.refAllDeclsRecursive(@This());
 }

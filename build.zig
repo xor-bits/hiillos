@@ -255,6 +255,7 @@ fn createInitfsTarGz(
             .root_source_file = b.path(source),
             .target = opts.target,
             .optimize = opts.optimize,
+            .pic = true,
         });
         compile.root_module.addImport("abi", abi);
         b.installArtifact(compile);
