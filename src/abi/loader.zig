@@ -396,6 +396,9 @@ pub const Elf = struct {
     }
 
     fn getString(strtab: []const u8, off: u32) ![]const u8 {
+        if (off == std.elf.SHN_UNDEF)
+            return "";
+
         if (off >= strtab.len)
             return error.OutOfBounds;
 
