@@ -69,6 +69,10 @@ pub fn spawn(comptime function: anytype, args: anytype) !void {
     try thread.start();
 }
 
+pub fn yield() void {
+    sys.selfYield();
+}
+
 pub fn callFn(comptime function: anytype, args: anytype) void {
     const bad_fn_ret = "expected return type of startFn to be 'u8', 'noreturn', '!noreturn', 'void', or '!void'";
 

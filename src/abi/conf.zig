@@ -1,5 +1,7 @@
 const builtin = @import("builtin");
 
+// make these into zig build options
+
 pub const ENABLE_FB_LOG: bool = false;
 pub const ENABLE_UART_LOG: bool = true;
 
@@ -30,5 +32,6 @@ pub const KERNEL_PANIC_ON_USER_FAULT: bool = false;
 pub const KERNEL_PANIC_SOURCE_INFO: bool = IS_DEBUG or false;
 
 pub const IPC_BENCHMARK: bool = false;
+pub const SCHED_STRESS_TEST: bool = false;
 
 pub const IS_DEBUG = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;

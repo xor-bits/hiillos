@@ -1,0 +1,2 @@
+target create zig-out/bin/kernel
+gdb-remote localhost:1234

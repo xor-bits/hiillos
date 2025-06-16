@@ -35,6 +35,12 @@ const fb_info_frame = caps.Frame{ .cap = 5 };
 pub fn spinnerMain() !void {
     const vmem = try caps.Vmem.self();
 
+    // {
+    //     const thread = try caps.Thread.self();
+    //     defer thread.close();
+    //     try thread.setPrio(1); // lower the spinner priority
+    // }
+
     const fb_addr = try vmem.map(
         fb_frame,
         0,
