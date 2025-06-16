@@ -34,13 +34,13 @@ pub fn init() void {
 
 /// forgets the current thread and jumps into the main syscall loop
 pub fn enter() noreturn {
-    var trap: arch.SyscallRegs = undefined;
+    var trap: arch.TrapRegs = undefined;
     switchNow(&trap, null);
     trap.exitNow();
 }
 
 /// add the current thread back to the ready queue (if ready) and maybe switch to another thread
-pub fn yield(trap: *arch.SyscallRegs) void {
+pub fn yield(trap: *arch.TrapRegs) void {
     const local = arch.cpuLocal();
     const prev = local.current_thread;
     if (local.current_thread) |prev_thread| {
@@ -60,13 +60,13 @@ pub fn yield(trap: *arch.SyscallRegs) void {
 }
 
 /// switch to another thread without adding the thread back to the ready queue
-pub fn switchNow(trap: *arch.SyscallRegs, prev: ?*caps.Thread) void {
+pub fn switchNow(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
     switchTo(trap, next(), prev);
 }
 
 /// switch to another thread, skipping the scheduler entirely
 /// does **NOT** save the previous context or set its status
-pub fn switchTo(trap: *arch.SyscallRegs, thread: *caps.Thread, prev: ?*caps.Thread) void {
+pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread, prev: ?*caps.Thread) void {
     const local = arch.cpuLocal();
     local.current_thread = thread;
     trap.* = thread.trap;

@@ -653,11 +653,11 @@ pub const Entry = packed struct {
         return Self.newWithEc(HandlerWrapper.interrupt);
     }
 
-    /// custom ISR with `*arch.SyscallRegs` support
+    /// custom ISR with `*arch.TrapRegs` support
     pub fn generateTrap(comptime handler: anytype) Self {
         const HandlerWrapper = struct {
             fn interrupt() callconv(.naked) noreturn {
-                SyscallRegs.isrEntry(true);
+                TrapRegs.isrEntry(true);
 
                 asm volatile (
                     \\ call %[f:P]
@@ -665,10 +665,10 @@ pub const Entry = packed struct {
                     : [f] "X" (&wrapper),
                 );
 
-                SyscallRegs.exit();
+                TrapRegs.exit();
             }
 
-            fn wrapper(trap: *SyscallRegs) callconv(.sysv) void {
+            fn wrapper(trap: *TrapRegs) callconv(.sysv) void {
                 handler.handler(trap);
             }
         };
@@ -676,11 +676,11 @@ pub const Entry = packed struct {
         return Self.newAny(@intFromPtr(&HandlerWrapper.interrupt));
     }
 
-    /// custom ISR with `*arch.SyscallRegs` support
+    /// custom ISR with `*arch.TrapRegs` support
     pub fn generateTrapWithEc(comptime handler: anytype) Self {
         const HandlerWrapper = struct {
             fn interrupt() callconv(.naked) noreturn {
-                SyscallRegs.isrEntry(false);
+                TrapRegs.isrEntry(false);
 
                 asm volatile (
                     \\ call %[f:P]
@@ -688,10 +688,10 @@ pub const Entry = packed struct {
                     : [f] "X" (&wrapper),
                 );
 
-                SyscallRegs.exit();
+                TrapRegs.exit();
             }
 
-            fn wrapper(trap: *SyscallRegs) callconv(.SysV) void {
+            fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
                 handler.handler(trap);
             }
         };
@@ -903,7 +903,7 @@ pub const Idt = extern struct {
         }).withStack(2).asInt();
         // page fault
         entries[14] = Entry.generateTrapWithEc(struct {
-            fn handler(trap: *SyscallRegs) void {
+            fn handler(trap: *TrapRegs) void {
                 const pfec: PageFaultError = @bitCast(trap.error_code);
                 const target_addr = Cr2.read().page_fault_addr;
 
@@ -1397,7 +1397,7 @@ pub const InterruptStackFrame = extern struct {
     stack_segment_selector: u16,
 };
 
-pub const SyscallRegs = extern struct {
+pub const TrapRegs = extern struct {
     r15: u64 = 0,
     r14: u64 = 0,
     r13: u64 = 0,
@@ -1495,7 +1495,7 @@ pub const SyscallRegs = extern struct {
                 \\ 1:
                 // zero base pointer for zig
                 \\ xorq %rbp, %rbp
-                // set up the *SyscallRegs argument
+                // set up the *TrapRegs argument
                 \\ movq %rsp, %rdi
             , .{
                 .code = @offsetOf(@This(), "code_segment_selector"),
@@ -1537,7 +1537,7 @@ pub const SyscallRegs = extern struct {
                 \\ pushq %r15
                 // zero base pointer for zig
                 \\ xorq %rbp, %rbp
-                // set up the *SyscallRegs argument
+                // set up the *TrapRegs argument
                 \\ movq %rsp, %rdi
             , .{
                 .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
@@ -1623,7 +1623,7 @@ pub const SyscallRegs = extern struct {
 };
 
 fn syscallHandlerWrapperWrapper() callconv(.naked) noreturn {
-    SyscallRegs.syscallEntry();
+    TrapRegs.syscallEntry();
 
     asm volatile (
         \\ call %[f:P]
@@ -1631,10 +1631,10 @@ fn syscallHandlerWrapperWrapper() callconv(.naked) noreturn {
         : [f] "X" (&syscallHandlerWrapper),
     );
 
-    SyscallRegs.exit();
+    TrapRegs.exit();
 }
 
-fn syscallHandlerWrapper(args: *SyscallRegs) callconv(.SysV) void {
+fn syscallHandlerWrapper(args: *TrapRegs) callconv(.SysV) void {
     main.syscall(args);
 }
 

@@ -173,7 +173,7 @@ pub fn smpmain(smpinfo: *limine.SmpInfo) noreturn {
 
 var syscall_stats: std.EnumArray(abi.sys.Id, std.atomic.Value(usize)) = .initFill(.init(0));
 
-pub fn syscall(trap: *arch.SyscallRegs) void {
+pub fn syscall(trap: *arch.TrapRegs) void {
     const log = std.log.scoped(.syscall);
     // log.info("syscall from cpu={} ip=0x{x} sp=0x{x}", .{ arch.cpuLocal().id, trap.rip, trap.rsp });
     // defer log.info("syscall done", .{});
@@ -217,7 +217,7 @@ fn handle_syscall(
     locals: *CpuLocalStorage,
     thread: *caps.Thread,
     id: abi.sys.Id,
-    trap: *arch.SyscallRegs,
+    trap: *arch.TrapRegs,
 ) Error!void {
     const log = std.log.scoped(.syscall);
 

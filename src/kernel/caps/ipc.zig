@@ -61,7 +61,7 @@ pub const Receiver = struct {
 
     /// block until something sends
     /// returns true if the current thread went to sleep
-    pub fn recv(self: *@This(), thread: *caps.Thread, trap: *arch.SyscallRegs) Error!void {
+    pub fn recv(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) Error!void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Receiver.recv", .{});
 
@@ -75,7 +75,7 @@ pub const Receiver = struct {
 
     // might block the user-space thread (kernel-space should only ever block after a syscall is complete)
     /// returns true if the current thread went to sleep
-    fn recvNoFail(self: *@This(), thread: *caps.Thread, trap: *arch.SyscallRegs) bool {
+    fn recvNoFail(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) bool {
         // stop the thread early to hold the lock for a shorter time
         thread.status = .waiting;
         thread.trap = trap.*;
@@ -139,7 +139,7 @@ pub const Receiver = struct {
         thread.moveExtra(sender, @truncate(msg.extra));
     }
 
-    pub fn replyRecv(self: *@This(), thread: *caps.Thread, trap: *arch.SyscallRegs, msg: abi.sys.Message) Error!void {
+    pub fn replyRecv(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs, msg: abi.sys.Message) Error!void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Receiver.replyRecv", .{});
 
@@ -199,7 +199,7 @@ pub const Sender = struct {
     }
 
     // block until the receiver is free, then switch to the receiver
-    pub fn call(self: *@This(), thread: *caps.Thread, trap: *arch.SyscallRegs, msg: abi.sys.Message) Error!void {
+    pub fn call(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs, msg: abi.sys.Message) Error!void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Sender.call {}", .{msg});
 
@@ -332,7 +332,7 @@ pub const Notify = struct {
     }
 
     /// returns true if the current thread went to sleep
-    pub fn wait(self: *@This(), thread: *caps.Thread, trap: *arch.SyscallRegs) void {
+    pub fn wait(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) void {
         // early test if its active
         if (self.poll()) {
             return;

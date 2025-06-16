@@ -23,7 +23,7 @@ pub const Thread = struct {
     // lock for modifying / executing the thread
     lock: spin.Mutex = .newLocked(),
     /// all context data
-    trap: arch.SyscallRegs = .{},
+    trap: arch.TrapRegs = .{},
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
