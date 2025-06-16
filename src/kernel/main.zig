@@ -532,7 +532,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
 
             if (thread.status == .stopped) {
-                proc.yield(trap);
+                proc.switchNow(trap, null);
             }
         },
         .thread_set_prio => {
@@ -718,7 +718,7 @@ fn handle_syscall(
         },
         .selfStop => {
             proc.stop(thread);
-            proc.yield(trap);
+            proc.switchNow(trap, null);
         },
         .self_set_extra => {
             const idx: u7 = @truncate(trap.arg0);

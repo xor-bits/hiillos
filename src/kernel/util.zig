@@ -303,7 +303,18 @@ pub fn Queue(
             self.tail = new;
         }
 
-        // pub fn pushFront() void {}
+        pub fn pushFront(self: *@This(), new: *T) void {
+            if (self.head) |head| {
+                @field(new, next_field) = head;
+                @field(head, prev_field) = new;
+            } else {
+                @field(new, next_field) = null;
+                @field(new, prev_field) = null;
+                self.tail = new;
+            }
+
+            self.head = new;
+        }
 
         pub fn popBack(self: *@This()) ?*T {
             const head = self.head orelse return null;

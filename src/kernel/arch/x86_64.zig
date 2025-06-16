@@ -668,7 +668,7 @@ pub const Entry = packed struct {
                 TrapRegs.exit();
             }
 
-            fn wrapper(trap: *TrapRegs) callconv(.sysv) void {
+            fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
                 handler.handler(trap);
             }
         };
@@ -1091,17 +1091,19 @@ pub const Idt = extern struct {
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_TIMER] = Entry.generate(struct {
-            fn handler(_: *const InterruptStackFrame) void {
+        entries[apic.IRQ_TIMER] = Entry.generateTrap(struct {
+            fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC timer interrupt", .{});
 
+                proc.yield(trap);
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_IPI] = Entry.generate(struct {
-            fn handler(_: *const InterruptStackFrame) void {
+        entries[apic.IRQ_IPI] = Entry.generateTrap(struct {
+            fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI interrupt", .{});
 
+                proc.yield(trap);
                 apic.eoi();
             }
         }).asInt();

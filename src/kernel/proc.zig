@@ -39,12 +39,27 @@ pub fn enter() noreturn {
     trap.exitNow();
 }
 
-/// add the current thread back to the ready queue (if ready) and maybe switch to another thread
+/// conditionally yield if there is a higher priority thread ready
 pub fn yield(trap: *arch.TrapRegs) void {
-    const local = arch.cpuLocal();
-    const prev = local.current_thread;
-    if (local.current_thread) |prev_thread| {
-        local.current_thread = null;
+    const prev = arch.cpuLocal().current_thread;
+
+    const priority: u8 = if (prev) |_prev| _prev.priority else @intCast(queues.len);
+    const next_thread = tryNextHigherPriority(priority) orelse return;
+
+    // clone the previous thread temporarily, because this function still
+    // uses it after another thread can take ownership of it and delete it
+    if (prev) |p| _ = p.clone();
+    defer if (prev) |p| p.deinit();
+
+    yieldReadyPrev(trap, prev);
+
+    switchTo(trap, next_thread, prev);
+}
+
+///mark the previous thread as ready
+fn yieldReadyPrev(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
+    if (prev) |prev_thread| {
+        arch.cpuLocal().current_thread = null;
         prev_thread.trap = trap.*;
 
         switch (prev_thread.status) {
@@ -55,8 +70,6 @@ pub fn yield(trap: *arch.TrapRegs) void {
             .stopped, .waiting => {},
         }
     }
-
-    switchNow(trap, prev);
 }
 
 /// switch to another thread without adding the thread back to the ready queue
@@ -144,8 +157,8 @@ pub fn next() *caps.Thread {
     }
 }
 
-pub fn tryNext() ?*caps.Thread {
-    for (&queue_locks, &queues) |*lock, *queue| {
+pub fn tryNextHigherPriority(current: u8) ?*caps.Thread {
+    for (queue_locks[0..current], queues[0..current]) |*lock, *queue| {
         lock.lock();
         const _next_thread = queue.popFront();
         lock.unlock();
@@ -160,4 +173,8 @@ pub fn tryNext() ?*caps.Thread {
     }
 
     return null;
+}
+
+pub fn tryNext() ?*caps.Thread {
+    return tryNextHigherPriority(@intCast(queues.len));
 }
