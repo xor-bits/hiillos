@@ -30,6 +30,9 @@ pub const STACK_TRACE: bool = true;
 pub const KERNEL_PANIC_RSOD: bool = true;
 pub const KERNEL_PANIC_ON_USER_FAULT: bool = false;
 pub const KERNEL_PANIC_SOURCE_INFO: bool = IS_DEBUG or false;
+/// crash the kernel and provide a good stack trace if
+/// some kernel object gets a high ref count (a likely ref leak)
+pub const KERNEL_PANIC_ON_HIGH_REFCNT: usize = 0;
 
 pub const IPC_BENCHMARK: bool = false;
 pub const SCHED_STRESS_TEST: bool = false;
