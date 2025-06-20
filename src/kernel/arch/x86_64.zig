@@ -1109,7 +1109,12 @@ pub const Idt = extern struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC timer interrupt", .{});
 
-                proc.yield(trap);
+                if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
+                    // only userspace can preempt
+                    log.debug("time slice preempt", .{});
+                    proc.yield(trap);
+                }
+
                 apic.eoi();
             }
         }).asInt();
@@ -1117,7 +1122,12 @@ pub const Idt = extern struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI interrupt", .{});
 
-                proc.yield(trap);
+                if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
+                    // only userspace can preempt
+                    log.debug("ready queue push preempt", .{});
+                    proc.yield(trap);
+                }
+
                 apic.eoi();
             }
         }).asInt();
