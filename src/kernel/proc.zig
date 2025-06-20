@@ -124,6 +124,8 @@ pub fn ready(thread: *caps.Thread) void {
     // notify a single sleeping processor
     for (&waiters) |*w| {
         const waiter: *const main.CpuLocalStorage = w.swap(null, .acquire) orelse continue;
+        if (waiter == arch.cpuLocal()) break;
+
         // log.info("giving thread to {} ({})", .{ waiter.id, waiter.lapic_id });
         apic.interProcessorInterrupt(waiter.lapic_id, apic.IRQ_IPI);
         break;
