@@ -76,7 +76,7 @@ pub const SlabAllocator = struct {
     page_allocator: std.mem.Allocator,
 
     // chunks broken into smaller pieces
-    locks: [9]abi.lock.YieldMutex = .{abi.lock.YieldMutex{}} ** 9,
+    locks: [9]abi.lock.SpinMutex = .{abi.lock.SpinMutex{}} ** 9,
     slabs: [9]FreeList = .{FreeList{}} ** 9,
 
     // // bigger chunks
