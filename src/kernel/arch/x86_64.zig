@@ -673,6 +673,11 @@ pub const Entry = packed struct {
             }
 
             fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
+                if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
+                    swapgs();
+                    @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
+                }
+
                 handler.handler(trap);
             }
         };
@@ -696,6 +701,11 @@ pub const Entry = packed struct {
             }
 
             fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
+                if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
+                    swapgs();
+                    @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
+                }
+
                 handler.handler(trap);
             }
         };
@@ -1641,6 +1651,11 @@ fn syscallHandlerWrapperWrapper() callconv(.naked) noreturn {
 }
 
 fn syscallHandlerWrapper(args: *TrapRegs) callconv(.SysV) void {
+    if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
+        swapgs();
+        @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
+    }
+
     main.syscall(args);
 }
 
