@@ -230,11 +230,43 @@ pub const Error = error{
     UnknownError,
 };
 
+pub fn errorToInt(err: Error) u32 {
+    std.debug.assert(err != Error.UnknownError);
+    const errors = @typeInfo(Error).error_set.?;
+
+    switch (err) {
+        inline else => |_comptime_err| {
+            const comptime_err: Error = comptime _comptime_err;
+            inline for (errors, 0..) |err_info, i| {
+                if (comptime @field(Error, err_info.name) == comptime_err) {
+                    // only the switch and this return stmt
+                    // will be left in the generated code
+                    return i;
+                }
+            } else unreachable;
+        },
+    }
+}
+
+pub fn intToError(i: usize) Error {
+    const errors = @typeInfo(Error).error_set.?;
+
+    switch (i) {
+        errors.len...std.math.maxInt(usize) => return Error.UnknownError,
+
+        inline else => |j| {
+            return @field(Error, errors[j].name);
+        },
+    }
+}
+
 /// FIXME: should be Error!u32
 pub fn encode(result: Error!usize) usize {
     const val = result catch |err| {
         return encodeError(err);
     };
+
+    std.debug.assert(val <= std.math.maxInt(isize));
 
     return val;
 }
@@ -247,41 +279,7 @@ pub fn encodeVoid(result: Error!void) usize {
 }
 
 fn encodeError(err: Error) usize {
-    return @bitCast(-@as(isize, switch (err) {
-        Error.Unimplemented => 1,
-        Error.InvalidAddress => 2,
-        Error.InvalidFlags => 3,
-        Error.InvalidType => 4,
-        Error.InvalidArgument => 5,
-        Error.InvalidCapability => 6,
-        Error.InvalidSyscall => 7,
-        Error.OutOfMemory => 8,
-        Error.OutOfVirtualMemory => 9,
-        Error.EntryNotPresent => 10,
-        Error.EntryIsHuge => 11,
-        Error.NotStopped => 12,
-        Error.IsStopped => 13,
-        Error.NoVmem => 14,
-        Error.ThreadSafety => 15,
-        Error.AlreadyMapped => 16,
-        Error.NotMapped => 17,
-        Error.MappingOverlap => 18,
-        Error.PermissionDenied => 19,
-        Error.Internal => 20,
-        Error.NoReplyTarget => 21,
-        Error.NotifyAlreadySubscribed => 22,
-        Error.IrqAlreadySubscribed => 23,
-        Error.TooManyIrqs => 24,
-        Error.OutOfBounds => 25,
-        Error.NotFound => 26,
-        Error.ReadFault => 27,
-        Error.WriteFault => 28,
-        Error.ExecFault => 29,
-        Error.NullHandle => 30,
-        Error.BadHandle => 31,
-
-        Error.UnknownError => std.debug.panic("unknown error shouldn't be encoded", .{}),
-    }));
+    return @bitCast(-@as(isize, errorToInt(err)));
 }
 
 pub fn decode(v: usize) Error!usize {
@@ -290,39 +288,7 @@ pub fn decode(v: usize) Error!usize {
 
     return switch (err) {
         std.math.minInt(isize)...0 => v,
-        1 => Error.Unimplemented,
-        2 => Error.InvalidAddress,
-        3 => Error.InvalidFlags,
-        4 => Error.InvalidType,
-        5 => Error.InvalidArgument,
-        6 => Error.InvalidCapability,
-        7 => Error.InvalidSyscall,
-        8 => Error.OutOfMemory,
-        9 => Error.OutOfVirtualMemory,
-        10 => Error.EntryNotPresent,
-        11 => Error.EntryIsHuge,
-        12 => Error.NotStopped,
-        13 => Error.IsStopped,
-        14 => Error.NoVmem,
-        15 => Error.ThreadSafety,
-        16 => Error.AlreadyMapped,
-        17 => Error.NotMapped,
-        18 => Error.MappingOverlap,
-        19 => Error.PermissionDenied,
-        20 => Error.Internal,
-        21 => Error.NoReplyTarget,
-        22 => Error.NotifyAlreadySubscribed,
-        23 => Error.IrqAlreadySubscribed,
-        24 => Error.TooManyIrqs,
-        25 => Error.OutOfBounds,
-        26 => Error.NotFound,
-        27 => Error.ReadFault,
-        28 => Error.WriteFault,
-        29 => Error.ExecFault,
-        30 => Error.NullHandle,
-        31 => Error.BadHandle,
-
-        else => return Error.UnknownError,
+        else => intToError(@intCast(err)),
     };
 }
 
