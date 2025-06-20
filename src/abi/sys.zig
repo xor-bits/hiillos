@@ -238,6 +238,7 @@ pub const Error = error{
     ExecFault,
     NullHandle,
     BadHandle,
+    Retry,
 
     UnknownError,
 };
