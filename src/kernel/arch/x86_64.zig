@@ -103,6 +103,10 @@ pub fn cpuLocal() *main.CpuLocalStorage {
     );
 }
 
+
+pub fn cpuCount() u32 {
+    return @intCast((smp.response orelse return 1).cpu_count);
+}
 pub fn swapgs() void {
     asm volatile (
         \\ swapgs

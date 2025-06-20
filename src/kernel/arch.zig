@@ -14,6 +14,3 @@ var cpu_id_next = std.atomic.Value(u32).init(0);
 pub fn nextCpuId() u32 {
     return cpu_id_next.fetchAdd(1, .monotonic);
 }
-pub fn cpuCount() u32 {
-    return cpu_id_next.load(.monotonic);
-}
