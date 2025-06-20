@@ -25,6 +25,7 @@ const RefCnt = abi.epoch.RefCnt;
 pub const Thread = caps_thread.Thread;
 pub const Process = caps_proc.Process;
 pub const Frame = caps_frame.Frame;
+pub const TlbShootdown = caps_frame.TlbShootdown;
 pub const Vmem = caps_vmem.Vmem;
 pub const Mapping = caps_mapping.Mapping;
 pub const Receiver = caps_ipc.Receiver;
@@ -308,7 +309,15 @@ test "new VmemObject and FrameObject" {
         .write,
         addr.Virt.fromInt(0x4000),
     ) catch unreachable;
-    try vmem.unmap(addr.Virt.fromInt(0x2000), 1);
+    var thread: Thread = undefined;
+    var trap: arch.TrapRegs = undefined;
+    _ = try vmem.unmap(
+        &trap,
+        &thread,
+        addr.Virt.fromInt(0x2000),
+        1,
+        true,
+    );
     std.debug.assert(error.NotMapped == vmem.pageFault(
         .write,
         addr.Virt.fromInt(0x2000),
@@ -317,8 +326,8 @@ test "new VmemObject and FrameObject" {
         .write,
         addr.Virt.fromInt(0x5000),
     ) catch unreachable;
-    const a = try frame.page_hit(4, true);
-    const b = try frame.page_hit(4, false);
+    const a = try frame.pageFault(4, true, null);
+    const b = try frame.pageFault(4, false, null);
     std.debug.assert(a == b);
     std.debug.assert(a != 0);
     frame.deinit();

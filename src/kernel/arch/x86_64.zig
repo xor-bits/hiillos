@@ -54,13 +54,15 @@ pub fn initCpu(id: u32, smpinfo: ?*limine.SmpInfo) !void {
     else
         0;
 
-    const tls = try pmem.page_allocator.create(main.CpuLocalStorage);
+    const tls = &main.all_cpu_locals[id];
     tls.* = .{
         .self_ptr = tls,
         .cpu_config = undefined,
         .id = id,
         .lapic_id = @truncate(lapic_id),
+        .initialized = .init(false),
     };
+    std.debug.assert(std.mem.isAligned(@intFromPtr(tls), 0x1000));
 
     try CpuConfig.init(&tls.cpu_config, id);
 
@@ -71,6 +73,8 @@ pub fn initCpu(id: u32, smpinfo: ?*limine.SmpInfo) !void {
     // log.info("default PAT = 0x{x}", .{rdmsr(IA32_PAT_MSR)});
     wrmsr(IA32_PAT_MSR, abi.sys.CacheType.patMsr());
     // log.info("PAT = 0x{x}", .{abi.sys.CacheType.patMsr()});
+
+    tls.initialized.store(true, .release);
 }
 
 // launch 2 next processors (snowball)
@@ -103,10 +107,16 @@ pub fn cpuLocal() *main.CpuLocalStorage {
     );
 }
 
+pub fn cpuIdSafe() ?u32 {
+    const gs = rdmsr(GS_BASE);
+    if (gs == 0) return null;
+    return cpuLocal().id;
+}
 
 pub fn cpuCount() u32 {
     return @intCast((smp.response orelse return 1).cpu_count);
 }
+
 pub fn swapgs() void {
     asm volatile (
         \\ swapgs
@@ -130,6 +140,7 @@ pub const ints = struct {
 
     /// wait for the next interrupt
     pub fn wait() callconv(.C) void {
+        // TODO: check held lock count before waiting, as as debug info
         asm volatile (
             \\ sti
             \\ hlt
@@ -440,12 +451,6 @@ pub fn flushTlbAddr(vaddr: usize) void {
 
 /// processor ID
 pub fn cpuId() u32 {
-    return cpuLocal().id;
-}
-
-pub fn cpuIdSafe() ?u32 {
-    const gs = rdmsr(GS_BASE);
-    if (gs == 0) return null;
     return cpuLocal().id;
 }
 
@@ -921,7 +926,7 @@ pub const Idt = extern struct {
                 const pfec: PageFaultError = @bitCast(trap.error_code);
                 const target_addr = Cr2.read().page_fault_addr;
 
-                if (conf.LOG_EVERYTHING) log.debug("general protection fault interrupt", .{});
+                if (conf.LOG_EVERYTHING) log.debug("page fault exception", .{});
 
                 const caused_by: FaultCause = if (pfec.caused_by_write)
                     .write
@@ -930,55 +935,7 @@ pub const Idt = extern struct {
                 else
                     .read;
 
-                const thread = cpuLocal().current_thread.?;
-
-                const vaddr = addr.Virt.fromUser(target_addr) catch |err| {
-                    log.warn("unhandled page fault: {}", .{err});
-                    thread.unhandledPageFault(
-                        target_addr,
-                        caused_by,
-                        trap.rip,
-                        trap.rsp,
-                        err,
-                    );
-                };
-
-                if (pfec.user_mode and !conf.KERNEL_PANIC_ON_USER_FAULT) {
-                    thread.proc.vmem.pageFault(caused_by, vaddr) catch |err| {
-                        log.warn("unhandled page fault: {}", .{err});
-                        thread.unhandledPageFault(
-                            target_addr,
-                            caused_by,
-                            trap.rip,
-                            trap.rsp,
-                            err,
-                        );
-                    };
-
-                    // log.warn(
-                    //     \\page fault 0x{x}
-                    //     \\ - user: {any}
-                    //     \\ - caused by write: {any}
-                    //     \\ - instruction fetch: {any}
-                    //     \\ - ip: 0x{x}
-                    //     \\ - sp: 0x{x}
-                    //     \\ - pfec: {}
-                    // , .{
-                    //     target_addr,
-                    //     pfec.user_mode,
-                    //     pfec.caused_by_write,
-                    //     pfec.instruction_fetch,
-                    //     interrupt_stack_frame.ip,
-                    //     interrupt_stack_frame.sp,
-                    //     pfec,
-                    // });
-
-                    // log.info("trap={}", .{trap});
-                    // sysret(trap);
-                    return;
-                }
-
-                std.debug.panic(
+                if (!pfec.user_mode or cpuLocal().current_thread == null) std.debug.panic(
                     \\unhandled page fault 0x{x}
                     \\ - user: {any}
                     \\ - caused by write: {any}
@@ -998,6 +955,48 @@ pub const Idt = extern struct {
                     pfec,
                     logs.Addr2Line{ .addr = trap.rip },
                 });
+
+                // log.warn(
+                //     \\page fault 0x{x}
+                //     \\ - user: {any}
+                //     \\ - caused by write: {any}
+                //     \\ - instruction fetch: {any}
+                //     \\ - ip: 0x{x}
+                //     \\ - sp: 0x{x}
+                //     \\ - pfec: {}
+                // , .{
+                //     target_addr,
+                //     pfec.user_mode,
+                //     pfec.caused_by_write,
+                //     pfec.instruction_fetch,
+                //     trap.rip,
+                //     trap.rsp,
+                //     pfec,
+                // });
+
+                const thread = cpuLocal().current_thread.?;
+
+                const vaddr = addr.Virt.fromUser(target_addr) catch |err| {
+                    log.warn("unhandled page fault: {}", .{err});
+                    thread.unhandledPageFault(
+                        target_addr,
+                        caused_by,
+                        trap.rip,
+                        trap.rsp,
+                        err,
+                    );
+                };
+
+                thread.proc.vmem.pageFault(caused_by, vaddr) catch |err| {
+                    log.warn("unhandled page fault: {}", .{err});
+                    thread.unhandledPageFault(
+                        target_addr,
+                        caused_by,
+                        trap.rip,
+                        trap.rsp,
+                        err,
+                    );
+                };
             }
         }).withStack(1).asInt();
         // reserved
@@ -1141,9 +1140,20 @@ pub const Idt = extern struct {
         }).asInt();
         entries[apic.IRQ_IPI_TLB_SHOOTDOWN] = Entry.generate(struct {
             fn handler(_: *const InterruptStackFrame) void {
-                if (conf.LOG_INTERRUPTS) log.debug("kernel panic interrupt", .{});
+                if (conf.LOG_INTERRUPTS) log.debug("TLB shootdown interrupt", .{});
 
-                flushTlb();
+                const locals = cpuLocal();
+                while (b: {
+                    locals.tlb_shootdown_queue_lock.lock();
+                    defer locals.tlb_shootdown_queue_lock.unlock();
+                    break :b locals.tlb_shootdown_queue.popFront();
+                }) |tcb_shootdown| {
+                    if (tcb_shootdown.deinit()) |thread| {
+                        // log.debug("TLB shootdowns complete for {*}", .{thread});
+                        proc.ready(thread);
+                    }
+                }
+
                 apic.eoi();
             }
         }).asInt();
@@ -1193,7 +1203,7 @@ fn interrupt(interrupt_stack_frame: *const InterruptStackFrame) callconv(.Interr
 
 pub const CpuConfig = struct {
     // KernelGS:0 here
-    rsp_kernel: u64 align(0x1000),
+    rsp_kernel: u64,
     rsp_user: u64,
 
     gdt: Gdt,
@@ -1506,6 +1516,7 @@ pub const TrapRegs = extern struct {
                 \\ pushq %rdi
                 \\ pushq %rsi
                 \\ pushq %rbp
+                \\ movq %rsp, %rbp
                 \\ pushq %r8
                 \\ pushq %r9
                 \\ pushq %r10
@@ -1520,7 +1531,7 @@ pub const TrapRegs = extern struct {
                 \\ swapgs
                 \\ 1:
                 // zero base pointer for zig
-                \\ xorq %rbp, %rbp
+                // \\ xorq %rbp, %rbp
                 // set up the *TrapRegs argument
                 \\ movq %rsp, %rdi
             , .{
@@ -1553,6 +1564,7 @@ pub const TrapRegs = extern struct {
                 \\ pushq %rdi
                 \\ pushq %rsi
                 \\ pushq %rbp
+                \\ movq %rsp, %rbp
                 \\ pushq %r8
                 \\ pushq %r9
                 \\ pushq %r10
@@ -1562,7 +1574,7 @@ pub const TrapRegs = extern struct {
                 \\ pushq %r14
                 \\ pushq %r15
                 // zero base pointer for zig
-                \\ xorq %rbp, %rbp
+                // \\ xorq %rbp, %rbp
                 // set up the *TrapRegs argument
                 \\ movq %rsp, %rdi
             , .{
@@ -1588,10 +1600,6 @@ pub const TrapRegs = extern struct {
 
     pub inline fn exit() void {
         asm volatile (std.fmt.comptimePrint(
-                // check which return method to use
-                \\ movq {[return_mode]d}(%rsp), %rax
-                \\ testq %rax, %rax
-                // ZF is now: sysretq => 1, iretq => 0
                 // push all scratch + general purpose registers
                 \\ popq %r15
                 \\ popq %r14
@@ -1607,9 +1615,16 @@ pub const TrapRegs = extern struct {
                 \\ popq %rdx
                 \\ popq %rcx
                 \\ popq %rbx
-                \\ popq %rax
-                // discard the error code and the return mode
-                \\ addq $16, %rsp
+                // \\ popq %rax
+                // \\ addq $8, %rsp
+                // discard rax, the error code and the return mode
+                \\ addq $24, %rsp
+                // check which return method to use
+                \\ movq -16(%rsp), %rax
+                \\ testq %rax, %rax
+                // now read rax again after its not needed anymore
+                \\ movq -24(%rsp), %rax
+                // ZF is now: sysretq => 1, iretq => 0
                 // use the ZF set earlier to branch
                 \\ jne 1f
 
@@ -1641,7 +1656,7 @@ pub const TrapRegs = extern struct {
                 \\ ud2
                 \\ ud2
             , .{
-                .return_mode = @offsetOf(@This(), "return_mode"),
+                // .return_mode = @offsetOf(@This(), "return_mode"),
                 .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
                 .user_code = GdtDescriptor.user_code_selector,
             }) ::: "memory");

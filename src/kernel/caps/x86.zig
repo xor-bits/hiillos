@@ -130,9 +130,9 @@ pub const Vmem = struct {
         return next.canUnmapHugeFrame(paddr, vaddr);
     }
 
-    pub fn canUnmapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
+    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canUnmapFrame(paddr, vaddr);
+        return next.canUnmapFrame(vaddr);
     }
 };
 
@@ -217,9 +217,9 @@ pub const PageTableLevel3 = struct {
         return next.canUnmapHugeFrame(paddr, vaddr);
     }
 
-    pub fn canUnmapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
+    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.canUnmapFrame(paddr, vaddr);
+        return next.canUnmapFrame(vaddr);
     }
 };
 
@@ -276,9 +276,9 @@ pub const PageTableLevel2 = struct {
         if (entry.page_index & 0xFFFF_FFFE != paddr.toParts().page) return Error.NotMapped;
     }
 
-    pub fn canUnmapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
+    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        return next.canUnmapFrame(paddr, vaddr);
+        return next.canUnmapFrame(vaddr);
     }
 };
 
@@ -305,10 +305,9 @@ pub const PageTableLevel1 = struct {
         return isEmpty(&self.entries);
     }
 
-    pub fn canUnmapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
+    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
         const entry: Entry = volat(&self.entries[vaddr.toParts().level1]).*;
         if (entry.present != 1) return Error.NotMapped;
-        if (entry.page_index != paddr.toParts().page) return Error.NotMapped;
     }
 };
 

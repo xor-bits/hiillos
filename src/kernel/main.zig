@@ -27,12 +27,13 @@ const Error = abi.sys.Error;
 
 pub export var base_revision: limine.BaseRevision = .{ .revision = 2 };
 pub export var hhdm: limine.HhdmRequest = .{};
-pub var cpus_initialized: std.atomic.Value(usize) = .{ .raw = 0 };
-pub var all_cpus_ininitalized: std.atomic.Value(bool) = .{ .raw = false };
+pub var all_cpu_locals: []CpuLocalStorage = &.{};
 
 pub var hhdm_offset: usize = 0xFFFF_8000_0000_0000;
 
 pub const CpuLocalStorage = struct {
+    _: void align(0x1000) = {},
+
     // used to read the pointer to this struct through GS
     self_ptr: *CpuLocalStorage,
 
@@ -48,6 +49,10 @@ pub const CpuLocalStorage = struct {
         .{apic.Handler{}} ** apic.IRQ_AVAIL_COUNT,
 
     epoch_locals: abi.epoch.Locals = .{},
+
+    tlb_shootdown_queue: util.Queue(caps.TlbShootdown, "next", "prev") = .{},
+    tlb_shootdown_queue_lock: spin.Mutex = .{},
+    initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
 };
@@ -92,6 +97,11 @@ pub fn main() noreturn {
         std.debug.panic("failed to initialize PMM: {}", .{err});
     };
 
+    util.volat(&all_cpu_locals).* = pmem.page_allocator.alloc(CpuLocalStorage, arch.cpuCount()) catch |err| {
+        std.debug.panic("failed to CPU locals: {}", .{err});
+    };
+    for (all_cpu_locals) |*locals| locals.initialized.store(false, .release);
+
     log.info("initializing DWARF info", .{});
     logs.init() catch |err| {
         std.debug.panic("failed to initialize DWARF info: {}", .{err});
@@ -108,6 +118,7 @@ pub fn main() noreturn {
     };
 
     // initialize kernel object garbage collector
+    // TODO: unused
     abi.epoch.init_thread();
 
     log.info("parsing kernel cmdline", .{});
@@ -368,8 +379,10 @@ fn handle_syscall(
             const vmem = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
             defer vmem.deinit();
 
-            try vmem.unmap(vaddr, pages);
             trap.syscall_id = abi.sys.encode(0);
+            if (try vmem.unmap(trap, thread, vaddr, pages, false)) {
+                proc.switchNow(trap, null);
+            }
         },
         .vmem_read => {
             var dst_vaddr = try addr.Virt.fromUser(trap.arg2);

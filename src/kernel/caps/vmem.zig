@@ -5,7 +5,9 @@ const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
+const proc = @import("../proc.zig");
 const spin = @import("../spin.zig");
 
 const conf = abi.conf;
@@ -21,6 +23,8 @@ pub const Vmem = struct {
     lock: spin.Mutex = .new(),
     cr3: u32,
     mappings: std.ArrayList(*caps.Mapping),
+    // bitset of all cpus that have used this vmem
+    // cpus: u256 = 0,
 
     pub fn init() Error!*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -172,6 +176,8 @@ pub const Vmem = struct {
     }
 
     pub fn switchTo(self: *@This()) void {
+        // self.cpus |= 1 << arch.cpuId();
+
         std.debug.assert(self.cr3 != 0);
         caps.HalVmem.switchTo(addr.Phys.fromParts(
             .{ .page = self.cr3 },
@@ -390,7 +396,15 @@ pub const Vmem = struct {
         return mappings[idx + 1].start();
     }
 
-    pub fn unmap(self: *@This(), vaddr: addr.Virt, pages: u32) Error!void {
+    /// will most likely switch processes returning Error.Retry
+    pub fn unmap(
+        self: *@This(),
+        trap: *arch.TrapRegs,
+        thread: *caps.Thread,
+        vaddr: addr.Virt,
+        pages: u32,
+        comptime is_test: bool,
+    ) Error!bool {
         std.debug.assert(self.check());
         defer std.debug.assert(self.check());
 
@@ -399,7 +413,8 @@ pub const Vmem = struct {
         defer if (conf.LOG_OBJ_CALLS)
             log.info("Vmem.unmap returned", .{});
 
-        if (pages == 0) return;
+        if (pages == 0)
+            return false;
         std.debug.assert(vaddr.toParts().offset == 0);
         try @This().assert_userspace(vaddr, pages);
 
@@ -408,7 +423,8 @@ pub const Vmem = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        var idx = self.find(vaddr) orelse return;
+        var idx = self.find(vaddr) orelse
+            return false;
 
         while (true) {
             if (idx >= self.mappings.items.len)
@@ -492,23 +508,150 @@ pub const Vmem = struct {
         }
 
         if (self.cr3 == 0)
-            return;
+            return false;
+        const hal_vmem = self.halPageTable();
 
-        const vmem = self.halPageTable();
+        // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
+        const ipi_bitmap: u256 = ~@as(u256, 0);
 
         for (0..pages) |page_idx| {
             // already checked to be in bounds
             const page_vaddr = addr.Virt.fromInt(vaddr.raw + page_idx * 0x1000);
-            vmem.unmapFrame(page_vaddr) catch |err| {
+            hal_vmem.unmapFrame(page_vaddr) catch |err| {
                 log.warn("unmap err: {}, should be ok", .{err});
             };
-            arch.flushTlbAddr(page_vaddr.raw);
         }
 
-        // FIXME: targetted TLB shootdown
-        // TODO: proper MMU lock, locking which forces all CPUs using it to context switch away
-        for (0..255) |i| {
-            apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
+        if (ipi_bitmap == (@as(u256, 1) << @as(u8, @intCast(arch.cpuId())))) {
+            @branchHint(.likely);
+            return false;
+        }
+
+        const tlb_shootdown = try caps.TlbShootdown.init(
+            .{ .unmap = thread },
+            .{ .range = .{
+                vaddr,
+                addr.Virt.fromInt(vaddr.raw + pages * 0x1000),
+            } },
+        );
+        thread.status = .waiting;
+        thread.trap = trap.*;
+
+        if (is_test) {
+            // tests cannot yield or do IPIs or other stuff
+            _ = tlb_shootdown.deinit();
+            return false;
+        }
+
+        for (main.all_cpu_locals, 0..) |*locals, i| {
+            // no need to send an IPI to self
+            if (locals == arch.cpuLocal()) continue;
+
+            if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
+                locals.tlb_shootdown_queue_lock.lock();
+                locals.tlb_shootdown_queue.pushBack(tlb_shootdown.clone());
+                locals.tlb_shootdown_queue_lock.unlock();
+
+                // log.debug("issuing a TCB shootdown from unmap", .{});
+                apic.interProcessorInterrupt(
+                    locals.lapic_id,
+                    apic.IRQ_IPI_TLB_SHOOTDOWN,
+                );
+            } else {}
+        }
+
+        if (tlb_shootdown.deinit()) |this_thread| {
+            @branchHint(.likely);
+            std.debug.assert(this_thread == thread);
+            this_thread.status = .running;
+        } else {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// update every `idx` page mapped from `frame` that is mapped into this vmem
+    ///
+    /// the mapping is removed from the hardware page tables but not from the mapping table
+    /// so it is updated once a page fault happens
+    pub fn refresh(
+        self: *@This(),
+        frame: *caps.Frame,
+        idx: u32,
+        ipi_bitmap: *u256,
+        dont_lock_if: ?*caps.Vmem,
+    ) !void {
+        // this function might or might not be ran on the
+        // same vmem that started the cross-vmem page refresh
+        if (self != dont_lock_if) self.lock.lock();
+        defer if (self != dont_lock_if) self.lock.unlock();
+
+        if (self.cr3 == 0)
+            return;
+
+        const hal_vmem = self.halPageTable();
+
+        for (self.mappings.items) |mapping| {
+            if (mapping.frame != frame) continue;
+
+            // check if the `idx` is within this mapping
+            const mapping_idx = std.math.sub(
+                u32,
+                idx,
+                mapping.frame_first_page,
+            ) catch continue;
+            if (mapping_idx >= mapping.pages) continue;
+
+            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + 0x1000 * mapping_idx);
+
+            try refreshPageAndTcbShootdown(
+                frame,
+                hal_vmem,
+                vaddr,
+                ipi_bitmap,
+            );
+        }
+
+        // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
+    }
+
+    fn refreshPageAndTcbShootdown(
+        frame: *caps.Frame,
+        hal_vmem: *volatile caps.HalVmem,
+        vaddr: addr.Virt,
+        ipi_bitmap: *u256,
+    ) !void {
+        hal_vmem.canUnmapFrame(vaddr) catch |err| {
+            // not mapped = no need to unmap and tlb shootdown it
+            if (err == Error.NotMapped) return;
+            return err;
+        };
+        try hal_vmem.unmapFrame(vaddr);
+
+        // TODO: atomically swap the frame entry,
+        // swapping in the empty entry and acquiring the `accessed` and `dirty` bits
+
+        log.debug("found a stale TCB entry", .{});
+
+        const shootdown = try caps.TlbShootdown.init(
+            .{ .transient = frame.clone() },
+            .{ .individual = vaddr },
+        );
+        defer _ = shootdown.deinit();
+
+        for (main.all_cpu_locals, 0..) |*locals, i| {
+            if (!locals.initialized.load(.acquire)) continue;
+
+            if (locals == arch.cpuLocal()) {
+                // no need to send a self IPI
+                arch.flushTlbAddr(vaddr.raw);
+            } else {
+                locals.tlb_shootdown_queue_lock.lock();
+                defer locals.tlb_shootdown_queue_lock.unlock();
+                locals.tlb_shootdown_queue.pushBack(shootdown.clone());
+                ipi_bitmap.* |= @as(u256, 1) << @as(u8, @intCast(i));
+            }
         }
     }
 
@@ -536,6 +679,9 @@ pub const Vmem = struct {
         caused_by: arch.FaultCause,
         vaddr_unaligned: addr.Virt,
     ) Error!void {
+        if (conf.LOG_PAGE_FAULTS)
+            log.info("pf @0x{x}", .{vaddr_unaligned.raw});
+
         const vaddr: addr.Virt = addr.Virt.fromInt(std.mem.alignBackward(
             usize,
             vaddr_unaligned.raw,
@@ -586,57 +732,47 @@ pub const Vmem = struct {
         std.debug.assert(page_offs < mapping.pages);
         std.debug.assert(self.cr3 != 0);
 
-        const vmem = self.halPageTable();
+        const hal_vmem = self.halPageTable();
+        const entry = try hal_vmem.entryFrame(vaddr);
 
-        const entry = (try vmem.entryFrame(vaddr)).*;
-
-        switch (caused_by) {
-            .read, .exec => {
-                // was mapped but only now accessed using a read/exec
-                std.debug.assert(entry.present == 0);
-
-                const wanted_page_index = try mapping.frame.page_hit(
-                    mapping.frame_first_page + page_offs,
-                    false,
-                );
-                std.debug.assert(entry.page_index != wanted_page_index); // mapping error from a previous fault
-
-                try vmem.mapFrame(
-                    addr.Phys.fromParts(.{ .page = wanted_page_index }),
-                    vaddr,
-                    mapping.target.rights,
-                    mapping.target.flags,
-                );
-                arch.flushTlbAddr(vaddr.raw);
-
-                return;
-            },
-            .write => {
-                // was mapped but only now accessed using a write
-
-                // a read from a lazy
-                const wanted_page_index = try mapping.frame.page_hit(
-                    mapping.frame_first_page + page_offs,
-                    true,
-                );
-                std.debug.assert(entry.page_index != wanted_page_index); // mapping error from a previous fault
-
-                try vmem.mapFrame(
-                    addr.Phys.fromParts(.{ .page = wanted_page_index }),
-                    vaddr,
-                    mapping.target.rights,
-                    mapping.target.flags,
-                );
-                arch.flushTlbAddr(vaddr.raw);
-
-                return;
-
-                // TODO: copy on write maps
-            },
+        // accessing a page with a write also immediately makes it readable/executable
+        // log.debug("caused_by={} entry={}", .{ caused_by, entry });
+        if (caused_by != .write and entry.*.present != 0) {
+            // already resolved by another thread
+            return;
         }
 
-        // mapping has all rights and is present, the page fault should not have happened
-        unreachable;
+        // read, exec => was mapped but only now accessed using a read/exec
+        // write      => was mapped but only now accessed using a write
+        const wanted_page_index = try mapping.frame.pageFault(
+            mapping.frame_first_page + page_offs,
+            caused_by == .write,
+            self,
+        );
+
+        if (conf.LOG_PAGE_FAULTS)
+            log.debug("cause={s} wanted={} prev={}", .{
+                @tagName(caused_by),
+                wanted_page_index,
+                entry.*,
+            });
+
+        // if the wanted_page_index is the same as the existing page,
+        // then the cause must be a write after it was already mapped with read
+        // and remapping the same page with new rights is fine without TLB shootdown IPIs
+
+        const rights = if (caused_by == .write)
+            mapping.target.rights
+        else
+            mapping.target.rights.intersection(comptime abi.sys.Rights.parse("urx").?);
+
+        try hal_vmem.mapFrame(
+            addr.Phys.fromParts(.{ .page = wanted_page_index }),
+            vaddr,
+            rights,
+            mapping.target.flags,
+        );
+        arch.flushTlbAddr(vaddr.raw);
     }
 
     pub fn dump(self: *@This()) void {

@@ -5,6 +5,7 @@ const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 const spin = @import("../spin.zig");
@@ -24,6 +25,7 @@ pub const Frame = struct {
     // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
     is_transient: bool = false,
     transient_sleep_queue: util.Queue(caps.Thread, "next", "prev") = .{},
+    tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,
     lock: spin.Mutex = .new(),
@@ -200,7 +202,11 @@ pub const Frame = struct {
             defer self.idx += 1;
             defer self.offset_within_first = null;
 
-            const page = try self.frame.page_hit(self.idx, self.is_write);
+            const page = try self.frame.pageFault(
+                self.idx,
+                self.is_write,
+                null,
+            );
 
             return addr.Phys.fromParts(.{ .page = page })
                 .toHhdm()
@@ -232,93 +238,14 @@ pub const Frame = struct {
         };
     }
 
-    pub fn page_hit(self: *@This(), idx: u32, is_write: bool) !u32 {
-        const result = try self.updatePage(idx, is_write);
-
-        switch (result) {
-            .reused => |page| return page,
-            .remap => |info| return info.page,
-            else => {
-                return 0;
-            },
-        }
-
-        switch (result) {
-            .reused => |page| {
-                @branchHint(.likely);
-                return page;
-            },
-            .is_transient => {
-                @panic("TODO: sleep");
-            },
-            .remap => |info| {
-                std.sort.pdq(*caps.Vmem, info.updates, {}, struct {
-                    fn lessThanFn(_: void, lhs: *caps.Vmem, rhs: *caps.Vmem) bool {
-                        return @intFromPtr(lhs) < @intFromPtr(rhs);
-                    }
-                }.lessThanFn);
-
-                var ipi_bitmap: u256 = ~@as(u256, 0);
-
-                var prev: ?*caps.Vmem = null;
-                for (info.updates) |vmem_with_old_mappings| {
-                    // filter out duplicates
-                    if (prev == vmem_with_old_mappings) continue;
-                    prev = vmem_with_old_mappings;
-
-                    vmem_with_old_mappings.lock.lock();
-                    defer vmem_with_old_mappings.lock.unlock();
-
-                    for (vmem_with_old_mappings.mappings.items) |vmem_mapping| {
-                        // check if that specific mapping has this currently transient frame
-                        if (vmem_mapping.frame != self) continue;
-
-                        // check if the `idx` is within this mapping
-                        const mapping_idx = std.math.sub(u32, idx, vmem_mapping.frame_first_page) catch continue;
-                        if (mapping_idx >= vmem_mapping.pages) continue;
-
-                        // found a caps.Mapping in a caps.Vmem that has the old page
-
-                        // unmap from hardware page tables, not from the high-level mappings table
-                        try vmem_with_old_mappings
-                            .halPageTable()
-                            .unmapFrame(.fromInt(vmem_mapping.getVaddr().raw + 0x1000 * mapping_idx));
-                    } else continue;
-
-                    // FIXME: save CPU LAPIC IDs for targetted TLB shootdown
-                }
-
-                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().lapic_id)));
-
-                if (@popCount(ipi_bitmap) == 0) {
-                    @branchHint(.likely);
-                    // no other CPU could have had the old mapping in their TLB
-
-                    self.lock.lock();
-                    defer self.lock.unlock();
-
-                    self.is_transient = false;
-                    while (self.transient_sleep_queue.popBack()) |sleeper| {
-                        proc.ready(sleeper);
-                    }
-
-                    return info.page;
-                }
-
-                // some other CPU might have the old mapping cached
-
-                // FIXME: targetted TLB shootdown: only specific CPUs and only specific `ivlpg`s
-                for (0..255) |i| {
-                    if (ipi_bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
-                        apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_TLB_SHOOTDOWN);
-                    }
-                }
-
-                @panic("todo");
-            },
-        }
-
-        // TODO: on remap/unmap
+    /// returning Error.Retry means switching away from the thread from a page fault handler
+    /// or using userspace logic to initialize the used page and retrying
+    pub fn pageFault(
+        self: *@This(),
+        idx: u32,
+        is_write: bool,
+        dont_lock_if: ?*caps.Vmem,
+    ) Error!u32 {
         //     1.  lock `Frame`
         //     2.  copy all mappings that reference the old page to a temporary list
         //     3.  set `is_transient` flag
@@ -351,11 +278,94 @@ pub const Frame = struct {
         //    23.  wake up all threads in the `transient_sleep_queue`
         //    24.  unlock `Frame`
         //
+
+        const result = try self.updatePage(idx, is_write);
+
+        switch (result) {
+            .reused => |page| {
+                @branchHint(.likely);
+                return page;
+            },
+            .is_transient => {
+                // log.debug("retry cause: is_transient", .{});
+                return Error.Retry;
+            },
+            .remap => |info| {
+                defer {
+                    for (info.updates) |vmem| vmem.deinit();
+                    caps.slab_allocator.allocator().free(info.updates);
+                }
+
+                std.sort.pdq(*caps.Vmem, info.updates, {}, struct {
+                    fn lessThanFn(_: void, lhs: *caps.Vmem, rhs: *caps.Vmem) bool {
+                        return @intFromPtr(lhs) < @intFromPtr(rhs);
+                    }
+                }.lessThanFn);
+
+                var ipi_bitmap: u256 = 0;
+
+                // this CPU owns a single manual tlb_shootdown_refcnt reference
+                self.tlb_shootdown_refcnt.inc();
+
+                var prev: ?*caps.Vmem = null;
+                for (info.updates) |vmem_with_old_mappings| {
+                    // filter out duplicates
+                    if (prev == vmem_with_old_mappings) continue;
+                    prev = vmem_with_old_mappings;
+
+                    try vmem_with_old_mappings.refresh(
+                        self,
+                        idx,
+                        &ipi_bitmap,
+                        dont_lock_if,
+                    );
+                }
+
+                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().lapic_id)));
+                // const ipi_count = @popCount(ipi_bitmap);
+
+                if (self.deinitTlbShootdown()) {
+                    @branchHint(.likely);
+                    return info.new_page;
+                }
+                // log.debug("tlb_shootdown_refcnt={}", .{self.tlb_shootdown_refcnt.load()});
+
+                for (main.all_cpu_locals, 0..) |*locals, i| {
+                    if (locals == arch.cpuLocal()) continue; // no need to send a self IPI
+
+                    if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
+                        log.err("issuing a TCB shootdown from transient page", .{});
+                        apic.interProcessorInterrupt(
+                            locals.lapic_id,
+                            apic.IRQ_IPI_TLB_SHOOTDOWN,
+                        );
+                    }
+                }
+
+                // log.debug("retry cause: IPI ACK wait", .{});
+                return Error.Retry;
+            },
+        }
+
         // TODO: better page table HAL where remap and unmap ops do the TLB shootdown
+    }
 
-        result.reused;
+    /// returns true if the whole TLB shootdown process was complete
+    pub fn deinitTlbShootdown(self: *@This()) bool {
+        if (!self.tlb_shootdown_refcnt.dec()) return false;
 
-        return result.phys_page;
+        // all tlb shootdown objects executed,
+        // make the frame as ready to use again
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        self.is_transient = false;
+        while (self.transient_sleep_queue.popFront()) |sleeper| {
+            proc.ready(sleeper);
+        }
+
+        return true;
     }
 
     const UpdatePageResult = union(enum) {
@@ -366,7 +376,8 @@ pub const Frame = struct {
         /// the old page needs to be copied (copy-on-write and lazy-alloc) and all active
         /// mappings need to be updated
         remap: struct {
-            page: u32,
+            new_page: u32,
+            old_page: u32,
             updates: []*caps.Vmem,
         },
     };
@@ -391,20 +402,24 @@ pub const Frame = struct {
             // save all old mappings that need to be updated
             // TODO: use a per-CPU arena allocator
 
-            const new_page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-            errdefer pmem.deallocChunk(new_page, .@"4KiB");
-            // const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
+            const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
+            errdefer pmem.deallocChunk(alloc, .@"4KiB");
+            const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
 
-            page.* = new_page.toParts().page;
-            // self.is_transient = true;
+            const new_page = alloc.toParts().page;
+            const old_page = page.*;
 
-            // for (self.mappings.items, old) |a, *b| {
-            //     b.* = a.vmem.clone();
-            // }
+            page.* = new_page;
+            self.is_transient = true;
+
+            for (self.mappings.items, old) |a, *b| {
+                b.* = a.vmem.clone();
+            }
 
             return .{ .remap = .{
-                .page = page.*,
-                .updates = &.{},
+                .new_page = new_page,
+                .old_page = old_page,
+                .updates = old,
             } };
         } else {
             // already mapped AND write to a page that isnt readonly_zero_page or read from any page
@@ -419,5 +434,90 @@ pub const Frame = struct {
         //     page.* = readonly_zero_page_now;
         //     return page.*;
         // }
+    }
+};
+
+/// kernel internal object
+pub const TlbShootdown = struct {
+    // FIXME: prevent reordering so that the offset would be same on all objects
+    refcnt: abi.epoch.RefCnt = .{},
+
+    completion: Completion,
+    target: Target,
+
+    next: ?*@This() = null,
+    prev: ?*@This() = null,
+
+    pub const Completion = union(enum) {
+        transient: *caps.Frame,
+        unmap: *caps.Thread,
+    };
+
+    // TODO: PCID
+    pub const Target = union(enum) {
+        individual: addr.Virt,
+        range: [2]addr.Virt,
+        whole: void,
+    };
+
+    pub fn init(
+        completion: Completion,
+        target: Target,
+    ) !*@This() {
+        if (conf.LOG_OBJ_CALLS)
+            log.info("TlbShootdown.init completion={} target={}", .{ completion, target });
+
+        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
+        obj.* = .{ .completion = completion, .target = target };
+
+        switch (obj.completion) {
+            .transient => |frame| frame.tlb_shootdown_refcnt.inc(),
+            .unmap => |_| {},
+        }
+
+        return obj;
+    }
+
+    pub fn deinit(self: *@This()) ?*caps.Thread {
+        // log.debug("TLB (partial) flush", .{});
+        switch (self.target) {
+            .individual => |vaddr| arch.flushTlbAddr(vaddr.raw),
+            .range => |vaddr_range| {
+                for (vaddr_range[0].raw..vaddr_range[1].raw) |vaddr|
+                    arch.flushTlbAddr(vaddr);
+            },
+            .whole => arch.flushTlb(),
+        }
+
+        if (!self.refcnt.dec()) return null;
+
+        defer caps.slab_allocator.allocator().destroy(self);
+
+        if (conf.LOG_OBJ_CALLS)
+            log.info("TlbShootdown.deinit", .{});
+
+        switch (self.completion) {
+            .transient => |frame| {
+                defer frame.deinit();
+
+                frame.lock.lock();
+                defer frame.lock.unlock();
+
+                _ = frame.deinitTlbShootdown();
+
+                return null;
+            },
+            .unmap => |thread| {
+                return thread;
+            },
+        }
+    }
+
+    pub fn clone(self: *@This()) *@This() {
+        if (conf.LOG_OBJ_CALLS)
+            log.info("TlbShootdown.clone", .{});
+
+        self.refcnt.inc();
+        return self;
     }
 };

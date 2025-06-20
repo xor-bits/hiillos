@@ -20,6 +20,7 @@ pub const LOG_WAITING: bool = LOG_GENERIC or false;
 pub const LOG_APIC: bool = LOG_GENERIC or false;
 pub const LOG_INTERRUPTS: bool = LOG_GENERIC or false;
 pub const LOG_ENTRYPOINT_CODE: bool = LOG_GENERIC or false;
+pub const LOG_PAGE_FAULTS: bool = LOG_GENERIC or false;
 pub const LOG_SERVERS: bool = LOG_USER or false;
 pub const LOG_KEYS: bool = LOG_USER or false;
 
