@@ -127,6 +127,18 @@ pub const Rights = packed struct {
     user_accessible: bool = true,
     _: u4 = 0,
 
+    pub fn parse(str: []const u8) ?Rights {
+        var rights: Rights = .{};
+        for (str) |b| switch (std.ascii.toLower(b)) {
+            'u' => rights.user_accessible = true,
+            'r' => rights.readable = true,
+            'w' => rights.writable = true,
+            'x', 'e' => rights.executable = true,
+            else => {},
+        };
+        return rights;
+    }
+
     pub fn intersection(self: Rights, other: Rights) Rights {
         return Rights{
             .readable = self.readable and other.readable,
