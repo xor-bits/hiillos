@@ -10,7 +10,7 @@ const Opts = struct {
     debug: u2,
     use_ovmf: bool,
     ovmf_fd: []const u8,
-    gdb: bool,
+    gdb: enum { false, true, wait },
     testing: bool,
     cpus: u8,
     kvm: bool,
@@ -45,8 +45,8 @@ fn options(b: *std.Build, target: std.Build.ResolvedTarget) Opts {
         },
 
         // use GDB
-        .gdb = b.option(bool, "gdb", "use GDB") orelse
-            false,
+        .gdb = b.option(@TypeOf(@as(Opts, undefined).gdb), "gdb", "use GDB") orelse
+            .false,
 
         // include test runner
         .testing = b.option(bool, "test", "include test runner") orelse
@@ -172,9 +172,23 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         qemu_step.addArgs(&.{ "-bios", ovmf_fd });
     }
 
-    if (opts.gdb) {
-        qemu_step.addArgs(&.{ "-s", "-S" });
+    switch (opts.gdb) {
+        .false => {},
+        .true => {
+            qemu_step.addArgs(&.{"-s"});
+        },
+        .wait => {
+            qemu_step.addArgs(&.{ "-s", "-S" });
+        },
     }
+
+    std.debug.print("qemu cmd: '", .{});
+    std.debug.print("{s}", .{qemu_step.argv.items[0].bytes});
+    for (qemu_step.argv.items) |arg| switch (arg) {
+        .bytes => |s| std.debug.print(" {s}", .{s}),
+        else => std.debug.print(" <..>", .{}),
+    };
+    std.debug.print("'\n", .{});
 
     const run_step = b.step("run", "Run in QEMU");
     run_step.dependOn(&qemu_step.step);
