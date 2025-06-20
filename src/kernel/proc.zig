@@ -127,7 +127,7 @@ pub fn ready(thread: *caps.Thread) void {
         if (waiter == arch.cpuLocal()) break;
 
         // log.info("giving thread to {} ({})", .{ waiter.id, waiter.lapic_id });
-        apic.interProcessorInterrupt(waiter.lapic_id, apic.IRQ_IPI);
+        apic.interProcessorInterrupt(waiter.lapic_id, apic.IRQ_IPI_PREEMPT);
         break;
     }
 

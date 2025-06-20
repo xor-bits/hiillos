@@ -1103,7 +1103,7 @@ pub const Idt = extern struct {
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_IPI] = Entry.generateTrap(struct {
+        entries[apic.IRQ_IPI_PREEMPT] = Entry.generateTrap(struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI interrupt", .{});
 
