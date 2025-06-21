@@ -47,6 +47,7 @@ pub fn init() !void {
 
     // initialize the dedupe lazyinit readonly zero page
     const page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
+    std.crypto.secureZero(u64, page.toHhdm().toPtr([*]volatile u64)[0..512]);
     readonly_zero_page.store(page.toParts().page, .release);
 
     debugType(CapabilitySlot);

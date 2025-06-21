@@ -391,11 +391,11 @@ pub const Frame = struct {
         std.debug.assert(idx < self.pages.len);
         const page = &self.pages[idx];
 
-        // const readonly_zero_page_now = readonly_zero_page.load(.monotonic);
-        _ = is_write;
+        const readonly_zero_page_now = caps.readonly_zero_page.load(.monotonic);
+        std.debug.assert(readonly_zero_page_now != 0);
 
-        // TODO: (page.* == readonly_zero_page_now or page.* == 0) and is_write
-        if (page.* == 0) {
+        // TODO:
+        if ((page.* == readonly_zero_page_now or page.* == 0) and is_write) {
             // writing to a lazy allocated zeroed page
             // => allocate a new exclusive page and set it be the mapping
 
@@ -421,19 +421,18 @@ pub const Frame = struct {
                 .old_page = old_page,
                 .updates = old,
             } };
+        } else if (!is_write and page.* == 0) {
+            // not mapped and isnt write
+            // => use the shared readonly zero page
+
+            page.* = readonly_zero_page_now;
+            return .{ .reused = readonly_zero_page_now };
         } else {
+
             // already mapped AND write to a page that isnt readonly_zero_page or read from any page
             // => use the existing page
             return .{ .reused = page.* };
         }
-
-        // else { // page.* == 0
-        //     // not mapped and isnt write
-        //     // => use the shared readonly zero page
-
-        //     page.* = readonly_zero_page_now;
-        //     return page.*;
-        // }
     }
 };
 
