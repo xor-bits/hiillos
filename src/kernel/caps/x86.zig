@@ -45,13 +45,17 @@ pub const Vmem = struct {
     pub fn switchTo(self: addr.Phys) void {
         const cur = arch.Cr3.read();
         if (cur.pml4_phys_base == self.toParts().page) {
-            // log.info("context switch avoided", .{});
+            if (conf.LOG_CTX_SWITCHES)
+                log.debug("context switch avoided", .{});
             return;
         }
 
         (arch.Cr3{
             .pml4_phys_base = self.toParts().page,
         }).write();
+
+        if (conf.LOG_CTX_SWITCHES)
+            log.debug("context switched", .{});
     }
 
     pub fn printMappings(self: *volatile @This()) !void {

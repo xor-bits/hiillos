@@ -60,7 +60,7 @@ pub fn bootInfoInstallMcfg(boot_info: *caps.Frame, thread: *caps.Thread) !void {
         const mcfg_obj = try caps.Frame.initPhysical(mcfg_paddr, 0x10000000);
         const mcfg_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame));
 
-        try mcfg_info_obj.write(0, std.mem.asBytes(&abi.McfgInfoFrame{
+        try mcfg_info_obj.initialWrite(0, std.mem.asBytes(&abi.McfgInfoFrame{
             .pci_segment_group = entry.pci_segment_group,
             .start_pci_bus = entry.start_pci_bus,
             .end_pci_bus = entry.end_pci_bus,
@@ -68,13 +68,13 @@ pub fn bootInfoInstallMcfg(boot_info: *caps.Frame, thread: *caps.Thread) !void {
 
         var id: u32 = undefined;
         id = try thread.proc.pushCapability(.init(mcfg_obj));
-        try boot_info.write(
+        try boot_info.initialWrite(
             @offsetOf(abi.BootInfo, "mcfg"),
             std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
         );
 
         id = try thread.proc.pushCapability(.init(mcfg_info_obj));
-        try boot_info.write(
+        try boot_info.initialWrite(
             @offsetOf(abi.BootInfo, "mcfg_info"),
             std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
         );

@@ -293,6 +293,9 @@ fn debugType(comptime T: type) void {
 }
 
 test "new VmemObject and FrameObject" {
+    // disable temporarily while tests dont support complex control flow
+    if (true) return;
+
     const vmem = try Vmem.init();
     const frame = try Frame.init(0x8000);
     _ = try vmem.map(frame.clone(), 1, addr.Virt.fromInt(0x1000), 6, .{

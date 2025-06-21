@@ -79,7 +79,7 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
     const data_len = a.root_data.len + a.root_path.len + a.initfs_data.len + a.initfs_path.len;
 
     log.info("writing root boot_info", .{});
-    try boot_info.write(0, @as([*]const u8, @ptrCast(&abi.BootInfo{
+    try boot_info.initialWrite(0, @as([*]const u8, @ptrCast(&abi.BootInfo{
         .root_data = @ptrFromInt(abi.ROOT_EXE),
         .root_data_len = a.root_data.len,
         .root_path = @ptrFromInt(abi.ROOT_EXE + a.root_data.len),
@@ -99,16 +99,16 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
 
     var i: usize = 0;
     log.info("copying root data", .{});
-    try root_frame.write(i, a.root_data);
+    try root_frame.initialWrite(i, a.root_data);
     i += a.root_data.len;
     log.info("copying root path", .{});
-    try root_frame.write(i, a.root_path);
+    try root_frame.initialWrite(i, a.root_path);
     i += a.root_path.len;
     log.info("copying initfs data", .{});
-    try root_frame.write(i, a.initfs_data);
+    try root_frame.initialWrite(i, a.initfs_data);
     i += a.initfs_data.len;
     log.info("copying initfs path", .{});
-    try root_frame.write(i, a.initfs_path);
+    try root_frame.initialWrite(i, a.initfs_path);
 
     log.info("mapping root", .{});
     _ = try vmem.map(

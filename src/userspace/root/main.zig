@@ -18,24 +18,7 @@ pub export var manifest = abi.loader.Manifest.new(.{
 
 //
 
-/// elf loader temporary mapping location
-pub const LOADER_TMP = 0x2000_0000_0000;
-/// uncompressed initfs.tar location
-pub const INITFS_TAR = 0x3000_0000_0000;
-pub const FRAMEBUFFER = 0x4000_0000_0000;
-pub const BACKBUFFER = 0x4100_0000_0000;
-pub const FRAMEBUFFER_INFO = 0x4200_0000_0000;
-pub const INITFS_TMP = 0x5000_0000_0000;
-pub const INITFS_LIST = 0x5800_0000_0000;
 pub const STACK_SIZE = 0x40000;
-pub const STACK_TOP = 0x8000_0000_0000 - 0x2000;
-pub const STACK_BOTTOM = STACK_TOP - STACK_SIZE;
-pub const INITFS_STACK_TOP = STACK_BOTTOM - 0x2000;
-pub const INITFS_STACK_BOTTOM = INITFS_STACK_TOP - STACK_SIZE;
-pub const SPINNER_STACK_TOP = INITFS_STACK_BOTTOM - 0x2000;
-pub const SPINNER_STACK_BOTTOM = SPINNER_STACK_TOP - STACK_SIZE;
-/// boot info location
-pub const BOOT_INFO = 0x8000_0000_0000 - 0x1000;
 
 //
 
@@ -77,7 +60,7 @@ pub fn main() !void {
 
     try initfsd.wait();
 
-    const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(BOOT_INFO)).*;
+    const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(initfsd.boot_info_addr.load(.acquire))).*;
 
     const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ .{0} ** 80).*);
     initfsd_entry.value_ptr.* = .{
@@ -442,32 +425,34 @@ pub export fn _start() linksection(".text._start") callconv(.Naked) noreturn {
 
 export fn zigMain() noreturn {
     // switch to a bigger stack (256KiB, because the initfs deflate takes up over 128KiB on its own)
-    mapStack() catch |err| {
+    const stack_top = mapStack() catch |err| {
         std.debug.panic("not enough memory for a stack: {}", .{err});
     };
 
     asm volatile (
         \\ jmp zigMainRealstack
         :
-        : [sp] "{rsp}" (STACK_TOP - 0x100),
+        : [sp] "{rsp}" (stack_top - 0x100),
     );
     unreachable;
 }
 
-fn mapStack() !void {
+fn mapStack() !usize {
     log.info("mapping stack", .{});
 
     const frame = try caps.Frame.create(1024 * 256);
-    _ = try caps.ROOT_SELF_VMEM.map(
+    const stack_bottom = try caps.ROOT_SELF_VMEM.map(
         frame,
         0,
-        STACK_BOTTOM,
-        1024 * 256,
+        0,
+        0,
         .{ .writable = true },
-        .{ .fixed = true },
+        .{},
     );
+    const stack_top = stack_bottom + 1024 * 256;
 
-    log.info("stack mapping complete 0x{x}..0x{x}", .{ STACK_BOTTOM, STACK_TOP });
+    log.info("stack mapping complete 0x{x}..0x{x}", .{ stack_bottom, stack_top });
+    return stack_top;
 }
 
 export fn zigMainRealstack() noreturn {

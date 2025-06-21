@@ -9,6 +9,7 @@ const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const args = @import("args.zig");
 const caps = @import("caps.zig");
+const copy = @import("copy.zig");
 const init = @import("init.zig");
 const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
@@ -207,7 +208,7 @@ pub fn syscall(trap: *arch.TrapRegs) void {
     const thread = locals.current_thread.?;
 
     if (conf.LOG_SYSCALLS and id != .selfYield)
-        log.debug("syscall: {s}", .{@tagName(id)});
+        log.debug("syscall: {s} from {*}", .{ @tagName(id), thread });
     defer if (conf.LOG_SYSCALLS and id != .selfYield)
         log.debug("syscall: {s} done", .{@tagName(id)});
 
@@ -224,6 +225,8 @@ pub fn syscall(trap: *arch.TrapRegs) void {
 
     handle_syscall(locals, thread, id, trap) catch |err| {
         @branchHint(.cold);
+        if (err != Error.Retry)
+            log.warn("syscall error {}: {}", .{ id, err });
         trap.syscall_id = abi.sys.encode(err);
     };
 }
@@ -236,33 +239,45 @@ fn handle_syscall(
 ) Error!void {
     const log = std.log.scoped(.syscall);
 
-    errdefer log.warn("syscall error {}", .{id});
-
     _ = locals;
 
     switch (id) {
         .log => {
             // FIXME: disable on release builds
 
-            // log syscall
-            if (trap.arg1 > 0x1000)
-                return Error.InvalidArgument;
-
-            _ = std.math.add(u64, trap.arg0, trap.arg1) catch
-                return Error.InvalidArgument;
-
             const vaddr = try addr.Virt.fromUser(trap.arg0);
 
-            var buf: [0x1000]u8 = undefined;
-            try thread.proc.vmem.read(vaddr, buf[0..trap.arg1]);
-            const msg = buf[0..trap.arg1];
+            // log syscall
+            var len = trap.arg1;
+            if (len > 0x1000)
+                return Error.InvalidArgument;
 
-            var lines = std.mem.splitAny(u8, msg, "\n\r");
-            while (lines.next()) |line| {
-                if (line.len == 0) {
-                    continue;
+            _ = std.math.add(u64, vaddr.raw, len) catch
+                return Error.InvalidArgument;
+
+            // log.debug("log of {} bytes from 0x{x}", .{
+            //     len,
+            //     vaddr.raw,
+            // });
+
+            var it = thread.proc.vmem.data(vaddr, false);
+            defer it.deinit();
+
+            var bytes: usize = 0;
+            defer trap.arg0 = bytes;
+
+            while (try it.next()) |chunk| {
+                const limit = @min(len, chunk.len);
+                len -= limit;
+                bytes += limit;
+
+                var lines = std.mem.splitAny(u8, @volatileCast(chunk[0..limit]), "\n\r");
+                while (lines.next()) |line| {
+                    if (line.len == 0) continue;
+                    log.info("{s}", .{line});
                 }
-                _ = log.info("{s}", .{line});
+
+                if (len == 0) break;
             }
 
             trap.syscall_id = abi.sys.encode(0);
@@ -289,47 +304,47 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(@as(u32, @intCast(frame.pages.len)));
         },
         .frame_read => {
-            var vaddr = try addr.Virt.fromUser(trap.arg2);
-            var bytes = trap.arg3;
+            const offset_bytes = trap.arg1;
+            const vaddr = try addr.Virt.fromUser(trap.arg2);
+            const bytes = trap.arg3;
             const frame = try thread.proc.getObject(caps.Frame, @truncate(trap.arg0));
             defer frame.deinit();
-            var offset_bytes = trap.arg1;
 
-            // TODO: direct copy, instead of double copy
-            var buf: [0x1000]u8 = undefined;
-            while (bytes != 0) {
-                const limit = @min(0x1000, bytes);
+            var progress: usize = 0;
+            defer trap.arg0 = progress;
+            var dst = thread.proc.vmem.data(vaddr, true);
+            defer dst.deinit();
+            var src = frame.data(offset_bytes, false);
+            defer src.deinit();
 
-                try frame.read(offset_bytes, buf[0..limit]);
-                try thread.proc.vmem.write(vaddr, buf[0..limit]);
-
-                vaddr.raw += limit;
-                offset_bytes += limit;
-                bytes -= limit;
-            }
-
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                bytes,
+                &progress,
+            );
             trap.syscall_id = abi.sys.encode(0);
         },
         .frame_write => {
-            var vaddr = try addr.Virt.fromUser(trap.arg2);
-            var bytes = trap.arg3;
+            const offset_bytes = trap.arg1;
+            const vaddr = try addr.Virt.fromUser(trap.arg2);
+            const bytes = trap.arg3;
             const frame = try thread.proc.getObject(caps.Frame, @truncate(trap.arg0));
             defer frame.deinit();
-            var offset_bytes = trap.arg1;
 
-            // TODO: direct copy, instead of double copy
-            var buf: [0x1000]u8 = undefined;
-            while (bytes != 0) {
-                const limit = @min(0x1000, bytes);
+            var progress: usize = 0;
+            defer trap.arg0 = progress;
+            var src = thread.proc.vmem.data(vaddr, false);
+            defer src.deinit();
+            var dst = frame.data(offset_bytes, true);
+            defer dst.deinit();
 
-                try thread.proc.vmem.read(vaddr, buf[0..limit]);
-                try frame.write(offset_bytes, buf[0..limit]);
-
-                vaddr.raw += limit;
-                offset_bytes += limit;
-                bytes -= limit;
-            }
-
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                bytes,
+                &progress,
+            );
             trap.syscall_id = abi.sys.encode(0);
         },
         .frame_dummy_access => {
@@ -341,7 +356,13 @@ fn handle_syscall(
             defer frame.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            const res = frame.pageFault(@truncate(offset_byte / 0x1000), mode == .write, null);
+            const res = frame.pageFault(
+                @truncate(offset_byte / 0x1000),
+                mode == .write,
+                null,
+                trap,
+                thread,
+            );
             if (res == Error.Retry) {
                 proc.switchNow(trap);
             } else {
@@ -412,52 +433,59 @@ fn handle_syscall(
             defer vmem.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            if (try vmem.unmap(trap, thread, vaddr, pages, false)) {
-                proc.switchNow(trap);
-            }
+            vmem.unmap(
+                trap,
+                thread,
+                vaddr,
+                pages,
+                false,
+            ) catch |err| switch (err) {
+                Error.Retry => proc.switchNow(trap),
+                else => return err,
+            };
         },
         .vmem_read => {
-            var dst_vaddr = try addr.Virt.fromUser(trap.arg2);
-            var src_vaddr = try addr.Virt.fromUser(trap.arg1);
-            var bytes = trap.arg3;
+            const src_vaddr = try addr.Virt.fromUser(trap.arg1);
+            const dst_vaddr = try addr.Virt.fromUser(trap.arg2);
+            const bytes = trap.arg3;
             const vmem = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
             defer vmem.deinit();
 
-            // TODO: direct copy, instead of double copy
-            var buf: [0x1000]u8 = undefined;
-            while (bytes != 0) {
-                const limit = @min(0x1000, bytes);
+            var progress: usize = 0;
+            defer trap.arg0 = progress;
+            var dst = vmem.data(dst_vaddr, true);
+            defer dst.deinit();
+            var src = thread.proc.vmem.data(src_vaddr, false);
+            defer src.deinit();
 
-                try vmem.read(src_vaddr, buf[0..limit]);
-                try thread.proc.vmem.write(dst_vaddr, buf[0..limit]);
-
-                src_vaddr.raw += limit;
-                dst_vaddr.raw += limit;
-                bytes -= limit;
-            }
-
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                bytes,
+                &progress,
+            );
             trap.syscall_id = abi.sys.encode(0);
         },
         .vmem_write => {
-            var src_vaddr = try addr.Virt.fromUser(trap.arg2);
-            var dst_vaddr = try addr.Virt.fromUser(trap.arg1);
-            var bytes = trap.arg3;
+            const dst_vaddr = try addr.Virt.fromUser(trap.arg1);
+            const src_vaddr = try addr.Virt.fromUser(trap.arg2);
+            const bytes = trap.arg3;
             const vmem = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
             defer vmem.deinit();
 
-            // TODO: direct copy, instead of double copy
-            var buf: [0x1000]u8 = undefined;
-            while (bytes != 0) {
-                const limit = @min(0x1000, bytes);
+            var progress: usize = 0;
+            defer trap.arg0 = progress;
+            var dst = vmem.data(dst_vaddr, true);
+            defer dst.deinit();
+            var src = thread.proc.vmem.data(src_vaddr, false);
+            defer src.deinit();
 
-                try thread.proc.vmem.read(src_vaddr, buf[0..limit]);
-                try vmem.write(dst_vaddr, buf[0..limit]);
-
-                src_vaddr.raw += limit;
-                dst_vaddr.raw += limit;
-                bytes -= limit;
-            }
-
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                bytes,
+                &progress,
+            );
             trap.syscall_id = abi.sys.encode(0);
         },
         .vmem_dummy_access => {
@@ -469,7 +497,12 @@ fn handle_syscall(
             defer vmem.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            const res = vmem.pageFault(mode, vaddr);
+            const res = vmem.pageFault(
+                mode,
+                vaddr,
+                trap,
+                thread,
+            );
             if (res == Error.Retry) {
                 proc.switchNow(trap);
             } else {
@@ -542,15 +575,19 @@ fn handle_syscall(
             const target_thread = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
             defer target_thread.deinit();
 
-            var regs: abi.sys.ThreadRegs = undefined;
+            const regs: abi.sys.ThreadRegs = target_thread.readRegs();
+            var src = copy.SliceConst.fromSingle(&regs);
+            defer src.deinit();
+            var dst = thread.proc.vmem.data(regs_ptr, true);
+            defer dst.deinit();
 
-            target_thread.lock.lock();
-            inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
-                @field(regs, field.name) = @field(target_thread.trap, field.name);
-            }
-            target_thread.lock.unlock();
-
-            try thread.proc.vmem.write(regs_ptr, std.mem.asBytes(&regs));
+            var progress: usize = 0;
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                @sizeOf(abi.sys.ThreadRegs),
+                &progress,
+            );
             trap.syscall_id = abi.sys.encode(0);
         },
         .thread_write_regs => {
@@ -559,15 +596,19 @@ fn handle_syscall(
             defer target_thread.deinit();
 
             var regs: abi.sys.ThreadRegs = undefined;
+            var src = thread.proc.vmem.data(regs_ptr, false);
+            defer src.deinit();
+            var dst = copy.Slice.fromSingle(&regs);
+            defer dst.deinit();
 
-            try thread.proc.vmem.read(regs_ptr, std.mem.asBytes(&regs));
-
-            target_thread.lock.lock();
-            inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
-                @field(target_thread.trap, field.name) = @field(regs, field.name);
-            }
-            target_thread.trap.return_mode = .iretq; // only iretq preserves rcx and r11
-            target_thread.lock.unlock();
+            var progress: usize = 0;
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                @sizeOf(abi.sys.ThreadRegs),
+                &progress,
+            );
+            target_thread.writeRegs(regs);
             trap.syscall_id = abi.sys.encode(0);
         },
         .thread_start => {
@@ -583,11 +624,18 @@ fn handle_syscall(
 
             if (conf.LOG_ENTRYPOINT_CODE) {
                 // dump the entrypoint code
-                var buf: [50]u8 = undefined;
-                _ = target_thread.proc.vmem.read(addr.Virt.fromInt(target_thread.trap.rip), buf[0..]) catch {};
-                var it = std.mem.window(u8, buf[0..], 16, 16);
-                while (it.next()) |bytes| {
-                    log.info("{}", .{util.hex(bytes)});
+                var it = target_thread.proc.vmem.data(addr.Virt.fromInt(target_thread.trap.rip), false);
+                defer it.deinit();
+
+                log.info("{}", .{target_thread.trap});
+
+                var len: usize = 200;
+                while (it.next() catch null) |chunk| {
+                    const limit = @min(len, chunk.len);
+                    len -= limit;
+
+                    log.info("{}", .{util.hex(@volatileCast(chunk[0..limit]))});
+                    if (len == 0) break;
                 }
             }
 

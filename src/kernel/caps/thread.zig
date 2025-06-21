@@ -143,6 +143,28 @@ pub const Thread = struct {
         }
     }
 
+    pub fn readRegs(self: *@This()) abi.sys.ThreadRegs {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        var regs: abi.sys.ThreadRegs = undefined;
+        inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
+            @field(regs, field.name) = @field(self.trap, field.name);
+        }
+        return regs;
+    }
+
+    pub fn writeRegs(self: *@This(), regs: abi.sys.ThreadRegs) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        // only iretq preserves rcx and r11
+        self.trap.return_mode = .iretq;
+        inline for (@typeInfo(abi.sys.ThreadRegs).@"struct".fields) |field| {
+            @field(self.trap, field.name) = @field(regs, field.name);
+        }
+    }
+
     pub fn takeReply(self: *@This()) ?*Thread {
         const sender = self.reply orelse return null;
         std.debug.assert(sender.status == .waiting);
@@ -159,7 +181,7 @@ pub const Thread = struct {
         reason: anyerror,
     ) noreturn {
         log.warn(
-            \\page fault 0x{x} (user) ({})
+            \\unhandled page fault 0x{x} (user) ({})
             \\ - caused by: {}
             \\ - ip: 0x{x}
             \\ - sp: 0x{x}

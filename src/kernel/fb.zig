@@ -30,7 +30,7 @@ pub fn bootInfoInstallFramebuffer(boot_info: *caps.Frame, thread: *caps.Thread) 
     const fb_obj = try caps.Frame.initPhysical(fb_paddr, fb_size);
     const fb_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame));
 
-    try fb_info_obj.write(0, std.mem.asBytes(&abi.FramebufferInfoFrame{
+    try fb_info_obj.initialWrite(0, std.mem.asBytes(&abi.FramebufferInfoFrame{
         .width = first_fb.width,
         .height = first_fb.height,
         .pitch = first_fb.pitch,
@@ -45,13 +45,13 @@ pub fn bootInfoInstallFramebuffer(boot_info: *caps.Frame, thread: *caps.Thread) 
 
     var id: u32 = undefined;
     id = try thread.proc.pushCapability(.init(fb_obj));
-    try boot_info.write(
+    try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "framebuffer"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
     );
 
     id = try thread.proc.pushCapability(.init(fb_info_obj));
-    try boot_info.write(
+    try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "framebuffer_info"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
     );

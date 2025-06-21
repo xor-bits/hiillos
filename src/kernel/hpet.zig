@@ -57,7 +57,7 @@ pub fn bootInfoInstallHpet(boot_info: *caps.Frame, thread: *caps.Thread) !void {
     const frame = hpet_frame orelse return;
 
     const id = try thread.proc.pushCapability(.init(frame.clone()));
-    try boot_info.write(
+    try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "hpet"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
     );

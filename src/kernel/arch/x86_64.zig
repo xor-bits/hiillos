@@ -11,6 +11,7 @@ const proc = @import("../proc.zig");
 
 const log = std.log.scoped(.arch);
 const conf = abi.conf;
+const Error = abi.sys.Error;
 
 //
 
@@ -973,7 +974,6 @@ pub const Idt = extern struct {
                 const thread = cpuLocal().current_thread.?;
 
                 const vaddr = addr.Virt.fromUser(target_addr) catch |err| {
-                    log.warn("unhandled page fault: {}", .{err});
                     thread.unhandledPageFault(
                         target_addr,
                         caused_by,
@@ -983,15 +983,20 @@ pub const Idt = extern struct {
                     );
                 };
 
-                thread.proc.vmem.pageFault(caused_by, vaddr) catch |err| {
-                    log.warn("unhandled page fault: {}", .{err});
-                    thread.unhandledPageFault(
+                thread.proc.vmem.pageFault(
+                    caused_by,
+                    vaddr,
+                    trap,
+                    thread,
+                ) catch |err| switch (err) {
+                    Error.Retry => proc.switchNow(trap),
+                    else => thread.unhandledPageFault(
                         target_addr,
                         caused_by,
                         trap.rip,
                         trap.rsp,
                         err,
-                    );
+                    ),
                 };
             }
         }).withStack(1).asInt();

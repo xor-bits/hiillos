@@ -9,6 +9,7 @@ const Error = abi.sys.Error;
 
 //
 
+// TODO: resizeable Frame
 // TODO: move to abi.mem and add exponential growth
 const vmm_vector = std.mem.Allocator{
     .ptr = &vmm_vector_top,
@@ -20,7 +21,7 @@ const vmm_vector = std.mem.Allocator{
     },
 };
 
-var vmm_vector_top: usize = main.INITFS_TAR;
+var vmm_vector_top: usize = 0x5000_0000_0000;
 
 fn vmmVectorAlloc(_top: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
     const top: *usize = @alignCast(@ptrCast(_top));
@@ -39,7 +40,7 @@ fn vmmVectorResize(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: us
 
 fn vmmVectorRemap(_top: *anyopaque, memory: []u8, _: std.mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
     const top: *usize = @alignCast(@ptrCast(_top));
-    const current_len = top.* - main.INITFS_TAR;
+    const current_len = top.* - 0x5000_0000_0000;
     if (current_len < new_len) {
         vmmVectorGrow(top, std.math.divCeil(
             usize,
@@ -77,11 +78,9 @@ pub fn init() !void {
     @atomicStore(u32, &initfs_ready.cap, (try caps.Notify.create()).cap, .seq_cst);
 
     log.info("starting initfs thread", .{});
-    try abi.loader.spawn(
-        caps.ROOT_SELF_VMEM,
-        caps.ROOT_SELF_PROC,
-        @intFromPtr(&run),
-    );
+    try abi.thread.spawn(run, .{});
+    log.info("yielding", .{});
+    abi.sys.selfYield();
 }
 
 pub fn wait() !void {
@@ -92,34 +91,33 @@ pub fn getReceiver() !caps.Receiver {
     return try initfs_recv.clone();
 }
 
-var initfs_ready: caps.Notify = .{};
-var initfs_recv: caps.Receiver = .{};
-
-fn run() callconv(.SysV) noreturn {
-    runMain() catch |err| {
-        log.err("initfs failed: {}", .{err});
-    };
-
-    log.info("initfs terminated", .{});
-    abi.sys.selfStop();
+pub fn getBootInfoAddr() *const volatile abi.BootInfo {
+    return @ptrFromInt(boot_info_addr.load(.monotonic));
 }
 
-fn runMain() !void {
+var initfs_ready: caps.Notify = .{};
+var initfs_recv: caps.Receiver = .{};
+pub var boot_info_addr: std.atomic.Value(usize) = .init(0);
+
+fn run() !void {
     log.info("mapping boot info", .{});
-    const len = try abi.sys.frameGetSize(abi.caps.ROOT_BOOT_INFO.cap);
-    _ = try abi.caps.ROOT_SELF_VMEM.map(
+    boot_info_addr.store(try abi.caps.ROOT_SELF_VMEM.map(
         abi.caps.ROOT_BOOT_INFO,
         0,
-        main.BOOT_INFO,
-        len,
+        0,
+        0,
         .{},
-        .{ .fixed = true },
+        .{},
+    ), .release);
+
+    @atomicStore(
+        u32,
+        &initfs_recv.cap,
+        (try caps.Receiver.create()).cap,
+        .release,
     );
 
-    @atomicStore(u32, &initfs_recv.cap, (try caps.Receiver.create()).cap, .seq_cst);
-
-    const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(main.BOOT_INFO)).*;
-    const initfs: []const u8 = boot_info.initfsData();
+    const initfs: []const u8 = getBootInfoAddr().initfsData();
 
     var initfs_tar_gz = std.io.fixedBufferStream(initfs);
 
@@ -151,25 +149,7 @@ fn openFileHandler(_: void, _: u32, req: struct { [32:0]u8, caps.Frame }) struct
     const file: []const u8 = readFile(file_id);
     const size: usize = @min(file.len, frame_size);
 
-    _ = caps.ROOT_SELF_VMEM.map(
-        frame,
-        0,
-        main.INITFS_TMP,
-        frame_size,
-        .{ .writable = true },
-        .{ .fixed = true },
-    ) catch |err| return .{ err, frame };
-
-    abi.util.copyForwardsVolatile(
-        u8,
-        @as([*]volatile u8, @ptrFromInt(main.INITFS_TMP))[0..size],
-        file[0..size],
-    );
-
-    caps.ROOT_SELF_VMEM.unmap(
-        main.INITFS_TMP,
-        frame_size,
-    ) catch |err| return .{ err, frame };
+    frame.write(0, file[0..size]) catch unreachable;
 
     return .{ {}, frame };
 }
@@ -202,17 +182,18 @@ fn listHandler(_: void, _: u32, _: void) struct { Error!void, caps.Frame, usize 
     size += @sizeOf(abi.Stat) * entries;
 
     const frame = caps.Frame.create(size) catch unreachable;
-    const frame_entries = @as([*]abi.Stat, @ptrFromInt(main.INITFS_LIST))[0..entries];
-    const frame_names = @as([*]u8, @ptrFromInt(main.INITFS_LIST + @sizeOf(abi.Stat) * entries))[0..text_size];
 
-    _ = caps.ROOT_SELF_VMEM.map(
+    const tmp_addr = caps.ROOT_SELF_VMEM.map(
         frame,
         0,
-        main.INITFS_LIST,
+        0,
         size,
         .{ .writable = true },
-        .{ .fixed = true },
+        .{},
     ) catch unreachable;
+
+    const frame_entries = @as([*]abi.Stat, @ptrFromInt(tmp_addr))[0..entries];
+    const frame_names = @as([*]u8, @ptrFromInt(tmp_addr + @sizeOf(abi.Stat) * entries))[0..text_size];
 
     entries = 0;
     size = 0;
@@ -253,7 +234,7 @@ fn listHandler(_: void, _: u32, _: void) struct { Error!void, caps.Frame, usize 
     }
 
     caps.ROOT_SELF_VMEM.unmap(
-        main.INITFS_LIST,
+        tmp_addr,
         size,
     ) catch unreachable;
 

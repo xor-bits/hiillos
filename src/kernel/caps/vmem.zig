@@ -73,112 +73,78 @@ pub const Vmem = struct {
             .toPtr(*volatile caps.HalVmem);
     }
 
-    pub fn write(self: *@This(), vaddr: addr.Virt, source: []const volatile u8) Error!void {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Vmem.write", .{});
+    pub fn DataIterator(comptime is_write: bool) type {
+        return struct {
+            vmem: *caps.Vmem,
+            vaddr: addr.Virt,
+            cur_frame: ?caps.Frame.DataIterator(is_write) = null,
 
-        var bytes: []const volatile u8 = source;
+            const Slice = if (is_write) []volatile u8 else []const volatile u8;
 
-        if (bytes.len == 0)
-            return;
+            pub fn next(self: *@This()) !?Slice {
+                if (self.cur_frame) |*cur_frame| {
+                    if (try cur_frame.next()) |chunk| {
+                        // log.debug("vmem_{s} chunk.ptr={*} chunk.len={} @0x{x}", .{
+                        //     if (is_write) "write" else "read",
+                        //     chunk.ptr,
+                        //     chunk.len,
+                        //     self.vaddr.raw,
+                        // });
+                        self.vaddr.raw += chunk.len;
+                        return chunk;
+                    } else {
+                        cur_frame.deinit();
+                        self.cur_frame = null;
+                    }
+                }
 
-        // locking order: Vmem -> Frame
-        //   mapping.frame.write locks a Frame
-        self.lock.lock();
-        defer self.lock.unlock();
+                try self.fetchFrame() orelse return null;
+                return self.next();
+            }
 
-        const idx_beg, const idx_end = try self.dataLocked(vaddr, bytes.len);
+            fn fetchFrame(self: *@This()) !?void {
+                self.vmem.lock.lock();
+                defer self.vmem.lock.unlock();
 
-        for (idx_beg..idx_end) |idx| {
-            std.debug.assert(bytes.len != 0);
-            const mapping = self.mappings.items[idx];
+                const idx = self.vmem.find(self.vaddr) orelse return null;
+                const mapping = self.vmem.mappings.items[idx];
 
-            const offset_bytes: usize = if (idx == idx_beg)
-                vaddr.raw - mapping.getVaddr().raw
-            else
-                0;
-            const limit = @min(mapping.pages * 0x1000 - offset_bytes, bytes.len);
+                // log.debug("Vmem.DataIterator.next mapping=0x{x}..0x{x} first={}", .{
+                //     mapping.getVaddr().raw,
+                //     mapping.getVaddr().raw + mapping.pages * 0x1000,
+                //     mapping.frame_first_page,
+                // });
 
-            try mapping.frame.write(
-                mapping.frame_first_page * 0x1000 + offset_bytes,
-                bytes[0..limit],
-            );
-            bytes = bytes[limit..];
-        }
+                if (!mapping.overlaps(self.vaddr, 1)) return Error.InvalidAddress;
+
+                self.cur_frame = mapping.frame.data(
+                    self.vaddr.raw - mapping.getVaddr().raw + mapping.frame_first_page * 0x1000,
+                    is_write,
+                );
+            }
+
+            pub fn deinit(self: *@This()) void {
+                if (self.cur_frame) |*f| f.deinit();
+            }
+        };
     }
 
-    pub fn read(self: *@This(), vaddr: addr.Virt, dest: []volatile u8) Error!void {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Vmem.read vaddr=0x{x} dest.len={}", .{ vaddr.raw, dest.len });
-
-        var bytes: []volatile u8 = dest;
-
-        if (bytes.len == 0)
-            return;
-
-        // locking order: Vmem -> Frame
-        //   mapping.frame.read locks a Frame
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        const idx_beg, const idx_end = try self.dataLocked(vaddr, bytes.len);
-
-        for (idx_beg..idx_end) |idx| {
-            if (bytes.len == 0) break;
-            const mapping = self.mappings.items[idx];
-
-            // log.info("mapping [ 0x{x}..0x{x} ]", .{
-            //     mapping.getVaddr().raw,
-            //     mapping.getVaddr().raw + mapping.pages * 0x1000,
-            // });
-
-            const offset_bytes: usize = if (idx == idx_beg)
-                vaddr.raw - mapping.getVaddr().raw
-            else
-                0;
-            const limit = @min(mapping.pages * 0x1000 - offset_bytes, bytes.len);
-
-            try mapping.frame.read(
-                mapping.frame_first_page * 0x1000 + offset_bytes,
-                bytes[0..limit],
-            );
-            bytes = bytes[limit..];
-        }
-    }
-
-    fn dataLocked(self: *@This(), vaddr: addr.Virt, len: usize) Error!struct { usize, usize } {
-        std.debug.assert(len != 0);
-
-        if (self.mappings.items.len == 0)
-            return Error.InvalidAddress;
-
-        const vaddr_end_inclusive = try addr.Virt.fromUser(vaddr.raw + len - 1);
-
-        const idx_beg: usize = self.find(vaddr) orelse return Error.InvalidAddress;
-        const idx_end: usize = self.find(vaddr_end_inclusive) orelse return Error.InvalidAddress;
-
-        if (!self.mappings.items[idx_beg].overlaps(vaddr, 1))
-            return Error.InvalidAddress;
-        if (!self.mappings.items[idx_end].overlaps(vaddr_end_inclusive, 1))
-            return Error.InvalidAddress;
-
-        // make sure the mappings are contiguous (no unmapped holes)
-        for (idx_beg..idx_end) |idx| {
-            const prev_mapping = self.mappings.items[idx];
-            const next_mapping = self.mappings.items[idx + 1];
-
-            errdefer log.warn("Vmem.write memory not contiguous", .{});
-            if (prev_mapping.getVaddr().raw + prev_mapping.pages * 0x1000 != next_mapping.getVaddr().raw)
-                return Error.InvalidAddress;
-        }
-
-        return .{ idx_beg, idx_end + 1 };
+    pub fn data(self: *@This(), vaddr: addr.Virt, comptime is_write: bool) DataIterator(is_write) {
+        return .{
+            .vmem = self,
+            .vaddr = vaddr,
+        };
     }
 
     pub fn switchTo(self: *@This()) void {
         // self.cpus |= 1 << arch.cpuId();
 
         const current_vmem_ptr = &arch.cpuLocal().current_vmem;
+        if (current_vmem_ptr.* == self) {
+            if (conf.LOG_CTX_SWITCHES)
+                log.debug("context switch avoided", .{});
+            return;
+        }
 
         // keep the previous vmem alive until after the switch, and then delete the reference
         // also clone the new vmem into local storage to keep it always alive
@@ -404,7 +370,7 @@ pub const Vmem = struct {
         return mappings[idx + 1].start();
     }
 
-    /// will most likely switch processes returning Error.Retry
+    /// will most likely switch processes returning Error.Yield
     pub fn unmap(
         self: *@This(),
         trap: *arch.TrapRegs,
@@ -412,7 +378,7 @@ pub const Vmem = struct {
         vaddr: addr.Virt,
         pages: u32,
         comptime is_test: bool,
-    ) Error!bool {
+    ) Error!void {
         std.debug.assert(self.check());
         defer std.debug.assert(self.check());
 
@@ -422,7 +388,7 @@ pub const Vmem = struct {
             log.info("Vmem.unmap returned", .{});
 
         if (pages == 0)
-            return false;
+            return;
         std.debug.assert(vaddr.toParts().offset == 0);
         try @This().assert_userspace(vaddr, pages);
 
@@ -432,7 +398,7 @@ pub const Vmem = struct {
         defer self.lock.unlock();
 
         var idx = self.find(vaddr) orelse
-            return false;
+            return;
 
         while (true) {
             if (idx >= self.mappings.items.len)
@@ -516,7 +482,7 @@ pub const Vmem = struct {
         }
 
         if (self.cr3 == 0)
-            return false;
+            return;
         const hal_vmem = self.halPageTable();
 
         // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
@@ -530,11 +496,6 @@ pub const Vmem = struct {
             };
         }
 
-        if (ipi_bitmap == (@as(u256, 1) << @as(u8, @intCast(arch.cpuId())))) {
-            @branchHint(.likely);
-            return false;
-        }
-
         const tlb_shootdown = try caps.TlbShootdown.init(
             .{ .unmap = thread },
             .{ .range = .{
@@ -545,13 +506,8 @@ pub const Vmem = struct {
         thread.status = .waiting;
         thread.trap = trap.*;
 
-        if (is_test) {
-            // tests cannot yield or do IPIs or other stuff
-            _ = tlb_shootdown.deinit();
-            return false;
-        }
-
-        for (main.all_cpu_locals, 0..) |*locals, i| {
+        // tests cannot yield or do IPIs or other stuff rn
+        if (!is_test) for (main.all_cpu_locals, 0..) |*locals, i| {
             // no need to send an IPI to self
             if (locals == arch.cpuLocal()) continue;
 
@@ -566,17 +522,15 @@ pub const Vmem = struct {
                     apic.IRQ_IPI_TLB_SHOOTDOWN,
                 );
             } else {}
-        }
+        };
 
         if (tlb_shootdown.deinit()) |this_thread| {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
             this_thread.status = .running;
         } else {
-            return true;
+            return Error.Retry;
         }
-
-        return false;
     }
 
     /// update every `idx` page mapped from `frame` that is mapped into this vmem
@@ -640,7 +594,7 @@ pub const Vmem = struct {
         // TODO: atomically swap the frame entry,
         // swapping in the empty entry and acquiring the `accessed` and `dirty` bits
 
-        log.debug("found a stale TCB entry", .{});
+        // log.debug("found a stale TCB entry", .{});
 
         const shootdown = try caps.TlbShootdown.init(
             .{ .transient = frame.clone() },
@@ -686,6 +640,8 @@ pub const Vmem = struct {
         self: *@This(),
         caused_by: abi.sys.FaultCause,
         vaddr_unaligned: addr.Virt,
+        trap: *arch.TrapRegs,
+        thread: *caps.Thread,
     ) Error!void {
         if (conf.LOG_PAGE_FAULTS)
             log.info("pf @0x{x}", .{vaddr_unaligned.raw});
@@ -725,11 +681,11 @@ pub const Vmem = struct {
                     return Error.ReadFault;
             },
             .write => {
-                if (!mapping.target.rights.readable)
+                if (!mapping.target.rights.writable)
                     return Error.WriteFault;
             },
             .exec => {
-                if (!mapping.target.rights.readable)
+                if (!mapping.target.rights.executable)
                     return Error.ExecFault;
             },
         }
@@ -741,11 +697,11 @@ pub const Vmem = struct {
         std.debug.assert(self.cr3 != 0);
 
         const hal_vmem = self.halPageTable();
-        const entry = try hal_vmem.entryFrame(vaddr);
+        const entry = (try hal_vmem.entryFrame(vaddr)).*;
 
         // accessing a page with a write also immediately makes it readable/executable
         // log.debug("caused_by={} entry={}", .{ caused_by, entry });
-        if (caused_by != .write and entry.*.present != 0) {
+        if (caused_by != .write and entry.present != 0) {
             // already resolved by another thread
             return;
         }
@@ -756,13 +712,16 @@ pub const Vmem = struct {
             mapping.frame_first_page + page_offs,
             caused_by == .write,
             self,
+            trap,
+            thread,
         );
 
         if (conf.LOG_PAGE_FAULTS)
-            log.debug("cause={s} wanted={} prev={}", .{
+            log.debug("vaddr=0x{x} cause={s} wanted={} prev={}", .{
+                vaddr.raw,
                 @tagName(caused_by),
                 wanted_page_index,
-                entry.*,
+                entry,
             });
 
         // if the wanted_page_index is the same as the existing page,
@@ -773,6 +732,9 @@ pub const Vmem = struct {
             mapping.target.rights
         else
             mapping.target.rights.intersection(comptime abi.sys.Rights.parse("urx").?);
+
+        if (conf.LOG_PAGE_FAULTS and wanted_page_index == entry.page_index)
+            log.debug("remapping with more rights: {}", .{rights});
 
         try hal_vmem.mapFrame(
             addr.Phys.fromParts(.{ .page = wanted_page_index }),

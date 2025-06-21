@@ -15,72 +15,30 @@ const conf = abi.conf;
 
 //
 
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
+};
+
+//
+
 pub fn init() !void {
     if (!conf.DWARF_INFO_EARLY_INIT) return;
 
     _ = try getSelfDwarf();
 }
 
-pub const std_options: std.Options = .{
-    .logFn = logFn,
-    .log_level = .debug,
-};
-
-fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
-    const level_txt = comptime message_level.asText();
-    const scope_txt = if (scope == .default) "" else " " ++ @tagName(scope);
-    const level_col = comptime switch (message_level) {
-        .debug => "\x1B[96m",
-        .info => "\x1B[92m",
-        .warn => "\x1B[93m",
-        .err => "\x1B[91m",
-    };
-
+pub fn print(
+    comptime force_uart: bool,
+    comptime force_fb: bool,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
     log_lock.lock();
     defer log_lock.unlock();
 
-    if (arch.cpuIdSafe()) |id| {
-        const fmt = "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #{} ]: \x1B[0m";
-
-        if (abi.conf.ENABLE_UART_LOG) {
-            uart.print(fmt, .{id});
-            uart.print(format ++ "\n", args);
-        }
-        if (abi.conf.ENABLE_FB_LOG or (conf.KERNEL_PANIC_RSOD and scope == .panic)) {
-            fb.print(fmt, .{id});
-            fb.print(format ++ "\n", args);
-        }
-    } else {
-        const fmt = "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #? ]: \x1B[0m" ++ format;
-
-        if (abi.conf.ENABLE_UART_LOG) {
-            uart.print(fmt ++ "\n", args);
-        }
-        if (abi.conf.ENABLE_FB_LOG or (conf.KERNEL_PANIC_RSOD and scope == .panic)) {
-            fb.print(fmt ++ "\n", args);
-        }
-    }
+    printLocked(force_uart, force_fb, fmt, args);
 }
-
-var log_lock: spin.Mutex = .{};
-
-const panic_printer = struct {
-    pub const Error = error{};
-
-    pub fn writeAll(_: *const @This(), lit: []const u8) Error!void {
-        log_lock.lock();
-        defer log_lock.unlock();
-        uart.print("{s}", .{lit});
-        if (conf.KERNEL_PANIC_RSOD)
-            fb.print("{s}", .{lit});
-    }
-
-    pub fn writeBytesNTimes(self: *const @This(), bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| {
-            try self.writeAll(bytes);
-        }
-    }
-}{};
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @branchHint(.cold);
@@ -136,6 +94,76 @@ pub const Addr2Line = struct {
         }
     }
 };
+
+//
+
+fn printLocked(
+    comptime force_uart: bool,
+    comptime force_fb: bool,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    if (abi.conf.ENABLE_UART_LOG or force_uart)
+        uart.print(fmt, args);
+    if (abi.conf.ENABLE_FB_LOG or force_fb)
+        fb.print(fmt, args);
+}
+
+fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
+    const level_txt = comptime message_level.asText();
+    const scope_txt = if (scope == .default) "" else " " ++ @tagName(scope);
+    const level_col = comptime switch (message_level) {
+        .debug => "\x1B[96m",
+        .info => "\x1B[92m",
+        .warn => "\x1B[93m",
+        .err => "\x1B[91m",
+    };
+
+    log_lock.lock();
+    defer log_lock.unlock();
+
+    if (arch.cpuIdSafe()) |id| {
+        printLocked(
+            false,
+            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #{} ]: \x1B[0m",
+            .{id},
+        );
+        printLocked(
+            false,
+            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            format ++ "\n",
+            args,
+        );
+    } else {
+        printLocked(
+            false,
+            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #? ]: \x1B[0m" ++ format ++ "\n",
+            args,
+        );
+    }
+}
+
+var log_lock: spin.Mutex = .{};
+
+const panic_printer = struct {
+    pub const Error = error{};
+
+    pub fn writeAll(_: *const @This(), lit: []const u8) Error!void {
+        log_lock.lock();
+        defer log_lock.unlock();
+        uart.print("{s}", .{lit});
+        if (conf.KERNEL_PANIC_RSOD)
+            fb.print("{s}", .{lit});
+    }
+
+    pub fn writeBytesNTimes(self: *const @This(), bytes: []const u8, n: usize) Error!void {
+        for (0..n) |_| {
+            try self.writeAll(bytes);
+        }
+    }
+}{};
 
 fn printSourceAtAddress(writer: anytype, debug_info: *std.debug.Dwarf, address: usize) !void {
     const sym = debug_info.getSymbol(pmem.page_allocator, address) catch {

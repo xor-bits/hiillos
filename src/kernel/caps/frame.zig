@@ -121,106 +121,108 @@ pub const Frame = struct {
         return self;
     }
 
-    pub fn write(self: *@This(), offset_bytes: usize, source: []const volatile u8) Error!void {
-        var bytes = source;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Frame.write offset_bytes={} source.len={}", .{
-                offset_bytes,
-                source.len,
-            });
-
-        try self.boundsCheck(offset_bytes, bytes.len);
-
-        var it = self.data(offset_bytes, true);
-        while (try it.next()) |dst_chunk| {
-            if (dst_chunk.len == bytes.len) {
-                @memcpy(dst_chunk, bytes);
-                break;
-            } else if (dst_chunk.len > bytes.len) {
-                @memcpy(dst_chunk[0..bytes.len], bytes);
-                break;
-            } else { // dst_chunk.len < bytes.len
-                @memcpy(dst_chunk, bytes[0..dst_chunk.len]);
-                bytes = bytes[dst_chunk.len..];
-            }
-        }
-    }
-
-    pub fn read(self: *@This(), offset_bytes: usize, dest: []volatile u8) Error!void {
-        var bytes = dest;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Frame.read offset_bytes={} dest.len={}", .{
-                offset_bytes,
-                dest.len,
-            });
-
-        try self.boundsCheck(offset_bytes, bytes.len);
-
-        var it = self.data(offset_bytes, false);
-        while (try it.next()) |src_chunk| {
-            // log.info("chunk [ 0x{x}..0x{x} ]", .{
-            //     @intFromPtr(src_chunk.ptr),
-            //     @intFromPtr(src_chunk.ptr) + src_chunk.len,
-            // });
-
-            if (src_chunk.len == bytes.len) {
-                @memcpy(bytes, src_chunk);
-                break;
-            } else if (src_chunk.len > bytes.len) {
-                @memcpy(bytes, src_chunk[0..bytes.len]);
-                break;
-            } else { // src_chunk.len < bytes.len
-                @memcpy(bytes[0..src_chunk.len], src_chunk);
-                bytes = bytes[src_chunk.len..];
-            }
-        }
-    }
-
-    fn boundsCheck(self: *@This(), offset_bytes: usize, len: usize) Error!void {
-        const limit = std.math.divCeil(usize, offset_bytes + len, 0x1000) catch
-            return Error.OutOfBounds;
+    pub fn forceInitialize(
+        self: *@This(),
+        offset_byte: usize,
+        length: usize,
+    ) !void {
+        if (length == 0) return;
 
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (limit > self.pages.len)
-            return Error.OutOfBounds;
+        std.debug.assert(self.mappings.items.len == 0);
+        std.debug.assert(!self.is_transient);
+
+        const idx_beg: usize = std.math.divFloor(
+            usize,
+            offset_byte,
+            0x1000,
+        ) catch unreachable;
+        const idx_end: usize = std.math.divCeil(
+            usize,
+            offset_byte + length - 1,
+            0x1000,
+        ) catch unreachable;
+
+        for (self.pages[idx_beg..idx_end]) |*page| {
+            if (page.* != 0) continue; // FIXME: handle readonly zero pages
+
+            const new_page = pmem.allocChunk(.@"4KiB") orelse
+                return Error.OutOfMemory;
+            page.* = new_page.toParts().page;
+        }
     }
 
-    pub const DataIterator = struct {
-        frame: *Frame,
-        offset_within_first: ?u32,
-        idx: u32,
-        is_write: bool,
+    pub fn initialWrite(
+        self: *@This(),
+        offset_byte: usize,
+        _bytes: []const u8,
+    ) !void {
+        var bytes = _bytes;
+        if (bytes.len == 0) return;
 
-        pub fn next(self: *@This()) !?[]volatile u8 {
-            if (self.idx >= self.frame.pages.len)
-                return null;
+        try self.forceInitialize(offset_byte, bytes.len);
 
-            defer self.idx += 1;
-            defer self.offset_within_first = null;
+        var it = self.data(offset_byte, true);
+        defer it.deinit();
 
-            const page = try self.frame.pageFault(
-                self.idx,
-                self.is_write,
-                null,
-            );
+        while (try it.next()) |chunk| {
+            const limit = @min(bytes.len, chunk.len);
+            @memcpy(chunk[0..limit], bytes[0..limit]);
+            bytes = bytes[limit..];
 
-            return addr.Phys.fromParts(.{ .page = page })
-                .toHhdm()
-                .toPtr([*]volatile u8)[self.offset_within_first orelse 0 .. 0x1000];
+            if (bytes.len == 0) return;
         }
-    };
+    }
 
-    pub fn data(self: *@This(), offset_bytes: usize, is_write: bool) DataIterator {
+    pub fn DataIterator(comptime is_write: bool) type {
+        return struct {
+            frame: *Frame,
+            offset_within_first: ?u32,
+            idx: u32,
+
+            const Slice = if (is_write) []volatile u8 else []const volatile u8;
+
+            pub fn next(self: *@This()) !?Slice {
+                if (self.idx >= self.frame.pages.len)
+                    return null;
+
+                defer self.idx += 1;
+                defer self.offset_within_first = null;
+
+                const page = try self.frame.pageFaultDryrunLocked(
+                    self.idx,
+                    is_write,
+                );
+
+                // log.info("Frame.DataIterator.next frame={*} idx={} page=0x{x} offs=0x{x} {s}", .{
+                //     self.frame,
+                //     self.idx,
+                //     page,
+                //     self.offset_within_first orelse 0,
+                //     if (page == caps.readonly_zero_page.load(.monotonic)) "rozp" else "",
+                // });
+
+                return addr.Phys.fromParts(.{ .page = page })
+                    .toHhdm()
+                    .toPtr([*]volatile u8)[self.offset_within_first orelse 0 .. 0x1000];
+            }
+
+            pub fn deinit(self: *@This()) void {
+                self.frame.lock.unlock();
+            }
+        };
+    }
+
+    pub fn data(self: *@This(), offset_bytes: usize, comptime is_write: bool) DataIterator(is_write) {
+        self.lock.lock();
+
         if (offset_bytes >= self.pages.len * 0x1000) {
             return .{
                 .frame = self,
                 .offset_within_first = null,
                 .idx = @intCast(self.pages.len),
-                .is_write = is_write,
             };
         }
 
@@ -234,8 +236,34 @@ pub const Frame = struct {
             .frame = self,
             .offset_within_first = offset_within_page,
             .idx = @intCast(first_byte / 0x1000),
-            .is_write = is_write,
         };
+    }
+
+    pub fn pageFaultDryrunLocked(
+        self: *@This(),
+        idx: u32,
+        is_write: bool,
+    ) Error!u32 {
+        if (self.is_transient) return Error.Retry;
+
+        std.debug.assert(idx < self.pages.len);
+        const page = self.pages[idx];
+
+        const readonly_zero_page_now = caps.readonly_zero_page.load(.monotonic);
+        std.debug.assert(readonly_zero_page_now != 0);
+
+        const is_uninit = page == 0;
+        const is_not_init = page == readonly_zero_page_now or is_uninit;
+
+        // trying to write, but it is not allocated yet
+        // (either not initialized or intitialized to read-only)
+        if (is_not_init and is_write) return Error.Retry;
+
+        // trying to read or exec while it is not allocated yet
+        if (is_not_init) return readonly_zero_page_now;
+
+        // it is allocated
+        return page;
     }
 
     /// returning Error.Retry means switching away from the thread from a page fault handler
@@ -245,6 +273,8 @@ pub const Frame = struct {
         idx: u32,
         is_write: bool,
         dont_lock_if: ?*caps.Vmem,
+        trap: *arch.TrapRegs,
+        thread: *caps.Thread,
     ) Error!u32 {
         //     1.  lock `Frame`
         //     2.  copy all mappings that reference the old page to a temporary list
@@ -279,7 +309,12 @@ pub const Frame = struct {
         //    24.  unlock `Frame`
         //
 
-        const result = try self.updatePage(idx, is_write);
+        const result = try self.updatePage(
+            idx,
+            is_write,
+            trap,
+            thread,
+        );
 
         switch (result) {
             .reused => |page| {
@@ -296,17 +331,10 @@ pub const Frame = struct {
                     caps.slab_allocator.allocator().free(info.updates);
                 }
 
-                std.sort.pdq(*caps.Vmem, info.updates, {}, struct {
-                    fn lessThanFn(_: void, lhs: *caps.Vmem, rhs: *caps.Vmem) bool {
-                        return @intFromPtr(lhs) < @intFromPtr(rhs);
-                    }
-                }.lessThanFn);
-
-                var ipi_bitmap: u256 = 0;
-
                 // this CPU owns a single manual tlb_shootdown_refcnt reference
                 self.tlb_shootdown_refcnt.inc();
 
+                var ipi_bitmap: u256 = 0;
                 var prev: ?*caps.Vmem = null;
                 for (info.updates) |vmem_with_old_mappings| {
                     // filter out duplicates
@@ -326,7 +354,7 @@ pub const Frame = struct {
 
                 if (self.deinitTlbShootdown()) {
                     @branchHint(.likely);
-                    return info.new_page;
+                    return Error.Retry;
                 }
                 // log.debug("tlb_shootdown_refcnt={}", .{self.tlb_shootdown_refcnt.load()});
 
@@ -349,6 +377,10 @@ pub const Frame = struct {
 
         // TODO: better page table HAL where remap and unmap ops do the TLB shootdown
     }
+
+    // /// start TLB shootdown caused by `initiator` thread
+    // pub fn initiatorTlbShootdown(self: *@This(), initiator: *caps.Thread) void {}
+    // pub fn otherTlbShootdown(self: *@This()) void {}
 
     /// returns true if the whole TLB shootdown process was complete
     pub fn deinitTlbShootdown(self: *@This()) bool {
@@ -382,20 +414,36 @@ pub const Frame = struct {
         },
     };
 
-    fn updatePage(self: *@This(), idx: u32, is_write: bool) !UpdatePageResult {
+    fn updatePage(
+        self: *@This(),
+        idx: u32,
+        is_write: bool,
+        trap: *arch.TrapRegs,
+        thread: *caps.Thread,
+    ) !UpdatePageResult {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.is_transient) return .{ .is_transient = {} };
+        if (self.is_transient) {
+            self.transientQueueSleep(trap, thread);
+            return .{ .is_transient = {} };
+        }
 
         std.debug.assert(idx < self.pages.len);
         const page = &self.pages[idx];
 
-        const readonly_zero_page_now = caps.readonly_zero_page.load(.monotonic);
-        std.debug.assert(readonly_zero_page_now != 0);
+        const is_uninit = page.* == 0;
 
-        // TODO:
-        if ((page.* == readonly_zero_page_now or page.* == 0) and is_write) {
+        if (conf.NO_LAZY_REMAP) {
+            if (is_uninit) {
+                const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
+                page.* = alloc.toParts().page;
+            }
+
+            return .{ .reused = page.* };
+        }
+
+        if (is_uninit and is_write) {
             // writing to a lazy allocated zeroed page
             // => allocate a new exclusive page and set it be the mapping
 
@@ -404,35 +452,61 @@ pub const Frame = struct {
 
             const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
             errdefer pmem.deallocChunk(alloc, .@"4KiB");
-            const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
+            const old = try self.collectOldMappingsLocked();
 
             const new_page = alloc.toParts().page;
             const old_page = page.*;
 
             page.* = new_page;
             self.is_transient = true;
+            self.transientQueueSleep(trap, thread);
 
-            for (self.mappings.items, old) |a, *b| {
-                b.* = a.vmem.clone();
-            }
+            // log.info("remap old=0x{x} new=0x{x}", .{ old_page, new_page });
 
             return .{ .remap = .{
                 .new_page = new_page,
                 .old_page = old_page,
                 .updates = old,
             } };
-        } else if (!is_write and page.* == 0) {
+        } else if (is_uninit and !is_write) {
             // not mapped and isnt write
             // => use the shared readonly zero page
 
-            page.* = readonly_zero_page_now;
-            return .{ .reused = readonly_zero_page_now };
+            // log.info("reused zeropage=0x{x}", .{caps.readonly_zero_page.load(.monotonic)});
+            return .{ .reused = caps.readonly_zero_page.load(.monotonic) };
         } else {
+            std.debug.assert(!is_uninit);
 
             // already mapped AND write to a page that isnt readonly_zero_page or read from any page
             // => use the existing page
+            // log.info("reused old=0x{x}", .{page.*});
             return .{ .reused = page.* };
         }
+    }
+
+    fn collectOldMappingsLocked(self: *@This()) ![]*caps.Vmem {
+        const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
+
+        for (self.mappings.items, old) |a, *b| {
+            b.* = a.vmem.clone();
+        }
+
+        std.sort.pdq(*caps.Vmem, old, {}, struct {
+            fn lessThanFn(_: void, lhs: *caps.Vmem, rhs: *caps.Vmem) bool {
+                return @intFromPtr(lhs) < @intFromPtr(rhs);
+            }
+        }.lessThanFn);
+
+        return old;
+    }
+
+    fn transientQueueSleep(self: *@This(), trap: *arch.TrapRegs, thread: *caps.Thread) void {
+        // save the current thread that might or might not go to sleep
+        thread.status = .waiting;
+        thread.trap = trap.*;
+        arch.cpuLocal().current_thread = null;
+
+        self.transient_sleep_queue.pushBack(thread);
     }
 };
 
@@ -506,9 +580,7 @@ pub const TlbShootdown = struct {
 
                 return null;
             },
-            .unmap => |thread| {
-                return thread;
-            },
+            .unmap => |thread| return thread,
         }
     }
 
