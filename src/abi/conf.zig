@@ -34,6 +34,7 @@ pub const KERNEL_PANIC_SOURCE_INFO: bool = IS_DEBUG or false;
 /// crash the kernel and provide a good stack trace if
 /// some kernel object gets a high ref count (a likely ref leak)
 pub const KERNEL_PANIC_ON_HIGH_REFCNT: usize = 0;
+pub const ANTI_TLB_MODE: bool = false;
 
 pub const IPC_BENCHMARK: bool = false;
 pub const SCHED_STRESS_TEST: bool = false;

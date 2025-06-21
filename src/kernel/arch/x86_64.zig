@@ -441,6 +441,8 @@ pub fn flushTlb() void {
 }
 
 pub fn flushTlbAddr(vaddr: usize) void {
+    if (conf.ANTI_TLB_MODE) return flushTlb();
+
     asm volatile (
         \\ invlpg (%[v])
         :
@@ -1593,6 +1595,11 @@ pub const TrapRegs = extern struct {
     }
 
     pub inline fn exit() void {
+        if (comptime conf.ANTI_TLB_MODE) asm volatile (
+            \\ movq %cr3, %rax
+            \\ movq %rax, %cr3
+        );
+
         asm volatile (std.fmt.comptimePrint(
                 // push all scratch + general purpose registers
                 \\ popq %r15
