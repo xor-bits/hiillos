@@ -20,9 +20,9 @@ pub fn spawn(comptime function: anytype, args: anytype) !void {
     const Instance = struct {
         args: Args,
 
-        fn entryFn(raw_arg: usize) callconv(.SysV) void {
-            const self: *@This() = @ptrFromInt(raw_arg);
-            callFn(function, self.args);
+        fn entryFn(raw_arg: usize) callconv(.SysV) noreturn {
+            const self: *volatile @This() = @ptrFromInt(raw_arg);
+            callFn(function, self.*.args);
             sys.selfStop();
         }
     };
@@ -48,7 +48,7 @@ pub fn spawn(comptime function: anytype, args: anytype) !void {
     stack_ptr -= 0x100; // some extra zeroes that zig requires
     stack_ptr = std.mem.alignBackward(usize, stack_ptr, 0x100);
 
-    const instance: *Instance = @ptrFromInt(instance_ptr);
+    const instance: *volatile Instance = @ptrFromInt(instance_ptr);
     instance.* = .{ .args = args };
 
     const entry_ptr = @intFromPtr(&Instance.entryFn);
