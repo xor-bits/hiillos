@@ -54,6 +54,133 @@ pub const Vmem = struct {
         }).write();
     }
 
+    pub fn printMappings(self: *volatile @This()) !void {
+        // go through every single page in this address space,
+        // and print contiguous similar chunks.
+
+        const Current = struct {
+            base: addr.Virt,
+            target: addr.Phys,
+            write: bool,
+            exec: bool,
+            user: bool,
+
+            fn fromEntry(from: addr.Virt, e: Entry) @This() {
+                return .{
+                    .base = from,
+                    .target = addr.Phys.fromParts(.{ .page = e.page_index }),
+                    .write = e.writable != 0,
+                    .exec = e.no_execute == 0,
+                    .user = e.user_accessible != 0,
+                };
+            }
+
+            fn isContiguous(a: @This(), b: @This()) bool {
+                if (a.write != b.write or a.exec != b.exec or a.user != b.user) {
+                    return false;
+                }
+
+                const a_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
+                const b_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
+
+                return a_diff == b_diff;
+            }
+
+            fn printRange(from: @This(), to: addr.Virt) void {
+                const size = to.raw - from.base.raw;
+                log.info(" - {s}R{s}{s} [ 0x{x:0>16}..0x{x:0>16} ] => 0x{x:0>16} (0x{x}B)", .{
+                    if (from.user) "U" else "-",
+                    if (from.write) "W" else "-",
+                    if (from.exec) "X" else "-",
+                    from.base.raw,
+                    to.raw,
+                    from.target.raw,
+                    size,
+                });
+            }
+
+            fn missing(s: *?@This(), vaddr: addr.Virt) void {
+                if (s.*) |base| {
+                    base.printRange(vaddr);
+                    s.* = null;
+                }
+            }
+
+            fn present(s: *?@This(), vaddr: addr.Virt, entry: Entry) void {
+                const cur = @This().fromEntry(vaddr, entry);
+                const base: @This() = s.* orelse {
+                    s.* = cur;
+                    return;
+                };
+
+                if (!base.isContiguous(cur)) {
+                    base.printRange(vaddr);
+                    s.* = cur;
+                    return;
+                }
+            }
+        };
+
+        var maybe_base: ?Current = null;
+
+        for (0..256) |l4| {
+            const colossial = addr.Virt.fromParts(.{
+                .level4 = @truncate(l4),
+            });
+
+            if (volat(&self.entries[l4]).*.present == 0) {
+                Current.missing(&maybe_base, colossial);
+                continue;
+            }
+
+            for (0..512) |l3| {
+                const giant = addr.Virt.fromParts(.{
+                    .level4 = @truncate(l4),
+                    .level3 = @truncate(l3),
+                });
+
+                if ((try self.entryGiantFrame(giant)).*.present == 0) {
+                    Current.missing(&maybe_base, giant);
+                    continue;
+                }
+
+                for (0..512) |l2| {
+                    const huge = addr.Virt.fromParts(.{
+                        .level4 = @truncate(l4),
+                        .level3 = @truncate(l3),
+                        .level2 = @truncate(l2),
+                    });
+
+                    if ((try self.entryHugeFrame(huge)).*.present == 0) {
+                        Current.missing(&maybe_base, huge);
+                        continue;
+                    }
+
+                    for (0..512) |l1| {
+                        const vaddr = addr.Virt.fromParts(.{
+                            .level4 = @truncate(l4),
+                            .level3 = @truncate(l3),
+                            .level2 = @truncate(l2),
+                            .level1 = @truncate(l1),
+                        });
+                        const frame = (try self.entryFrame(vaddr)).*;
+
+                        if (frame.present == 0) {
+                            Current.missing(&maybe_base, vaddr);
+                            continue;
+                        }
+
+                        Current.present(&maybe_base, vaddr, frame);
+                    }
+                }
+            }
+        }
+
+        Current.missing(&maybe_base, addr.Virt.fromParts(.{
+            .level4 = 256,
+        }));
+    }
+
     pub fn entryGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level4)).toHhdm().toPtr(*volatile PageTableLevel3);
         return next.entryGiantFrame(vaddr);

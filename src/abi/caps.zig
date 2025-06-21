@@ -157,6 +157,10 @@ pub const Vmem = extern struct {
     pub fn dummyAccess(this: @This(), vaddr: usize, mode: sys.FaultCause) sys.Error!void {
         return try sys.vmemDummyAccess(this.cap, vaddr, mode);
     }
+
+    pub fn dump(this: @This()) sys.Error!void {
+        return try sys.vmemDump(this.cap);
+    }
 };
 
 /// capability to a physical memory region (sized `ChunkSize`)
@@ -193,6 +197,10 @@ pub const Frame = extern struct {
 
     pub fn dummyAccess(this: @This(), offset_byte: usize, mode: sys.FaultCause) sys.Error!void {
         return try sys.frameDummyAccess(this.cap, offset_byte, mode);
+    }
+
+    pub fn dump(this: @This()) sys.Error!void {
+        return try sys.frameDump(this.cap);
     }
 };
 

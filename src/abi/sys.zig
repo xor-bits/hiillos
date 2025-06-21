@@ -22,6 +22,8 @@ pub const Id = enum(usize) {
     /// dummy read/write/exec access to a specific page of a `Frame`,
     /// effectively triggering a page fault without having to map
     frame_dummy_access,
+    /// print all page indices to serial output
+    frame_dump,
 
     /// create a new `Vmem` object that handles a single virtual address space
     vmem_create,
@@ -38,6 +40,9 @@ pub const Id = enum(usize) {
     /// dummy read/write/exec access to a specific page of a `Vmem`,
     /// effectively triggering a page fault without having to ctx switch
     vmem_dummy_access,
+    /// print all `Vmem` -> `Frame` mappings to serial output
+    /// followed by all hardware page table vaddr -> paddr mappings
+    vmem_dump,
 
     /// create a new `Process` object that handles a single process
     /// capability handles are tied to processes
@@ -119,6 +124,8 @@ pub const Id = enum(usize) {
     selfYield,
     /// stop the active thread
     selfStop,
+    /// print arch.TrapRegs to serial output
+    selfDump,
     /// set an extra IPC register of this thread
     self_set_extra,
     /// get and zero an extra IPC register of this thread
@@ -412,6 +419,10 @@ pub fn frameDummyAccess(frame: u32, offset_byte: usize, mode: FaultCause) Error!
     _ = try syscall(.frame_dummy_access, .{ frame, offset_byte, @intFromEnum(mode) }, .{});
 }
 
+pub fn frameDump(frame: u32) Error!void {
+    _ = try syscall(.frame_dump, .{frame}, .{});
+}
+
 pub fn vmemCreate() Error!u32 {
     return @intCast(try syscall(.vmem_create, .{}, .{}));
 }
@@ -461,6 +472,10 @@ pub fn vmemWrite(vmem: u32, vaddr: usize, src: []const u8) Error!void {
 
 pub fn vmemDummyAccess(vmem: u32, vaddr: usize, mode: FaultCause) Error!void {
     _ = try syscall(.vmem_dummy_access, .{ vmem, vaddr, @intFromEnum(mode) }, .{});
+}
+
+pub fn vmemDump(vmem: u32) Error!void {
+    _ = try syscall(.vmem_dump, .{vmem}, .{});
 }
 
 pub fn procCreate(vmem: u32) Error!u32 {
@@ -658,6 +673,10 @@ pub fn selfStop() noreturn {
     _ = syscall(.selfStop, .{}, .{}) catch {};
     asm volatile ("mov 0, %rax"); // read from nullptr to kill the process for sure
     unreachable;
+}
+
+pub fn selfDump() void {
+    _ = syscall(.selfDump, .{}, .{}) catch unreachable;
 }
 
 pub fn selfSetExtra(idx: u7, val: u64, is_cap: bool) Error!void {

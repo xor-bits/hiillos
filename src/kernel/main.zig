@@ -348,6 +348,18 @@ fn handle_syscall(
                 _ = try res;
             }
         },
+        .frame_dump => {
+            const frame = try thread.proc.getObject(caps.Frame, @truncate(trap.arg0));
+            defer frame.deinit();
+
+            frame.lock.lock();
+            defer frame.lock.unlock();
+
+            log.info("frame: {*} is_transient={}", .{ frame, frame.is_transient });
+            for (frame.pages) |p| {
+                log.info(" - 0x{x}", .{p});
+            }
+        },
 
         .vmem_create => {
             const vmem = try caps.Vmem.init();
@@ -463,6 +475,24 @@ fn handle_syscall(
             } else {
                 _ = try res;
             }
+        },
+        .vmem_dump => {
+            const vmem = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
+            defer vmem.deinit();
+
+            vmem.lock.lock();
+            defer vmem.lock.unlock();
+
+            log.info("vmem: {*} cr3=0x{x}", .{ vmem, vmem.cr3 });
+            for (vmem.mappings.items) |mapping| {
+                log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
+                    mapping.getVaddr().raw,
+                    mapping.getVaddr().raw + mapping.pages * 0x1000,
+                    mapping.frame,
+                });
+            }
+            log.info("halvmem", .{});
+            try vmem.halPageTable().printMappings();
         },
 
         .proc_create => {
@@ -768,6 +798,9 @@ fn handle_syscall(
         .selfStop => {
             proc.stop(thread);
             proc.switchNow(trap);
+        },
+        .selfDump => {
+            log.info("selfDump: {}", .{trap.*});
         },
         .self_set_extra => {
             const idx: u7 = @truncate(trap.arg0);
