@@ -19,6 +19,9 @@ pub const Id = enum(usize) {
     frame_read,
     /// write into a `Frame` capability
     frame_write,
+    /// dummy read/write/exec access to a specific page of a `Frame`,
+    /// effectively triggering a page fault without having to map
+    frame_dummy_access,
 
     /// create a new `Vmem` object that handles a single virtual address space
     vmem_create,
@@ -32,6 +35,9 @@ pub const Id = enum(usize) {
     vmem_read,
     /// write into a `Vmem` capability
     vmem_write,
+    /// dummy read/write/exec access to a specific page of a `Vmem`,
+    /// effectively triggering a page fault without having to ctx switch
+    vmem_dummy_access,
 
     /// create a new `Process` object that handles a single process
     /// capability handles are tied to processes
@@ -203,6 +209,13 @@ pub const MapFlags = packed struct {
     fixed: bool = false,
     _: u7 = 0,
     // global: bool = false,
+};
+
+/// page fault access cause
+pub const FaultCause = enum(u2) {
+    read,
+    write,
+    exec,
 };
 
 /// syscall interface Error type
@@ -386,6 +399,10 @@ pub fn frameWrite(frame: u32, offset_byte: usize, src: []const u8) Error!void {
     _ = try syscall(.frame_write, .{ frame, offset_byte, @intFromPtr(src.ptr), src.len });
 }
 
+pub fn frameDummyAccess(frame: u32, offset_byte: usize, mode: FaultCause) Error!void {
+    _ = try syscall(.frame_dummy_access, .{ frame, offset_byte, @intFromEnum(mode) });
+}
+
 pub fn vmemCreate() Error!u32 {
     return @intCast(try syscall(.vmem_create, .{}));
 }
@@ -431,6 +448,10 @@ pub fn vmemRead(vmem: u32, vaddr: usize, dst: []u8) Error!void {
 
 pub fn vmemWrite(vmem: u32, vaddr: usize, src: []const u8) Error!void {
     _ = try syscall(.vmem_write, .{ vmem, vaddr, @intFromPtr(src.ptr), src.len });
+}
+
+pub fn vmemDummyAccess(vmem: u32, vaddr: usize, mode: FaultCause) Error!void {
+    _ = try syscall(.vmem_dummy_access, .{ vmem, vaddr, @intFromEnum(mode) });
 }
 
 pub fn procCreate(vmem: u32) Error!u32 {

@@ -153,7 +153,7 @@ pub const Thread = struct {
     pub fn unhandledPageFault(
         self: *@This(),
         target_addr: usize,
-        caused_by: arch.FaultCause,
+        caused_by: abi.sys.FaultCause,
         ip: usize,
         sp: usize,
         reason: anyerror,

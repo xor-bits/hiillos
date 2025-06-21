@@ -153,6 +153,10 @@ pub const Vmem = extern struct {
     pub fn write(this: @This(), vaddr: usize, src: []const u8) sys.Error!void {
         return try sys.vmemWrite(this.cap, vaddr, src);
     }
+
+    pub fn dummyAccess(this: @This(), vaddr: usize, mode: sys.FaultCause) sys.Error!void {
+        return try sys.vmemDummyAccess(this.cap, vaddr, mode);
+    }
 };
 
 /// capability to a physical memory region (sized `ChunkSize`)
@@ -185,6 +189,10 @@ pub const Frame = extern struct {
 
     pub fn write(this: @This(), offset_byte: usize, src: []const u8) sys.Error!void {
         return try sys.frameWrite(this.cap, offset_byte, src);
+    }
+
+    pub fn dummyAccess(this: @This(), offset_byte: usize, mode: sys.FaultCause) sys.Error!void {
+        return try sys.frameDummyAccess(this.cap, offset_byte, mode);
     }
 };
 

@@ -328,6 +328,22 @@ fn handle_syscall(
 
             trap.syscall_id = abi.sys.encode(0);
         },
+        .frame_dummy_access => {
+            const offset_byte = trap.arg1;
+            const mode: abi.sys.FaultCause = std.meta.intToEnum(abi.sys.FaultCause, trap.arg2) catch {
+                return Error.InvalidArgument;
+            };
+            const frame = try thread.proc.getObject(caps.Frame, @truncate(trap.arg0));
+            defer frame.deinit();
+
+            trap.syscall_id = abi.sys.encode(0);
+            const res = frame.pageFault(@truncate(offset_byte / 0x1000), mode == .write, null);
+            if (res == Error.Retry) {
+                proc.switchNow(trap, null);
+            } else {
+                _ = try res;
+            }
+        },
 
         .vmem_create => {
             const vmem = try caps.Vmem.init();
@@ -427,6 +443,22 @@ fn handle_syscall(
             }
 
             trap.syscall_id = abi.sys.encode(0);
+        },
+        .vmem_dummy_access => {
+            const vaddr = try addr.Virt.fromUser(trap.arg1);
+            const mode: abi.sys.FaultCause = std.meta.intToEnum(abi.sys.FaultCause, trap.arg2) catch {
+                return Error.InvalidArgument;
+            };
+            const vmem = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
+            defer vmem.deinit();
+
+            trap.syscall_id = abi.sys.encode(0);
+            const res = vmem.pageFault(mode, vaddr);
+            if (res == Error.Retry) {
+                proc.switchNow(trap, null);
+            } else {
+                _ = try res;
+            }
         },
 
         .proc_create => {

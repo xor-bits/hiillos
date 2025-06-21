@@ -756,12 +756,6 @@ pub const Entry = packed struct {
     }
 };
 
-pub const FaultCause = enum {
-    read,
-    write,
-    exec,
-};
-
 pub const Idt = extern struct {
     ptr: DescriptorTablePtr,
     entries: [256]u128,
@@ -928,7 +922,7 @@ pub const Idt = extern struct {
 
                 if (conf.LOG_EVERYTHING) log.debug("page fault exception", .{});
 
-                const caused_by: FaultCause = if (pfec.caused_by_write)
+                const caused_by: abi.sys.FaultCause = if (pfec.caused_by_write)
                     .write
                 else if (pfec.instruction_fetch)
                     .exec

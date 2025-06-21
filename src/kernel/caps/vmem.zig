@@ -676,7 +676,7 @@ pub const Vmem = struct {
 
     pub fn pageFault(
         self: *@This(),
-        caused_by: arch.FaultCause,
+        caused_by: abi.sys.FaultCause,
         vaddr_unaligned: addr.Virt,
     ) Error!void {
         if (conf.LOG_PAGE_FAULTS)
