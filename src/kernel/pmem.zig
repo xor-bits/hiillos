@@ -163,14 +163,16 @@ pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
         // quickly skip over 64 chunks at a time if none of them is free
         const now = bucket.load(.acquire);
         if (now == 0) continue;
-        const lowest = now & (~now + 1);
 
-        std.debug.assert(@popCount(lowest) == 1);
-        const now2 = bucket.fetchAnd(~lowest, .acquire);
+        // const lowest = @as(u64, 2) << @intCast(@ctz(now));
+        const highest = @as(u64, 0x8000000000000000) >> @intCast(@clz(now));
 
-        if (now2 & lowest != 0) {
+        std.debug.assert(@popCount(highest) == 1);
+        const now2 = bucket.fetchAnd(~highest, .acquire);
+
+        if (now2 & highest != 0) {
             // success: bit set to 0 from 1 before anyone else
-            const result = addr.Phys.fromInt((std.math.log2_int(u64, lowest) + 64 * i) * size.sizeBytes());
+            const result = addr.Phys.fromInt((std.math.log2_int(u64, highest) + 64 * i) * size.sizeBytes());
             if (conf.IS_DEBUG) {
                 std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
                 std.crypto.secureZero(u64, result.toHhdm().toPtr([*]volatile u64)[0..512]);
