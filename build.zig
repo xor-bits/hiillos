@@ -437,11 +437,22 @@ fn createRootBin(
 
 // create the shared ABI library
 fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
+    const syscall_generator_tool = b.addExecutable(.{
+        .name = "generate_syscall_wrapper",
+        .root_source_file = b.path("src/tools/generate_syscall_wrapper.zig"),
+        .target = b.graph.host,
+    });
+
+    const syscall_generator_tool_run = b.addRunArtifact(syscall_generator_tool);
+    const syscall_zig = syscall_generator_tool_run.addOutputFileArg("syscall.zig");
+    syscall_generator_tool_run.has_side_effects = false;
+
     const mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),
         .target = opts.target,
         .optimize = opts.optimize,
     });
+    mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
 
     const tests = b.addTest(.{
         .name = "abi-unit-test",

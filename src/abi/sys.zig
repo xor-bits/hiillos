@@ -367,6 +367,15 @@ pub const Message = extern struct {
     arg4: usize = 0,
 };
 
+pub const PackedMessage = extern struct {
+    cap_or_stamp_and_extra: usize = 0,
+    arg0: usize = 0,
+    arg1: usize = 0,
+    arg2: usize = 0,
+    arg3: usize = 0,
+    arg4: usize = 0,
+};
+
 comptime {
     std.debug.assert(@sizeOf(Message) == @sizeOf([6]usize));
 }
@@ -374,41 +383,41 @@ comptime {
 // SYSCALLS
 
 pub fn log(s: []const u8) void {
-    _ = syscall(.log, .{ @intFromPtr(s.ptr), s.len }) catch unreachable;
+    _ = syscall(.log, .{ @intFromPtr(s.ptr), s.len }, .{}) catch unreachable;
 }
 
 pub fn kernelPanic() noreturn {
     if (!abi.conf.KERNEL_PANIC_SYSCALL) @compileError("debug kernel panics not enabled");
-    _ = syscall(.kernel_panic, .{}) catch {};
+    _ = syscall(.kernel_panic, .{}, .{}) catch {};
     unreachable;
 }
 
 pub fn frameCreate(size_bytes: usize) Error!u32 {
-    return @intCast(try syscall(.frame_create, .{size_bytes}));
+    return @intCast(try syscall(.frame_create, .{size_bytes}, .{}));
 }
 
 pub fn frameGetSize(frame: u32) Error!usize {
-    return try syscall(.frame_get_size, .{frame}) * 0x1000;
+    return try syscall(.frame_get_size, .{frame}, .{}) * 0x1000;
 }
 
 pub fn frameRead(frame: u32, offset_byte: usize, dst: []u8) Error!void {
-    _ = try syscall(.frame_read, .{ frame, offset_byte, @intFromPtr(dst.ptr), dst.len });
+    _ = try syscall(.frame_read, .{ frame, offset_byte, @intFromPtr(dst.ptr), dst.len }, .{});
 }
 
 pub fn frameWrite(frame: u32, offset_byte: usize, src: []const u8) Error!void {
-    _ = try syscall(.frame_write, .{ frame, offset_byte, @intFromPtr(src.ptr), src.len });
+    _ = try syscall(.frame_write, .{ frame, offset_byte, @intFromPtr(src.ptr), src.len }, .{});
 }
 
 pub fn frameDummyAccess(frame: u32, offset_byte: usize, mode: FaultCause) Error!void {
-    _ = try syscall(.frame_dummy_access, .{ frame, offset_byte, @intFromEnum(mode) });
+    _ = try syscall(.frame_dummy_access, .{ frame, offset_byte, @intFromEnum(mode) }, .{});
 }
 
 pub fn vmemCreate() Error!u32 {
-    return @intCast(try syscall(.vmem_create, .{}));
+    return @intCast(try syscall(.vmem_create, .{}, .{}));
 }
 
 pub fn vmemSelf() Error!u32 {
-    return @intCast(try syscall(.vmem_self, .{}));
+    return @intCast(try syscall(.vmem_self, .{}, .{}));
 }
 
 pub fn packRightsFlags(rights: Rights, flags: MapFlags) u24 {
@@ -433,503 +442,269 @@ pub fn vmemMap(
 ) Error!usize {
     return try syscall(.vmem_map, .{
         vmem, frame, frame_offset, vaddr, length, packRightsFlags(rights, flags),
-    });
+    }, .{});
 }
 
 pub fn vmemUnmap(vmem: u32, vaddr: usize, length: usize) Error!void {
     _ = try syscall(.vmem_unmap, .{
         vmem, vaddr, length,
-    });
+    }, .{});
 }
 
 pub fn vmemRead(vmem: u32, vaddr: usize, dst: []u8) Error!void {
-    _ = try syscall(.vmem_read, .{ vmem, vaddr, @intFromPtr(dst.ptr), dst.len });
+    _ = try syscall(.vmem_read, .{ vmem, vaddr, @intFromPtr(dst.ptr), dst.len }, .{});
 }
 
 pub fn vmemWrite(vmem: u32, vaddr: usize, src: []const u8) Error!void {
-    _ = try syscall(.vmem_write, .{ vmem, vaddr, @intFromPtr(src.ptr), src.len });
+    _ = try syscall(.vmem_write, .{ vmem, vaddr, @intFromPtr(src.ptr), src.len }, .{});
 }
 
 pub fn vmemDummyAccess(vmem: u32, vaddr: usize, mode: FaultCause) Error!void {
-    _ = try syscall(.vmem_dummy_access, .{ vmem, vaddr, @intFromEnum(mode) });
+    _ = try syscall(.vmem_dummy_access, .{ vmem, vaddr, @intFromEnum(mode) }, .{});
 }
 
 pub fn procCreate(vmem: u32) Error!u32 {
-    return @intCast(try syscall(.proc_create, .{vmem}));
+    return @intCast(try syscall(.proc_create, .{vmem}, .{}));
 }
 
 pub fn procSelf() Error!u32 {
-    return @intCast(try syscall(.proc_self, .{}));
+    return @intCast(try syscall(.proc_self, .{}, .{}));
 }
 
 pub fn procGiveCap(proc: u32, cap: u32) Error!u32 {
-    return @intCast(try syscall(.proc_give_cap, .{ proc, cap }));
+    return @intCast(try syscall(.proc_give_cap, .{ proc, cap }, .{}));
 }
 
 pub fn threadCreate(proc: u32) Error!u32 {
-    return @intCast(try syscall(.thread_create, .{proc}));
+    return @intCast(try syscall(.thread_create, .{proc}, .{}));
 }
 
 pub fn threadSelf() Error!u32 {
-    return @intCast(try syscall(.thread_self, .{}));
+    return @intCast(try syscall(.thread_self, .{}, .{}));
 }
 
 pub fn threadReadRegs(thread: u32, dst: *ThreadRegs) Error!void {
     _ = try syscall(.thread_read_regs, .{
         thread,
         @intFromPtr(dst),
-    });
+    }, .{});
 }
 
 pub fn threadWriteRegs(thread: u32, dst: *const ThreadRegs) Error!void {
     _ = try syscall(.thread_write_regs, .{
         thread,
         @intFromPtr(dst),
-    });
+    }, .{});
 }
 
 pub fn threadStart(thread: u32) Error!void {
     _ = try syscall(.thread_start, .{
         thread,
-    });
+    }, .{});
 }
 
 pub fn threadStop(thread: u32) Error!void {
     _ = try syscall(.thread_stop, .{
         thread,
-    });
+    }, .{});
 }
 
 pub fn threadSetPrio(thread: u32, prio: u2) Error!void {
     _ = try syscall(.thread_set_prio, .{
         thread,
         prio,
-    });
+    }, .{});
 }
 
 pub fn receiverCreate() Error!u32 {
-    return @intCast(try syscall(.receiver_create, .{}));
+    return @intCast(try syscall(.receiver_create, .{}, .{}));
 }
 
 pub fn receiverRecv(recv: u32) Error!Message {
-    var arg0: usize = undefined; // arrays dont work on outputs for whatever reason
-    var arg1: usize = undefined;
-    var arg2: usize = undefined;
-    var arg3: usize = undefined;
-    var arg4: usize = undefined;
-    var arg5: usize = undefined;
+    var msg_regs: PackedMessage = undefined;
 
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (arg0),
-          [arg1out] "={rsi}" (arg1),
-          [arg2out] "={rdx}" (arg2),
-          [arg3out] "={r8}" (arg3),
-          [arg4out] "={r9}" (arg4),
-          [arg5out] "={r10}" (arg5),
-        : [id] "{rax}" (@intFromEnum(Id.receiver_recv)),
-          [arg0in] "{rdi}" (recv),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
+    _ = try syscall(.receiver_recv, .{
+        recv,
+    }, .{
+        &msg_regs.cap_or_stamp_and_extra,
+        &msg_regs.arg0,
+        &msg_regs.arg1,
+        &msg_regs.arg2,
+        &msg_regs.arg3,
+        &msg_regs.arg4,
+    });
 
-    _ = try decode(res);
-
-    return @bitCast([_]usize{ arg0, arg1, arg2, arg3, arg4, arg5 });
+    return @bitCast(msg_regs);
 }
 
 pub fn receiverReply(recv: u32, msg: Message) Error!void {
     var _msg = msg;
     _msg.cap_or_stamp = recv;
-    const msg_regs = @as([6]usize, @bitCast(_msg));
+    const msg_regs = @as(PackedMessage, @bitCast(_msg));
 
-    const arg0: usize = msg_regs[0]; // arrays dont work on outputs for whatever reason
-    const arg1: usize = msg_regs[1];
-    const arg2: usize = msg_regs[2];
-    const arg3: usize = msg_regs[3];
-    const arg4: usize = msg_regs[4];
-    const arg5: usize = msg_regs[5];
-
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (@intFromEnum(Id.receiver_reply)),
-          [arg0in] "{rdi}" (arg0),
-          [arg1in] "{rsi}" (arg1),
-          [arg2in] "{rdx}" (arg2),
-          [arg3in] "{r8}" (arg3),
-          [arg4in] "{r9}" (arg4),
-          [arg5in] "{r10}" (arg5),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    _ = try decode(res);
+    _ = try syscall(.receiver_reply, msg_regs, .{});
 }
 
 pub fn receiverReplyRecv(recv: u32, msg: Message) Error!Message {
     var _msg = msg;
     _msg.cap_or_stamp = recv;
-    const msg_regs = @as([6]usize, @bitCast(_msg));
+    var msg_regs = @as(PackedMessage, @bitCast(_msg));
 
-    var arg0: usize = msg_regs[0]; // arrays dont work on outputs for whatever reason
-    var arg1: usize = msg_regs[1];
-    var arg2: usize = msg_regs[2];
-    var arg3: usize = msg_regs[3];
-    var arg4: usize = msg_regs[4];
-    var arg5: usize = msg_regs[5];
+    _ = try syscall(.receiver_reply_recv, msg_regs, .{
+        &msg_regs.cap_or_stamp_and_extra,
+        &msg_regs.arg0,
+        &msg_regs.arg1,
+        &msg_regs.arg2,
+        &msg_regs.arg3,
+        &msg_regs.arg4,
+    });
 
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (arg0),
-          [arg1out] "={rsi}" (arg1),
-          [arg2out] "={rdx}" (arg2),
-          [arg3out] "={r8}" (arg3),
-          [arg4out] "={r9}" (arg4),
-          [arg5out] "={r10}" (arg5),
-        : [id] "{rax}" (@intFromEnum(Id.receiver_reply_recv)),
-          [arg0in] "{rdi}" (arg0),
-          [arg1in] "{rsi}" (arg1),
-          [arg2in] "{rdx}" (arg2),
-          [arg3in] "{r8}" (arg3),
-          [arg4in] "{r9}" (arg4),
-          [arg5in] "{r10}" (arg5),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    _ = try decode(res);
-
-    return @bitCast([_]usize{ arg0, arg1, arg2, arg3, arg4, arg5 });
+    return @bitCast(msg_regs);
 }
 
 pub fn replyCreate() Error!u32 {
-    return @intCast(try syscall(.reply_create, .{}));
+    return @intCast(try syscall(.reply_create, .{}, .{}));
 }
 
 pub fn replyReply(reply: u32, msg: Message) Error!void {
     var _msg = msg;
     _msg.cap_or_stamp = reply;
-    const msg_regs = @as([6]usize, @bitCast(_msg));
+    const msg_regs = @as(PackedMessage, @bitCast(_msg));
 
-    _ = try syscall(.reply_reply, .{
-        msg_regs[0],
-        msg_regs[1],
-        msg_regs[2],
-        msg_regs[3],
-        msg_regs[4],
-        msg_regs[5],
-    });
+    _ = try syscall(
+        .reply_reply,
+        msg_regs,
+        .{},
+    );
 }
 
 pub fn senderCreate(recv: u32, stamp: u32) Error!u32 {
-    return @intCast(try syscall(.sender_create, .{ recv, stamp }));
+    return @intCast(try syscall(.sender_create, .{ recv, stamp }, .{}));
 }
 
 pub fn senderCall(recv: u32, msg: Message) Error!Message {
     var _msg = msg;
     _msg.cap_or_stamp = recv;
-    const msg_regs = @as([6]usize, @bitCast(_msg));
+    var msg_regs = @as(PackedMessage, @bitCast(_msg));
 
-    var arg0: usize = msg_regs[0]; // arrays dont work on outputs for whatever reason
-    var arg1: usize = msg_regs[1];
-    var arg2: usize = msg_regs[2];
-    var arg3: usize = msg_regs[3];
-    var arg4: usize = msg_regs[4];
-    var arg5: usize = msg_regs[5];
+    _ = try syscall(.sender_call, msg_regs, .{
+        &msg_regs.cap_or_stamp_and_extra,
+        &msg_regs.arg0,
+        &msg_regs.arg1,
+        &msg_regs.arg2,
+        &msg_regs.arg3,
+        &msg_regs.arg4,
+    });
 
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (arg0),
-          [arg1out] "={rsi}" (arg1),
-          [arg2out] "={rdx}" (arg2),
-          [arg3out] "={r8}" (arg3),
-          [arg4out] "={r9}" (arg4),
-          [arg5out] "={r10}" (arg5),
-        : [id] "{rax}" (@intFromEnum(Id.sender_call)),
-          [arg0in] "{rdi}" (arg0),
-          [arg1in] "{rsi}" (arg1),
-          [arg2in] "{rdx}" (arg2),
-          [arg3in] "{r8}" (arg3),
-          [arg4in] "{r9}" (arg4),
-          [arg5in] "{r10}" (arg5),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    _ = try decode(res);
-
-    return @bitCast([_]usize{ arg0, arg1, arg2, arg3, arg4, arg5 });
+    return @bitCast(msg_regs);
 }
 
 pub fn notifyCreate() Error!u32 {
-    return @intCast(try syscall(.notify_create, .{}));
+    return @intCast(try syscall(.notify_create, .{}, .{}));
 }
 
 pub fn notifyWait(notify: u32) Error!void {
-    _ = try syscall(.notify_wait, .{notify});
+    _ = try syscall(.notify_wait, .{notify}, .{});
 }
 
 pub fn notifyPoll(notify: u32) Error!bool {
-    return try syscall(.notify_wait, .{notify}) != 0;
+    return try syscall(.notify_wait, .{notify}, .{}) != 0;
 }
 
 pub fn notifyNotify(notify: u32) Error!bool {
-    return try syscall(.notify_notify, .{notify}) != 0;
+    return try syscall(.notify_notify, .{notify}, .{}) != 0;
 }
 
 pub fn x86IoPortCreate(x86_ioport_allocator: u32, port: u16) Error!u32 {
-    return @intCast(try syscall(.x86_ioport_create, .{ x86_ioport_allocator, port }));
+    return @intCast(try syscall(.x86_ioport_create, .{ x86_ioport_allocator, port }, .{}));
 }
 
 pub fn x86IoPortInb(x86_ioport: u32) Error!u8 {
-    return @intCast(try syscall(.x86_ioport_inb, .{x86_ioport}));
+    return @intCast(try syscall(.x86_ioport_inb, .{x86_ioport}, .{}));
 }
 
 pub fn x86IoPortOutb(x86_ioport: u32, byte: u8) Error!void {
-    _ = try syscall(.x86_ioport_outb, .{ x86_ioport, byte });
+    _ = try syscall(.x86_ioport_outb, .{ x86_ioport, byte }, .{});
 }
 
 pub fn x86IrqCreate(x86_irq_allocator: u32, irq: u8) Error!u32 {
-    return @intCast(try syscall(.x86_irq_create, .{ x86_irq_allocator, irq }));
+    return @intCast(try syscall(.x86_irq_create, .{ x86_irq_allocator, irq }, .{}));
 }
 
 pub fn x86IrqSubscribe(x86_irq: u32) Error!u32 {
-    return @intCast(try syscall(.x86_irq_subscribe, .{x86_irq}));
+    return @intCast(try syscall(.x86_irq_subscribe, .{x86_irq}, .{}));
 }
 
 pub fn handleIdentify(cap: u32) abi.ObjectType {
     return std.meta.intToEnum(
         abi.ObjectType,
-        syscall(.handle_identify, .{cap}) catch unreachable,
+        syscall(.handle_identify, .{cap}, .{}) catch unreachable,
     ) catch .null;
 }
 
 pub fn handleDuplicate(cap: u32) Error!u32 {
-    return @intCast(try syscall(.handle_duplicate, .{cap}));
+    return @intCast(try syscall(.handle_duplicate, .{cap}, .{}));
 }
 
 pub fn handleClose(cap: u32) void {
-    _ = syscall(.handle_close, .{cap}) catch unreachable;
+    _ = syscall(.handle_close, .{cap}, .{}) catch unreachable;
 }
 
 pub fn selfYield() void {
-    _ = syscall(.selfYield, .{}) catch unreachable;
+    _ = syscall(.selfYield, .{}, .{}) catch unreachable;
 }
 
 pub fn selfStop() noreturn {
-    _ = syscall(.selfStop, .{}) catch {};
+    _ = syscall(.selfStop, .{}, .{}) catch {};
     asm volatile ("mov 0, %rax"); // read from nullptr to kill the process for sure
     unreachable;
 }
 
 pub fn selfSetExtra(idx: u7, val: u64, is_cap: bool) Error!void {
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (@intFromEnum(Id.self_set_extra)),
-          [arg0in] "{rdi}" (idx),
-          [arg1in] "{rsi}" (val),
-          [arg2in] "{rdx}" (@intFromBool(is_cap)),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    _ = try decode(res);
+    _ = try syscall(.self_set_extra, .{
+        idx, val, @intFromBool(is_cap),
+    }, .{});
 }
 
 pub fn selfGetExtra(idx: u7) Error!struct { val: u64, is_cap: bool } {
     var val: u64 = undefined;
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (val),
-        : [id] "{rax}" (@intFromEnum(Id.self_get_extra)),
-          [arg0in] "{rdi}" (idx),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    const is_cap = try decode(res);
+    const is_cap = try syscall(.self_get_extra, .{
+        idx,
+    }, .{
+        &val,
+    });
 
     return .{ .val = val, .is_cap = is_cap != 0 };
 }
 
 //
 
-pub fn syscall(id: Id, args: anytype) Error!usize {
-    const ArgsType = @TypeOf(args);
-    const args_type_info = @typeInfo(ArgsType);
-    if (args_type_info != .@"struct" or !args_type_info.@"struct".is_tuple) {
-        @compileError("expected tuple argument, found " ++ @typeName(ArgsType));
+pub fn syscall(id: Id, input: anytype, output: anytype) Error!usize {
+    const Input = @TypeOf(input);
+    const Output = @TypeOf(output);
+
+    const ic = @typeInfo(Input).@"struct".fields.len;
+    const oc = @typeInfo(Output).@"struct".fields.len;
+
+    var in: [ic]usize = undefined;
+    var out: [oc]usize = undefined;
+
+    inline for (@typeInfo(Input).@"struct".fields, 0..) |field, i| {
+        in[i] = @field(input, field.name);
     }
 
-    const fields = args_type_info.@"struct".fields;
-
-    const syscall_id = @intFromEnum(id);
-    const result: usize = switch (fields.len) {
-        0 => syscall0(
-            syscall_id,
-        ),
-        1 => syscall1(
-            syscall_id,
-            @field(args, fields[0].name),
-        ),
-        2 => syscall2(
-            syscall_id,
-            @field(args, fields[0].name),
-            @field(args, fields[1].name),
-        ),
-        3 => syscall3(
-            syscall_id,
-            @field(args, fields[0].name),
-            @field(args, fields[1].name),
-            @field(args, fields[2].name),
-        ),
-        4 => syscall4(
-            syscall_id,
-            @field(args, fields[0].name),
-            @field(args, fields[1].name),
-            @field(args, fields[2].name),
-            @field(args, fields[3].name),
-        ),
-        5 => syscall5(
-            syscall_id,
-            @field(args, fields[0].name),
-            @field(args, fields[1].name),
-            @field(args, fields[2].name),
-            @field(args, fields[3].name),
-            @field(args, fields[4].name),
-        ),
-        6 => syscall6(
-            syscall_id,
-            @field(args, fields[0].name),
-            @field(args, fields[1].name),
-            @field(args, fields[2].name),
-            @field(args, fields[3].name),
-            @field(args, fields[4].name),
-            @field(args, fields[5].name),
-        ),
-        else => @compileError("expected 6 or less syscall arguments, found " ++ fields.len),
-    };
-
-    return try decode(result);
-}
-
-// TODO: move intFromEnum to here
-pub fn syscall0(id: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall1(id: usize, arg1: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall2(id: usize, arg1: usize, arg2: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-          [arg2] "{rsi}" (arg2),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall3(id: usize, arg1: usize, arg2: usize, arg3: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-          [arg2] "{rsi}" (arg2),
-          [arg3] "{rdx}" (arg3),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall4(id: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-          [arg2] "{rsi}" (arg2),
-          [arg3] "{rdx}" (arg3),
-          [arg4] "{r8}" (arg4),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall5(id: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-          [arg2] "{rsi}" (arg2),
-          [arg3] "{rdx}" (arg3),
-          [arg4] "{r8}" (arg4),
-          [arg5] "{r9}" (arg5),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall6(id: usize, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, arg6: usize) usize {
-    return asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-        : [id] "{rax}" (id),
-          [arg1] "{rdi}" (arg1),
-          [arg2] "{rsi}" (arg2),
-          [arg3] "{rdx}" (arg3),
-          [arg4] "{r8}" (arg4),
-          [arg5] "{r9}" (arg5),
-          [arg6] "{r10}" (arg6),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-}
-
-pub fn syscall1rw(id: usize, args: [1]usize) struct { usize, [1]usize } {
-    var arg0: usize = undefined; // arrays dont work on outputs for whatever reason
-
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (arg0),
-        : [id] "{rax}" (id),
-          [arg0in] "{rdi}" (args[0]),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
+    const res = @import("syscall").invokeSyscall(
+        ic,
+        oc,
+        @intFromEnum(id),
+        &in,
+        &out,
     );
 
-    return .{
-        res,
-        .{arg0},
-    };
-}
+    inline for (@typeInfo(Output).@"struct".fields, 0..) |field, i| {
+        std.debug.assert(@typeInfo(field.type) == .pointer);
+        @field(output, field.name).* = out[i];
+    }
 
-pub fn syscall6rw(id: usize, args: [6]usize) struct { usize, [6]usize } {
-    var arg0: usize = undefined; // arrays dont work on outputs for whatever reason
-    var arg1: usize = undefined;
-    var arg2: usize = undefined;
-    var arg3: usize = undefined;
-    var arg4: usize = undefined;
-    var arg5: usize = undefined;
-
-    const res = asm volatile ("syscall"
-        : [ret] "={rax}" (-> usize),
-          [arg0out] "={rdi}" (arg0),
-          [arg1out] "={rsi}" (arg1),
-          [arg2out] "={rdx}" (arg2),
-          [arg3out] "={r8}" (arg3),
-          [arg4out] "={r9}" (arg4),
-          [arg5out] "={r10}" (arg5),
-        : [id] "{rax}" (id),
-          [arg0in] "{rdi}" (args[0]),
-          [arg1in] "{rsi}" (args[1]),
-          [arg2in] "{rdx}" (args[2]),
-          [arg3in] "{r8}" (args[3]),
-          [arg4in] "{r9}" (args[4]),
-          [arg5in] "{r10}" (args[5]),
-        : "rcx", "r11" // rcx becomes rip and r11 becomes rflags
-    );
-
-    return .{
-        res,
-        .{ arg0, arg1, arg2, arg3, arg4, arg5 },
-    };
+    return decode(res);
 }
