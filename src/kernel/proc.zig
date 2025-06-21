@@ -35,7 +35,7 @@ pub fn init() void {
 /// forgets the current thread and jumps into the main syscall loop
 pub fn enter() noreturn {
     var trap: arch.TrapRegs = undefined;
-    switchNow(&trap, null);
+    switchNow(&trap);
     trap.exitNow();
 }
 
@@ -46,14 +46,8 @@ pub fn yield(trap: *arch.TrapRegs) void {
     const priority: u8 = if (prev) |_prev| _prev.priority else @intCast(queues.len);
     const next_thread = tryNextHigherPriority(priority) orelse return;
 
-    // clone the previous thread temporarily, because this function still
-    // uses it after another thread can take ownership of it and delete it
-    if (prev) |p| _ = p.clone();
-    defer if (prev) |p| p.deinit();
-
     yieldReadyPrev(trap, prev);
-
-    switchTo(trap, next_thread, prev);
+    switchTo(trap, next_thread);
 }
 
 ///mark the previous thread as ready
@@ -73,20 +67,18 @@ fn yieldReadyPrev(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
 }
 
 /// switch to another thread without adding the thread back to the ready queue
-pub fn switchNow(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
-    switchTo(trap, next(), prev);
+pub fn switchNow(trap: *arch.TrapRegs) void {
+    switchTo(trap, next());
 }
 
 /// switch to another thread, skipping the scheduler entirely
 /// does **NOT** save the previous context or set its status
-pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread, prev: ?*caps.Thread) void {
+pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
     local.current_thread = thread;
     trap.* = thread.trap;
     thread.status = .running;
 
-    if (thread == prev)
-        return;
     thread.proc.vmem.switchTo();
 
     if (conf.LOG_CTX_SWITCHES)

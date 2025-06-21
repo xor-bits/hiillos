@@ -69,7 +69,7 @@ pub const Receiver = struct {
         thread.reply = null;
 
         if (self.recvNoFail(thread, trap)) {
-            proc.switchNow(trap, null);
+            proc.switchNow(trap);
         }
     }
 
@@ -150,7 +150,7 @@ pub const Receiver = struct {
         // if there was a sender queued
         if (self.recvNoFail(thread, trap)) {
             // if the receiver went to sleep, switch to the original caller thread
-            proc.switchTo(trap, sender, thread);
+            proc.switchTo(trap, sender);
         } else {
             @branchHint(.cold);
             // return back to the server, which is prob more important
@@ -220,7 +220,7 @@ pub const Sender = struct {
             self.recv.queue.pushBack(thread);
             self.recv.queue_lock.unlock();
 
-            proc.switchNow(trap, null);
+            proc.switchNow(trap);
             return;
         };
         std.debug.assert(listener.status == .waiting);
@@ -237,7 +237,7 @@ pub const Sender = struct {
         thread.status = .waiting;
         thread.trap = trap.*;
 
-        proc.switchTo(trap, listener, thread);
+        proc.switchTo(trap, listener);
     }
 };
 
@@ -355,7 +355,7 @@ pub const Notify = struct {
         }
         self.queue_lock.unlock();
 
-        proc.switchNow(trap, null);
+        proc.switchNow(trap);
     }
 
     pub fn poll(self: *@This()) bool {

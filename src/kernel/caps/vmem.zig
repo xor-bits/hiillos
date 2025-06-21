@@ -178,6 +178,14 @@ pub const Vmem = struct {
     pub fn switchTo(self: *@This()) void {
         // self.cpus |= 1 << arch.cpuId();
 
+        const current_vmem_ptr = &arch.cpuLocal().current_vmem;
+
+        // keep the previous vmem alive until after the switch, and then delete the reference
+        // also clone the new vmem into local storage to keep it always alive
+        const previous_vmem = current_vmem_ptr.*;
+        current_vmem_ptr.* = self.clone();
+        defer if (previous_vmem) |prev| prev.deinit();
+
         std.debug.assert(self.cr3 != 0);
         caps.HalVmem.switchTo(addr.Phys.fromParts(
             .{ .page = self.cr3 },

@@ -39,6 +39,10 @@ pub const CpuLocalStorage = struct {
 
     cpu_config: arch.CpuConfig,
 
+    /// used to keep the active address space from
+    /// being deallocated while not having a thread
+    current_vmem: ?*caps.Vmem = null,
+    /// used to track the current thread
     current_thread: ?*caps.Thread = null,
     id: u32,
     lapic_id: u32,
@@ -339,7 +343,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
             const res = frame.pageFault(@truncate(offset_byte / 0x1000), mode == .write, null);
             if (res == Error.Retry) {
-                proc.switchNow(trap, null);
+                proc.switchNow(trap);
             } else {
                 _ = try res;
             }
@@ -397,7 +401,7 @@ fn handle_syscall(
 
             trap.syscall_id = abi.sys.encode(0);
             if (try vmem.unmap(trap, thread, vaddr, pages, false)) {
-                proc.switchNow(trap, null);
+                proc.switchNow(trap);
             }
         },
         .vmem_read => {
@@ -455,7 +459,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
             const res = vmem.pageFault(mode, vaddr);
             if (res == Error.Retry) {
-                proc.switchNow(trap, null);
+                proc.switchNow(trap);
             } else {
                 _ = try res;
             }
@@ -577,7 +581,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
 
             if (thread.status == .stopped) {
-                proc.switchNow(trap, null);
+                proc.switchNow(trap);
             }
         },
         .thread_set_prio => {
@@ -763,7 +767,7 @@ fn handle_syscall(
         },
         .selfStop => {
             proc.stop(thread);
-            proc.switchNow(trap, null);
+            proc.switchNow(trap);
         },
         .self_set_extra => {
             const idx: u7 = @truncate(trap.arg0);
