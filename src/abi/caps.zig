@@ -146,12 +146,60 @@ pub const Vmem = extern struct {
         return try sys.vmemUnmap(this.cap, vaddr, length);
     }
 
-    pub fn read(this: @This(), vaddr: usize, dst: []u8) sys.Error!void {
-        return try sys.vmemRead(this.cap, vaddr, dst);
+    pub fn read(this: @This(), _vaddr: usize, _dst: []u8) sys.Error!void {
+        var vaddr = _vaddr;
+        var dst = _dst;
+
+        while (true) {
+            var progress: usize = 0;
+            sys.vmemRead(
+                this.cap,
+                vaddr,
+                dst,
+                &progress,
+            ) catch |err| switch (err) {
+                sys.Error.Retry => {
+                    @branchHint(.cold);
+                    vaddr += progress;
+                    dst = dst[progress..];
+
+                    sys.dummyWrite(dst);
+                    try sys.vmemDummyAccess(this.cap, vaddr, .read);
+                    continue;
+                },
+                else => return err,
+            };
+
+            return;
+        }
     }
 
-    pub fn write(this: @This(), vaddr: usize, src: []const u8) sys.Error!void {
-        return try sys.vmemWrite(this.cap, vaddr, src);
+    pub fn write(this: @This(), _vaddr: usize, _src: []const u8) sys.Error!void {
+        var vaddr = _vaddr;
+        var src = _src;
+
+        while (true) {
+            var progress: usize = 0;
+            sys.vmemWrite(
+                this.cap,
+                vaddr,
+                src,
+                &progress,
+            ) catch |err| switch (err) {
+                sys.Error.Retry => {
+                    @branchHint(.cold);
+                    vaddr += progress;
+                    src = src[progress..];
+
+                    sys.dummyRead(src);
+                    try sys.vmemDummyAccess(this.cap, vaddr, .write);
+                    continue;
+                },
+                else => return err,
+            };
+
+            return;
+        }
     }
 
     pub fn dummyAccess(this: @This(), vaddr: usize, mode: sys.FaultCause) sys.Error!void {
@@ -187,11 +235,60 @@ pub const Frame = extern struct {
         return try sys.frameGetSize(self.cap);
     }
 
-    pub fn read(this: @This(), offset_byte: usize, dst: []u8) sys.Error!void {
-        return try sys.frameRead(this.cap, offset_byte, dst);
+    pub fn read(this: @This(), _offset_byte: usize, _dst: []u8) sys.Error!void {
+        var offset_byte = _offset_byte;
+        var dst = _dst;
+
+        while (true) {
+            var progress: usize = 0;
+            sys.frameRead(
+                this.cap,
+                offset_byte,
+                dst,
+                &progress,
+            ) catch |err| switch (err) {
+                sys.Error.Retry => {
+                    @branchHint(.cold);
+                    offset_byte += progress;
+                    dst = dst[progress..];
+
+                    sys.dummyWrite(dst);
+                    try sys.frameDummyAccess(this.cap, offset_byte, .read);
+                    continue;
+                },
+                else => return err,
+            };
+
+            return;
+        }
     }
 
-    pub fn write(this: @This(), offset_byte: usize, src: []const u8) sys.Error!void {
+    pub fn write(this: @This(), _offset_byte: usize, _src: []const u8) sys.Error!void {
+        var offset_byte = _offset_byte;
+        var src = _src;
+
+        while (true) {
+            var progress: usize = 0;
+            sys.frameWrite(
+                this.cap,
+                offset_byte,
+                src,
+                &progress,
+            ) catch |err| switch (err) {
+                sys.Error.Retry => {
+                    @branchHint(.cold);
+                    offset_byte += progress;
+                    src = src[progress..];
+
+                    sys.dummyRead(src);
+                    try sys.frameDummyAccess(this.cap, offset_byte, .write);
+                    continue;
+                },
+                else => return err,
+            };
+
+            return;
+        }
         return try sys.frameWrite(this.cap, offset_byte, src);
     }
 

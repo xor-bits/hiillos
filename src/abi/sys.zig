@@ -467,58 +467,30 @@ pub fn frameGetSize(frame: u32) Error!usize {
     return try syscall(.frame_get_size, .{frame}, .{}) * 0x1000;
 }
 
-pub fn frameRead(frame: u32, _offset_byte: usize, _dst: []u8) Error!void {
-    var offset_byte = _offset_byte;
-    var dst = _dst;
-
-    while (true) {
-        var progress: usize = 0;
-        _ = syscall(
-            .frame_read,
-            .{ frame, offset_byte, @intFromPtr(dst.ptr), dst.len },
-            .{&progress},
-        ) catch |err| switch (err) {
-            Error.Retry => {
-                @branchHint(.cold);
-                offset_byte += progress;
-                dst = dst[progress..];
-
-                dummyWrite(dst);
-                try frameDummyAccess(frame, offset_byte, .read);
-                continue;
-            },
-            else => return err,
-        };
-
-        return;
-    }
+pub fn frameRead(
+    frame: u32,
+    offset_byte: usize,
+    dst: []u8,
+    progress: *usize,
+) Error!void {
+    _ = try syscall(
+        .frame_read,
+        .{ frame, offset_byte, @intFromPtr(dst.ptr), dst.len },
+        .{progress},
+    );
 }
 
-pub fn frameWrite(frame: u32, _offset_byte: usize, _src: []const u8) Error!void {
-    var offset_byte = _offset_byte;
-    var src = _src;
-
-    while (true) {
-        var progress: usize = 0;
-        _ = syscall(
-            .frame_write,
-            .{ frame, offset_byte, @intFromPtr(src.ptr), src.len },
-            .{&progress},
-        ) catch |err| switch (err) {
-            Error.Retry => {
-                @branchHint(.cold);
-                offset_byte += progress;
-                src = src[progress..];
-
-                dummyRead(src);
-                try frameDummyAccess(frame, offset_byte, .write);
-                continue;
-            },
-            else => return err,
-        };
-
-        return;
-    }
+pub fn frameWrite(
+    frame: u32,
+    offset_byte: usize,
+    src: []const u8,
+    progress: *usize,
+) Error!void {
+    _ = try syscall(
+        .frame_write,
+        .{ frame, offset_byte, @intFromPtr(src.ptr), src.len },
+        .{progress},
+    );
 }
 
 pub fn frameDummyAccess(frame: u32, offset_byte: usize, mode: FaultCause) Error!void {
@@ -568,58 +540,30 @@ pub fn vmemUnmap(vmem: u32, vaddr: usize, length: usize) Error!void {
     }, .{});
 }
 
-pub fn vmemRead(vmem: u32, _vaddr: usize, _dst: []u8) Error!void {
-    var vaddr = _vaddr;
-    var dst = _dst;
-
-    while (true) {
-        var progress: usize = 0;
-        _ = syscall(
-            .vmem_read,
-            .{ vmem, vaddr, @intFromPtr(dst.ptr), dst.len },
-            .{&progress},
-        ) catch |err| switch (err) {
-            Error.Retry => {
-                @branchHint(.cold);
-                vaddr += progress;
-                dst = dst[progress..];
-
-                dummyWrite(dst);
-                try vmemDummyAccess(vmem, vaddr, .read);
-                continue;
-            },
-            else => return err,
-        };
-
-        return;
-    }
+pub fn vmemRead(
+    vmem: u32,
+    vaddr: usize,
+    dst: []u8,
+    progress: *usize,
+) Error!void {
+    _ = try syscall(
+        .vmem_read,
+        .{ vmem, vaddr, @intFromPtr(dst.ptr), dst.len },
+        .{progress},
+    );
 }
 
-pub fn vmemWrite(vmem: u32, _vaddr: usize, _src: []const u8) Error!void {
-    var vaddr = _vaddr;
-    var src = _src;
-
-    while (true) {
-        var progress: usize = 0;
-        _ = syscall(
-            .vmem_write,
-            .{ vmem, vaddr, @intFromPtr(src.ptr), src.len },
-            .{&progress},
-        ) catch |err| switch (err) {
-            Error.Retry => {
-                @branchHint(.cold);
-                vaddr += progress;
-                src = src[progress..];
-
-                dummyRead(src);
-                try vmemDummyAccess(vmem, vaddr, .write);
-                continue;
-            },
-            else => return err,
-        };
-
-        return;
-    }
+pub fn vmemWrite(
+    vmem: u32,
+    vaddr: usize,
+    src: []const u8,
+    progress: *usize,
+) Error!void {
+    _ = try syscall(
+        .vmem_write,
+        .{ vmem, vaddr, @intFromPtr(src.ptr), src.len },
+        .{progress},
+    );
 }
 
 pub fn vmemDummyAccess(vmem: u32, vaddr: usize, mode: FaultCause) Error!void {
