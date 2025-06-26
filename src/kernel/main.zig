@@ -59,6 +59,10 @@ pub const CpuLocalStorage = struct {
     tlb_shootdown_queue_lock: spin.Mutex = .{},
     initialized: std.atomic.Value(bool),
 
+    ctx_switch_cycles_total: u64 = 0,
+    ctx_switch_count: u64 = 0,
+    rdtscp_overhead: u64 = 0,
+
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
 };
 

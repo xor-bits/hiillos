@@ -109,7 +109,7 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "-machine",
         "q35",
         "-cpu",
-        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid",
+        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid",
         "-m",
         "1g", // 3m is the absolute minimum right now
         // "-M",

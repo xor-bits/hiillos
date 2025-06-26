@@ -79,7 +79,32 @@ pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     trap.* = thread.trap;
     thread.status = .running;
 
-    thread.proc.vmem.switchTo();
+    const sample = (local.ctx_switch_count & 0x3FF) == 0;
+
+    var diff: u64 = 0;
+    if (sample) {
+        const start_cycles: u64 = arch.rdtscp().counter;
+        thread.proc.vmem.switchTo();
+        const end_cycles: u64 = arch.rdtscp().counter;
+
+        if (local.rdtscp_overhead == 0) {
+            const calib_start = arch.rdtscp().counter;
+            const calib_end = arch.rdtscp().counter;
+            local.rdtscp_overhead = calib_end - calib_start;
+        }
+
+        diff = end_cycles - start_cycles - local.rdtscp_overhead;
+        local.ctx_switch_cycles_total += diff;
+    } else {
+        thread.proc.vmem.switchTo();
+    }
+
+    local.ctx_switch_count += 1;
+
+    if (sample) {
+        const avg: u64 = local.ctx_switch_cycles_total / (local.ctx_switch_count >> 10); // average of measured samples
+        log.info("CPU {d} avg ctx-switch cycles: {d}", .{ local.id, avg });
+    }
 
     if (conf.LOG_CTX_SWITCHES)
         log.debug("switch to {*}", .{thread});

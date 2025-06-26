@@ -22,6 +22,8 @@ pub const Vmem = struct {
 
     lock: spin.Mutex = .new(),
     cr3: u32,
+    pcid: u16 = 0,
+    cr3_cached: u64 = 0,
     mappings: std.ArrayList(*caps.Mapping),
     // bitset of all cpus that have used this vmem
     // cpus: u256 = 0,
@@ -36,6 +38,8 @@ pub const Vmem = struct {
         obj.* = .{
             .lock = .newLocked(),
             .cr3 = 0,
+            .pcid = 0,
+            .cr3_cached = 0,
             .mappings = .init(caps.slab_allocator.allocator()),
         };
         obj.lock.unlock();
@@ -153,9 +157,18 @@ pub const Vmem = struct {
         defer if (previous_vmem) |prev| prev.deinit();
 
         std.debug.assert(self.cr3 != 0);
-        caps.HalVmem.switchTo(addr.Phys.fromParts(
-            .{ .page = self.cr3 },
-        ));
+
+        if (arch.pcid_enabled) {
+            const cur = arch.Cr3.read();
+            if (cur.pml4_phys_base == self.cr3 and cur.pcid == self.pcid) {
+                if (conf.LOG_CTX_SWITCHES) log.debug("context switch avoided", .{});
+            } else {
+                arch.wrcr3(self.cr3_cached);
+                if (conf.LOG_CTX_SWITCHES) log.debug("context switched", .{});
+            }
+        } else {
+            caps.HalVmem.switchTo(addr.Phys.fromParts(.{ .page = self.cr3 }));
+        }
     }
 
     pub fn start(self: *@This()) Error!void {
@@ -165,6 +178,13 @@ pub const Vmem = struct {
             const new_cr3 = try caps.HalVmem.alloc(null);
             caps.HalVmem.init(new_cr3);
             self.cr3 = new_cr3.toParts().page;
+
+            if (arch.pcid_enabled) {
+                self.pcid = arch.allocPCID();
+                self.cr3_cached = (@as(u64, self.cr3) << 12) | @as(u64, self.pcid) | (1 << 63);
+            } else {
+                self.cr3_cached = (@as(u64, self.cr3) << 12);
+            }
         }
     }
 
