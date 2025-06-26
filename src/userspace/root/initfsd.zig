@@ -129,53 +129,81 @@ fn run() !void {
     _ = try initfs_ready.notify();
 
     log.info("initfs ready", .{});
-    var server = abi.InitfsProtocol.Server(.{
+    var server = abi.FsProtocol.Server(.{
         .scope = if (abi.conf.LOG_SERVERS) .initfs else null,
     }, .{
         .openFile = openFileHandler,
-        .fileSize = fileSizeHandler,
-        .list = listHandler,
+        .openDir = openDirHandler,
+        .root = rootHandler,
     }).init({}, initfs_recv);
     try server.run();
 }
 
-fn openFileHandler(_: void, _: u32, req: struct { [32:0]u8, caps.Frame }) struct { Error!void, caps.Frame } {
-    const frame: caps.Frame = req.@"1";
-    const path: []const u8 = std.mem.sliceTo(&req.@"0", 0);
-
-    const frame_size = frame.getSize() catch unreachable;
-
-    const file_id: usize = openFile(path) orelse return .{ Error.NotFound, frame };
-    const file: []const u8 = readFile(file_id);
-    const size: usize = @min(file.len, frame_size);
-
-    frame.write(0, file[0..size]) catch unreachable;
+fn openFileHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, caps.Frame } {
+    const frame = openFileHandlerInner(req.@"0") catch |err|
+        return .{ err, .{} };
 
     return .{ {}, frame };
 }
 
-fn fileSizeHandler(_: void, _: u32, req: struct { [32:0]u8 }) struct { Error!void, usize } {
-    const path: []const u8 = std.mem.sliceTo(&req.@"0", 0);
+fn openFileHandlerInner(inode: u128) Error!caps.Frame {
+    const file: []const u8 = readFile(@truncate(inode));
 
-    const file_id: usize = openFile(path) orelse return .{ Error.NotFound, 0 };
-    const file: []const u8 = readFile(file_id);
+    const frame = try caps.Frame.create(file.len);
+    errdefer frame.close();
 
-    return .{ {}, file.len };
+    try frame.write(0, file);
+    return frame;
 }
 
-fn listHandler(_: void, _: u32, _: void) struct { Error!void, caps.Frame, usize } {
+fn openDirHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, caps.Frame, usize } {
+    const dir = readHeader(@truncate(req.@"0"));
+    const path: []const u8 = std.mem.sliceTo(&dir.name, 0);
+
+    const frame, const count = openDirHandlerInner(path) catch |err|
+        return .{ err, .{}, 0 };
+
+    return .{ {}, frame, count };
+}
+
+fn entryInfo(header: *const TarEntryHeader) ?struct {
+    header: *const TarEntryHeader,
+    /// full file/dir path
+    path: []const u8,
+    /// parent dir
+    dir: []const u8,
+    /// filename/dirname
+    name: []const u8,
+} {
+    if (header.ty != 0 and header.ty != '0' and header.ty != 5 and header.ty != '5')
+        return null;
+
+    const path = std.mem.sliceTo(&header.name, 0);
+    const dir = std.fs.path.dirname(path) orelse
+        return null;
+    const name = std.fs.path.basename(path);
+
+    return .{
+        .header = header,
+        .path = path,
+        .dir = dir,
+        .name = name,
+    };
+}
+
+fn openDirHandlerInner(path: []const u8) Error!struct { caps.Frame, usize } {
     var entries: usize = 0;
     var size: usize = 0;
 
-    // if (true) @compileError("");
-
     var it = iterator();
     while (it.next()) |blocks| {
-        const header: *const TarEntryHeader = @ptrCast(&blocks[0]);
-        if (header.ty != 0 and header.ty != '0' and header.ty != 5 and header.ty != '5') continue;
+        const entry_info = entryInfo(@ptrCast(&blocks[0])) orelse
+            continue;
+        if (!abi.fs.path.eql(entry_info.dir, path))
+            continue;
 
         entries += 1;
-        size += std.mem.sliceTo(header.name[0..100], 0).len + 1;
+        size += entry_info.name.len + 1;
     }
 
     const text_size = size;
@@ -200,35 +228,41 @@ fn listHandler(_: void, _: u32, _: void) struct { Error!void, caps.Frame, usize 
 
     it = iterator();
     while (it.next()) |blocks| {
-        const header: *const TarEntryHeader = @ptrCast(&blocks[0]);
-        if (header.ty != 0 and header.ty != '0' and header.ty != '5') continue;
+        const entry_info = entryInfo(@ptrCast(&blocks[0])) orelse
+            continue;
+        if (!abi.fs.path.eql(entry_info.dir, path))
+            continue;
 
-        const file_size = std.fmt.parseInt(usize, std.mem.sliceTo(header.size[0..12], 0), 8) catch 0;
-        const file_mtime = std.fmt.parseInt(usize, std.mem.sliceTo(header.modified[0..12], 0), 8) catch 0;
-        const file_mode = std.fmt.parseInt(usize, std.mem.sliceTo(header.mode[0..8], 0), 8) catch 0;
-        const file_uid = std.fmt.parseInt(usize, std.mem.sliceTo(header.uid[0..8], 0), 8) catch 0;
-        const file_gid = std.fmt.parseInt(usize, std.mem.sliceTo(header.gid[0..8], 0), 8) catch 0;
+        const file_size = std.fmt.parseInt(usize, std.mem.sliceTo(&entry_info.header.size, 0), 8) catch 0;
+        const file_mtime = std.fmt.parseInt(usize, std.mem.sliceTo(&entry_info.header.modified, 0), 8) catch 0;
+        const file_mode = std.fmt.parseInt(usize, std.mem.sliceTo(&entry_info.header.mode, 0), 8) catch 0;
+        const file_uid = std.fmt.parseInt(usize, std.mem.sliceTo(&entry_info.header.uid, 0), 8) catch 0;
+        const file_gid = std.fmt.parseInt(usize, std.mem.sliceTo(&entry_info.header.gid, 0), 8) catch 0;
 
         var mode: abi.Mode = @bitCast(@as(u32, @truncate(file_mode)));
         mode.set_uid = false;
         mode.set_gid = false;
-        mode.type = if (header.ty == '5') .dir else .file;
+        mode.type = if (entry_info.header.ty == '5') .dir else .file;
         mode._reserved0 = 0;
         mode._reserved1 = 0;
 
         @as(*volatile abi.Stat, &frame_entries[entries]).* = .{
             .atime = file_mtime,
             .mtime = file_mtime,
-            .inode = inodeOf(header),
+            .inode = inodeOf(entry_info.header),
             .uid = file_uid,
             .gid = file_gid,
             .size = file_size,
             .mode = mode,
         };
-        abi.util.copyForwardsVolatile(u8, frame_names[size..], std.mem.sliceTo(header.name[0..100], 0));
+        abi.util.copyForwardsVolatile(
+            u8,
+            frame_names[size..],
+            std.mem.sliceTo(entry_info.name, 0),
+        );
 
         entries += 1;
-        size += std.mem.sliceTo(header.name[0..100], 0).len + 1;
+        size += entry_info.name.len + 1;
 
         @as(*volatile u8, &frame_names[size - 1]).* = 0; // null terminator, should already be there but just making sure
     }
@@ -238,17 +272,39 @@ fn listHandler(_: void, _: u32, _: void) struct { Error!void, caps.Frame, usize 
         size,
     ) catch unreachable;
 
-    return .{ {}, frame, entries };
+    return .{ frame, entries };
+}
+
+fn rootHandler(_: void, _: u32, _: void) struct { u128 } {
+    // log.info("looking up root", .{});
+    const root_inode = openDir("./") orelse unreachable;
+    // log.info("root={}", .{root_inode});
+    return .{root_inode};
 }
 
 pub fn openFile(path: []const u8) ?usize {
     var it = fileIterator();
     while (it.next()) |file| {
-        if (!pathEql(path, file.path)) {
+        // log.debug("file path={s} inode={}", .{ file.path, file.inode });
+        if (!abi.fs.path.eql(path, file.path)) {
             continue;
         }
 
         return file.inode;
+    }
+
+    return null;
+}
+
+pub fn openDir(path: []const u8) ?usize {
+    var it = dirIterator();
+    while (it.next()) |dir| {
+        // log.debug("dir path={s} inode={}", .{ dir.path, dir.inode });
+        if (!abi.fs.path.eql(path, dir.path)) {
+            continue;
+        }
+
+        return dir.inode;
     }
 
     return null;
@@ -260,10 +316,9 @@ pub const FileIterator = struct {
     pub fn next(self: *@This()) ?struct { path: []const u8, inode: usize } {
         while (self.inner.next()) |blocks| {
             const header: *const TarEntryHeader = @ptrCast(&blocks[0]);
-            if (header.ty != 0 and header.ty != '0') {
-                // skip non files
-                continue;
-            }
+
+            // skip non files
+            if (header.ty != 0 and header.ty != '0') continue;
 
             return .{
                 .path = std.mem.sliceTo(header.name[0..100], 0),
@@ -279,6 +334,30 @@ pub fn fileIterator() FileIterator {
     return .{ .inner = iterator() };
 }
 
+pub const DirIterator = struct {
+    inner: Iterator,
+
+    pub fn next(self: *@This()) ?struct { path: []const u8, inode: usize } {
+        while (self.inner.next()) |blocks| {
+            const header: *const TarEntryHeader = @ptrCast(&blocks[0]);
+
+            // skip non dirs
+            if (header.ty != '5') continue;
+
+            return .{
+                .path = std.mem.sliceTo(header.name[0..100], 0),
+                .inode = inodeOf(header),
+            };
+        }
+
+        return null;
+    }
+};
+
+pub fn dirIterator() DirIterator {
+    return .{ .inner = iterator() };
+}
+
 pub fn inodeOf(header: *const TarEntryHeader) usize {
     const header_ptr = @intFromPtr(header);
     const blocks_ptr = @intFromPtr(initfs_tar.items.ptr);
@@ -289,20 +368,28 @@ pub fn inodeOf(header: *const TarEntryHeader) usize {
 }
 
 pub fn readFile(header_i: usize) []const u8 {
-    const Block = [512]u8;
-    const len = initfs_tar.items.len / 512;
-    const blocks_ptr: [*]const Block = @ptrCast(initfs_tar.items.ptr);
-    const blocks = blocks_ptr[0..len];
-
-    const header: *const TarEntryHeader = @ptrCast(&blocks[header_i]);
-    const size = std.fmt.parseInt(usize, std.mem.sliceTo(header.size[0..12], 0), 8) catch 0;
+    const size = std.fmt.parseInt(usize, std.mem.sliceTo(
+        readHeader(header_i).size[0..12],
+        0,
+    ), 8) catch 0;
     const size_blocks = if (size % 512 == 0) size / 512 else size / 512 + 1;
 
-    const bytes_blocks = blocks[header_i + 1 .. header_i + size_blocks + 1];
+    const bytes_blocks = tarBlocks()[header_i + 1 .. header_i + size_blocks + 1];
     const first_byte: [*]const u8 = @ptrCast(bytes_blocks);
     const bytes = first_byte[0..size];
 
     return bytes;
+}
+
+pub fn readHeader(header_i: usize) *const TarEntryHeader {
+    return @ptrCast(&tarBlocks()[header_i]);
+}
+
+fn tarBlocks() []const [512]u8 {
+    const Block = [512]u8;
+    const len = initfs_tar.items.len / 512;
+    const blocks_ptr: [*]const Block = @ptrCast(initfs_tar.items.ptr);
+    return blocks_ptr[0..len];
 }
 
 const Iterator = struct {
@@ -342,38 +429,6 @@ fn iterator() Iterator {
         .blocks = blocks_ptr[0..len],
         .i = 0,
     };
-}
-
-fn pathEql(a: []const u8, b: []const u8) bool {
-    var a_iter = std.mem.splitScalar(u8, a, '/');
-    var b_iter = std.mem.splitScalar(u8, b, '/');
-
-    var correct_so_far = false;
-
-    while (a_iter.next()) |a_part| {
-        if (pathPartIsNothing(a_part)) {
-            continue;
-        }
-
-        while (b_iter.next()) |b_part| {
-            if (pathPartIsNothing(b_part)) {
-                continue;
-            }
-
-            if (!std.mem.eql(u8, a_part, b_part)) {
-                return false;
-            }
-
-            correct_so_far = true;
-            break;
-        }
-    }
-
-    return correct_so_far;
-}
-
-fn pathPartIsNothing(s: []const u8) bool {
-    return s.len == 0 or (s.len == 1 and s[0] == '.');
 }
 
 const TarEntryHeader = extern struct {

@@ -454,10 +454,16 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
 
-    const tests = b.addTest(.{
-        .name = "abi-unit-test",
+    const test_mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),
         .target = b.graph.host,
+        .optimize = opts.optimize,
+    });
+    test_mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
+
+    const tests = b.addTest(.{
+        .name = "abi-unit-test",
+        .root_module = test_mod,
     });
     const tests_step = b.step("test", "run unit tests");
     const run_tests_step = b.addRunArtifact(tests);

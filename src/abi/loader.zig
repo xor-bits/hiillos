@@ -185,14 +185,8 @@ pub const Elf = struct {
     }
 
     pub fn loadInto(self: *@This(), _: caps.Vmem, vmem: caps.Vmem) !usize {
-        const header = try self.getHeader();
-        log.info("ELF type: {}", .{header.type});
-
-        self.slide = 0x0000_0000;
-
         const phdrs = try self.getProgram();
         for (phdrs) |ph| try handleLoadableSegment(self.data, ph, vmem, self.slide);
-
         return (try self.getHeader()).entry + self.slide;
     }
 
