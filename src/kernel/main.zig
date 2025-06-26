@@ -62,12 +62,6 @@ pub const CpuLocalStorage = struct {
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
 };
 
-pub fn epoch_locals() *abi.epoch.Locals {
-    return &arch.cpuLocal().epoch_locals;
-}
-
-pub const epoch_allocator: std.mem.Allocator = pmem.page_allocator;
-
 //
 
 export fn _start() callconv(.C) noreturn {
@@ -121,10 +115,6 @@ pub fn main() noreturn {
     arch.initCpu(id, null) catch |err| {
         std.debug.panic("failed to initialize CPU-{}: {}", .{ id, err });
     };
-
-    // initialize kernel object garbage collector
-    // TODO: unused
-    abi.epoch.init_thread();
 
     log.info("parsing kernel cmdline", .{});
     const a = args.parse() catch |err| {

@@ -11,11 +11,6 @@ pub const panic = abi.panic;
 const log = std.log.scoped(.vfs);
 const Error = abi.sys.Error;
 
-var main_thread_locals: abi.epoch.Locals = .{};
-pub fn epoch_locals() *abi.epoch.Locals {
-    return &main_thread_locals;
-}
-
 //
 
 pub export var manifest = abi.loader.Manifest.new(.{
@@ -37,6 +32,7 @@ pub export var import_initfs = abi.loader.Resource.new(.{
 var global_root: *DirNode = undefined;
 var fs_root: *DirNode = undefined;
 var initfs_root: *DirNode = undefined;
+var vmem: caps.Vmem = .{};
 
 //
 
@@ -55,62 +51,19 @@ pub fn main() !void {
         }
     }
 
-    global_root = try DirNode.create();
+    const initfsd = abi.FsProtocol.Client().init(.{ .cap = import_initfs.handle });
+    const initfs_root_inode: u128 = (try initfsd.call(.root, {})).@"0";
 
-    fs_root = try DirNode.create();
-    initfs_root = try DirNode.create();
+    vmem = try caps.Vmem.self();
 
-    const initfs = abi.InitfsProtocol.Client().init(.{ .cap = import_initfs.handle });
-    const res, const entries_frame, const entries = try initfs.call(.list, {});
-    try res;
+    global_root = try DirNode.create(null, 0);
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    fs_root = try DirNode.create(global_root.clone(), 0);
+    initfs_root = try DirNode.create(global_root.clone(), initfs_root_inode);
+    initfs_root.device = .init(.{ .cap = import_initfs.handle });
 
-    const addr = try vmem.map(
-        entries_frame,
-        0,
-        0,
-        0,
-        .{},
-        .{},
-    );
-
-    try putDir(global_root, "initfs://", initfs_root);
-    try putDir(global_root, "fs://", fs_root);
-
-    log.info("mounting initfs to initfs:///", .{});
-
-    var byte: usize = 0;
-    for (0..entries) |i| {
-        const stat = @as(*const volatile abi.Stat, @ptrFromInt(addr + i * @sizeOf(abi.Stat))).*;
-        const path = @as([*:0]const u8, @ptrFromInt(addr + entries * @sizeOf(abi.Stat) + byte));
-        const path_name: []const u8 = std.mem.span(path);
-        byte += 1 + path_name.len;
-
-        if (stat.mode.type != .dir) continue;
-
-        // FIXME: sort directories
-
-        initfs_root.clone();
-        try createDir(initfs_root, path_name, try DirNode.create());
-    }
-
-    byte = 0;
-    for (0..entries) |i| {
-        const stat = @as(*const volatile abi.Stat, @ptrFromInt(addr + i * @sizeOf(abi.Stat))).*;
-        const path = @as([*:0]const u8, @ptrFromInt(addr + entries * @sizeOf(abi.Stat) + byte));
-        const path_name: []const u8 = std.mem.span(path);
-        byte += 1 + path_name.len;
-
-        if (stat.mode.type != .file) continue;
-
-        const new_file = try FileNode.create();
-        new_file.inode = stat.inode;
-
-        initfs_root.clone();
-        try createFile(initfs_root, path_name, new_file);
-    }
+    try putDir(global_root, "fs", fs_root);
+    try putDir(global_root, "initfs", initfs_root);
 
     try printTreeRec(global_root);
 
@@ -118,32 +71,159 @@ pub fn main() !void {
     log.debug("vfs ready", .{});
 
     const server = abi.VfsProtocol.Server(.{}, .{
-        .open = openHandler,
+        .openFile1 = openFile1Handler,
+        .openFile2 = openFile2Handler,
+        .openDir1 = openDir1Handler,
+        .openDir2 = openDir2Handler,
+        .newSender = newSenderHandler,
     }).init({}, .{ .cap = export_vfs.handle });
     try server.run();
 }
 
-fn openHandler(_: void, _: u32, req: struct { caps.Frame, usize, usize, u8 }) struct { Error!void, caps.Sender } {
-    const frame = req.@"0";
-    const frame_path_offs = req.@"1";
+const Context = struct {
+    uid: u32,
+    open_opts: abi.fs.OpenOptions,
+};
+
+fn openFile1Handler(
+    _: void,
+    uid_stamp: u32,
+    req: struct { [32:0]u8, u8 },
+) struct { Error!void, caps.Frame } {
+    const uri = req.@"0";
+    const open_opts = req.@"1";
+
+    const frame = abi.fs.withPath1(
+        Context{ .uid = uid_stamp, .open_opts = @as(abi.fs.OpenOptions, @bitCast(open_opts)) },
+        &uri,
+        openFile,
+    ) catch |err|
+        return .{ err, .{} };
+
+    return .{ {}, frame };
+}
+
+fn openFile2Handler(
+    _: void,
+    uid_stamp: u32,
+    req: struct { caps.Frame, usize, usize, u8 },
+) struct { Error!void, caps.Frame } {
+    const uri = req.@"0";
+    const uri_frame_offs = req.@"1";
+    const uri_len = req.@"2";
+    const open_opts = req.@"3";
+
+    const frame = abi.fs.withPath2(
+        Context{ .uid = uid_stamp, .open_opts = @as(abi.fs.OpenOptions, @bitCast(open_opts)) },
+        uri,
+        uri_frame_offs,
+        uri_len,
+        openFile,
+    ) catch |err|
+        return .{ err, .{} };
+
+    return .{ {}, frame };
+}
+
+fn openFile(
+    ctx: Context,
+    uri: []const u8,
+) Error!caps.Frame {
+    log.debug("openFile({s})", .{uri});
+    const path = try partsFromUri(uri);
+    log.debug("scheme = {s}", .{path.scheme});
+    log.debug("path = {s}", .{path.path});
+    log.debug("parent_path = {s}", .{path.parent_path});
+    log.debug("entry_name = {s}", .{path.entry_name});
+
+    // TODO: create dirs and create file using ctx.open_opts
+    // TODO: restrict access using the ctx.uid
+
+    const namespace = try getDir(
+        global_root.clone(),
+        path.scheme,
+        .use_existing,
+    );
+
+    const parent_dir = try getDir(
+        namespace,
+        path.parent_path,
+        ctx.open_opts.dir_policy,
+    );
+
+    const file = try parent_dir.getFile(
+        path.entry_name,
+        ctx.open_opts.file_policy,
+    );
+    defer file.destroy();
+
+    return try file.getFrame();
+}
+
+fn openDir1Handler(
+    _: void,
+    _: u32,
+    req: struct { [32:0]u8, u8 },
+) struct { Error!void, caps.Frame, usize } {
+    const path = req.@"0";
+    const open_opts = req.@"1";
+
+    _ = .{ path, open_opts };
+    return .{ Error.Unimplemented, .{}, 0 };
+}
+
+fn openDir2Handler(
+    _: void,
+    _: u32,
+    req: struct { caps.Frame, usize, usize, u8 },
+) struct { Error!void, caps.Frame, usize } {
+    const path = req.@"0";
+    const path_frame_offs = req.@"1";
     const path_len = req.@"2";
-    const open_opts: abi.Vfs.OpenOptions = @bitCast(req.@"3");
+    const open_opts = req.@"3";
 
-    defer frame.close();
+    _ = .{ path, path_frame_offs, path_len, open_opts };
+    return .{ Error.Unimplemented, .{}, 0 };
+}
 
-    var buf: [0x1000]u8 = undefined;
-    const path = buf[0..path_len];
-    frame.read(frame_path_offs, path) catch |err| {
-        log.err("could not read from a frame: {}", .{err});
-        return .{ Error.Internal, .{} };
-    };
+fn newSenderHandler(
+    _: void,
+    _: u32,
+    req: struct { u32 },
+) struct { Error!void, caps.Sender } {
+    const uid = req.@"0";
 
-    log.info("opening `{s}` with `{}`", .{ path, open_opts });
+    const recv = caps.Receiver{ .cap = export_vfs.handle };
+    const send = caps.Sender.create(recv, uid) catch |err|
+        return .{ err, .{} };
 
-    return .{ {}, .{} };
+    return .{ {}, send };
 }
 
 //
+
+fn partsFromUri(uri: []const u8) Error!struct {
+    scheme: []const u8,
+    path: []const u8,
+    parent_path: []const u8,
+    entry_name: []const u8,
+} {
+    var it = std.mem.splitSequence(u8, uri, "://");
+    const scheme = it.next() orelse
+        return Error.NotFound;
+    const path = it.rest();
+
+    const parent_path = std.fs.path.dirname(path) orelse
+        return Error.NotFound;
+    const entry_name = std.fs.path.basename(path);
+
+    return .{
+        .scheme = scheme,
+        .path = path,
+        .parent_path = parent_path,
+        .entry_name = entry_name,
+    };
+}
 
 // will take ownership of `namespace` and `new_file`
 fn createFile(namespace: *DirNode, relative_path: []const u8, new_file: *FileNode) !void {
@@ -208,28 +288,16 @@ fn putAny(dir: *DirNode, basename: []const u8, new: DirEntry) !void {
 }
 
 // will take ownership of `namespace` and returns an owned `*DirNode`
-fn getDir(namespace: *DirNode, relative_path: []const u8) !*DirNode {
+fn getDir(
+    namespace: *DirNode,
+    relative_path: []const u8,
+    missing_policy: abi.fs.OpenOptions.MissingPolicy,
+) !*DirNode {
     var current = namespace;
 
-    var it = try std.fs.path.componentIterator(relative_path);
+    var it = abi.fs.path.absolutePartIterator(relative_path);
     while (it.next()) |part| {
-        // TODO: '..' parts
-        if (std.mem.eql(u8, part.name, ".")) continue;
-        // log.debug("looking up part '{s}'", .{part.name});
-
-        var next: DirEntry = undefined;
-        {
-            defer current.destroy();
-            current.cache_lock.lock();
-            defer current.cache_lock.unlock();
-
-            next = current.entries.get(part.name) orelse return Error.NotFound;
-            if (next == .file) return Error.NotFound;
-
-            next.dir.clone();
-        }
-
-        current = next.dir;
+        current = try current.getDir(part.name, missing_policy);
     }
 
     return current;
@@ -253,6 +321,8 @@ const PrintTreeRec = struct {
     ) !void {
         self.dir.cache_lock.lock();
         defer self.dir.cache_lock.unlock();
+
+        try self.dir.lazyLoadLocked();
 
         var it = self.dir.entries.iterator();
         while (it.next()) |entry| {
@@ -278,36 +348,70 @@ const PrintTreeRec = struct {
 //
 
 const FileNode = struct {
-    refcnt: RefCnt = .{},
+    refcnt: abi.epoch.RefCnt = .{},
+
+    parent: *DirNode,
 
     /// inode of the file in the correct device
-    inode: u128 = 0,
+    inode: u128,
 
     cache_lock: abi.lock.YieldMutex = .{},
 
     /// all cached pages
-    pages: []caps.Frame = &.{},
+    frame: caps.Frame = .{},
 
-    pub fn create() !*@This() {
+    /// takes ownership of `parent`
+    pub fn create(parent: *DirNode, inode: u128) !*@This() {
         file_node_allocator_lock.lock();
         defer file_node_allocator_lock.unlock();
+
         const node = try file_node_allocator.create();
-        node.* = .{};
+        node.* = .{
+            .parent = parent,
+            .inode = inode,
+        };
         return node;
     }
 
-    pub fn clone(self: *@This()) void {
+    /// does not take ownership of `self` but returns an owned one
+    pub fn clone(self: *@This()) *@This() {
         self.refcnt.inc();
+        return self;
     }
 
+    /// takes ownership of `self` and might or might not delete the data
     pub fn destroy(self: *@This()) void {
-        if (self.refcnt.dec()) {
-            @branchHint(.cold);
+        if (!self.refcnt.dec()) return;
 
-            file_node_allocator_lock.lock();
-            defer file_node_allocator_lock.unlock();
-            file_node_allocator.destroy(self);
-        }
+        self.parent.destroy();
+
+        if (self.frame.cap != 0) self.frame.close();
+
+        file_node_allocator_lock.lock();
+        defer file_node_allocator_lock.unlock();
+        file_node_allocator.destroy(self);
+    }
+
+    /// does not take ownership of `self`, returns an owned Frame
+    pub fn getFrame(self: *@This()) Error!caps.Frame {
+        self.cache_lock.lock();
+        defer self.cache_lock.unlock();
+
+        if (self.frame.cap != 0) return self.frame.clone();
+
+        const mount_point = self
+            .parent
+            .clone()
+            .findDevice() orelse unreachable; // VFS error if there is a cached file without a filesystem
+        defer mount_point.destroy();
+
+        errdefer self.frame = .{};
+        const res: Error!void, self.frame = try mount_point
+            .device
+            .call(.openFile, .{self.inode});
+        try res;
+
+        return self.frame.clone();
     }
 };
 
@@ -318,6 +422,13 @@ const DirEntry = union(enum) {
     file: *FileNode,
     dir: *DirNode,
 
+    fn clone(self: @This()) @This() {
+        switch (self) {
+            inline else => |v| v.refcnt.inc(),
+        }
+        return self;
+    }
+
     fn destroy(self: @This()) void {
         switch (self) {
             .dir => |dir| dir.destroy(),
@@ -327,38 +438,261 @@ const DirEntry = union(enum) {
 };
 
 const DirNode = struct {
-    refcnt: RefCnt = .{},
+    refcnt: abi.epoch.RefCnt = .{},
+
+    parent: *DirNode,
+    /// optional mounted device
+    device: abi.FsProtocol.Client() = .init(.{}),
 
     /// inode of the directory in the correct device
-    inode: u128 = 0,
+    inode: u128,
 
     cache_lock: abi.lock.YieldMutex = .{},
 
     /// all cached subdirectories and files in this directory
-    entries: std.StringHashMap(DirEntry),
+    entries: std.StringHashMap(DirEntry) = .init(abi.mem.slab_allocator),
+    uninitialized: bool = true,
 
-    pub fn create() !*@This() {
+    /// takes ownership of `parent`
+    /// `parent == null` makes the directory its own parent, like `/../../ == /../ == /`
+    pub fn create(parent: ?*DirNode, inode: u128) !*@This() {
         dir_node_allocator_lock.lock();
         defer dir_node_allocator_lock.unlock();
-        const node = try dir_node_allocator.create();
+
+        const node: *@This() = try dir_node_allocator.create();
         node.* = .{
-            .entries = .init(abi.mem.slab_allocator),
+            .parent = parent orelse node,
+            .inode = inode,
         };
         return node;
     }
 
-    pub fn clone(self: *@This()) void {
+    /// does not take ownership of `self` but returns an owned one
+    pub fn clone(self: *@This()) *@This() {
         self.refcnt.inc();
+        return self;
     }
 
+    /// takes ownership of `self` and might or might not delete the data
     pub fn destroy(self: *@This()) void {
-        if (self.refcnt.dec()) {
-            @branchHint(.cold);
+        if (!self.refcnt.dec()) return;
 
-            dir_node_allocator_lock.lock();
-            defer dir_node_allocator_lock.unlock();
-            dir_node_allocator.destroy(self);
+        if (self.parent != self) self.parent.destroy();
+
+        var it = self.entries.iterator();
+        while (it.next()) |entry| {
+            abi.mem.slab_allocator.free(entry.key_ptr.*);
+            entry.value_ptr.*.destroy();
         }
+        self.entries.deinit();
+
+        dir_node_allocator_lock.lock();
+        defer dir_node_allocator_lock.unlock();
+
+        dir_node_allocator.destroy(self);
+    }
+
+    /// takes ownership of `self` and returns an owned `*DirNode`
+    pub fn getDir(
+        self: *@This(),
+        part: []const u8,
+        missing_policy: abi.fs.OpenOptions.MissingPolicy,
+    ) Error!*DirNode {
+        const next = try self.get(part, missing_policy);
+        errdefer next.destroy();
+
+        if (next != .dir) return Error.NotFound;
+        return next.dir;
+    }
+
+    /// takes ownership of `self` and returns an owned `*FileNode`
+    pub fn getFile(
+        self: *@This(),
+        part: []const u8,
+        missing_policy: abi.fs.OpenOptions.MissingPolicy,
+    ) Error!*FileNode {
+        const next = try self.get(part, missing_policy);
+        errdefer next.destroy();
+
+        if (next != .file) return Error.NotFound;
+        return next.file;
+    }
+
+    /// takes ownership of `self` and returns an owned `DirEntry`
+    pub fn get(
+        self: *@This(),
+        part: []const u8,
+        missing_policy: abi.fs.OpenOptions.MissingPolicy,
+    ) Error!DirEntry {
+        defer self.destroy();
+
+        self.cache_lock.lock();
+        defer self.cache_lock.unlock();
+
+        try self.lazyLoadLocked();
+
+        // TODO:
+        _ = missing_policy;
+
+        log.debug("looking up part '{s}'", .{part});
+
+        const next = self.entries.get(part) orelse
+            return Error.NotFound;
+        return next.clone();
+    }
+
+    /// takes ownership of `self` and returns an owned `*DirNode`
+    pub fn getParent(self: *@This()) *DirNode {
+        defer self.destroy();
+        return self.parent.clone();
+    }
+
+    /// takes ownership of `self` and returns an owned `*DirNode`
+    /// find the first ancestor that has a mounted device
+    pub fn findDevice(self: *@This()) ?*DirNode {
+        var cur = self;
+        // defer cur.destroy();
+
+        while (true) {
+            if (cur.device.tx.cap != 0) {
+                // found a device
+                return cur;
+            }
+
+            if (cur.parent == cur) {
+                // found the root
+                cur.destroy();
+                return null;
+            }
+
+            // keep going
+            cur = cur.getParent();
+        }
+    }
+
+    /// does not take ownership of `self`
+    pub fn lazyLoadLocked(self: *@This()) Error!void {
+        if (self.uninitialized) {
+            @branchHint(.cold);
+            self.uninitialized = false;
+        } else {
+            return;
+        }
+
+        log.debug("lazy loading directory contents", .{});
+
+        const mount_point = self
+            .clone()
+            .findDevice() orelse return;
+        defer mount_point.destroy();
+
+        const real_dir = try mount_point.loadRealDir(self.inode);
+        const real_dir_frame_size = try real_dir.frame.getSize();
+
+        const addr = try vmem.map(
+            real_dir.frame,
+            0,
+            0,
+            real_dir_frame_size,
+            .{},
+            .{},
+        );
+        defer vmem.unmap(addr, real_dir_frame_size) catch unreachable;
+
+        if (real_dir.entries >= 0x1_0000_0000) {
+            log.err("filesystem returned too many directory entries", .{});
+            return Error.Internal;
+        }
+
+        if (real_dir_frame_size < real_dir.entries * @sizeOf(abi.Stat)) {
+            log.err("filesystem returned invalid directory data", .{});
+            return Error.Internal;
+        }
+
+        const entries = @as(
+            [*]const volatile abi.Stat,
+            @ptrFromInt(addr),
+        )[0..real_dir.entries];
+        const strings = @as(
+            [*]const u8,
+            @ptrFromInt(addr),
+        )[real_dir.entries * @sizeOf(abi.Stat) .. real_dir_frame_size];
+        var strings_it = std.mem.splitScalar(u8, strings, 0);
+
+        // FIXME: clone the provided Frame with copy-on-write,
+        // to prevent the filesystem server from modifying the data while it is used here
+
+        for (entries) |*entry| {
+            const stat = @as(*const volatile abi.Stat, entry).*;
+            const name = strings_it.next() orelse {
+                log.err("filesystem returned invalid directory entry names", .{});
+                return Error.Internal;
+            };
+
+            if (abi.conf.IS_DEBUG) {
+                if (std.mem.containsAtLeastScalar(
+                    u8,
+                    name,
+                    1,
+                    '/',
+                )) {
+                    log.err("filesystem returned a path instead of a dir entry name for a dir entry: {s}", .{name});
+                    return Error.Internal;
+                }
+
+                if (std.mem.eql(
+                    u8,
+                    name,
+                    ".",
+                ) or std.mem.eql(
+                    u8,
+                    name,
+                    "..",
+                )) {
+                    log.err("filesystem returned a '{s}' as a dir entry", .{name});
+                    return Error.Internal;
+                }
+            }
+
+            try self.addEntryLocked(stat, name);
+        }
+    }
+
+    /// does not take ownership of `self`
+    fn loadRealDir(self: *@This(), inode: u128) Error!struct {
+        frame: caps.Frame,
+        entries: usize,
+    } {
+        const res: Error!void, const entries_frame: caps.Frame, const entries = try self
+            .device
+            .call(.openDir, .{inode});
+        try res;
+
+        return .{ .frame = entries_frame, .entries = entries };
+    }
+
+    fn addEntryLocked(self: *@This(), stat: abi.Stat, name: []const u8) Error!void {
+        const node: DirEntry = switch (stat.mode.type) {
+            .dir => .{ .dir = try DirNode.create(self.clone(), stat.inode) },
+            .file => .{ .file = try FileNode.create(self.clone(), stat.inode) },
+            else => {
+                log.err("ignoring unimplemented dir entry type: {}", .{stat.mode.type});
+                return;
+            },
+        };
+        errdefer node.destroy();
+
+        const s = try abi.mem.slab_allocator.dupe(u8, name);
+        errdefer abi.mem.slab_allocator.free(s);
+
+        const result = try self.entries.getOrPut(s);
+        if (result.found_existing) {
+            node.destroy();
+            abi.mem.slab_allocator.free(s);
+            log.err("filesystem returned duplicate directory entries: {s}", .{s});
+            return;
+        }
+        result.value_ptr.* = node;
     }
 
     pub const GetResult = union(enum) {
@@ -376,34 +710,6 @@ const DirNode = struct {
     // pub fn files(self: *@This()) []const *FileNode {
     //     return @ptrCast(self.entries[self.dir_entries..][0..self.file_entries]);
     // }
-};
-
-const RefCnt = struct {
-    refcnt: std.atomic.Value(usize) = .init(1),
-
-    pub fn inc(self: *@This()) void {
-        // log.info("inc refcnt", .{});
-        const old = self.refcnt.fetchAdd(1, .monotonic);
-        if (old >= std.math.maxInt(isize)) @panic("too many ref counts");
-    }
-
-    pub fn dec(self: *@This()) bool {
-        // log.info("dec refcnt", .{});
-        const old_cnt = self.refcnt.fetchSub(1, .release);
-        std.debug.assert(old_cnt < std.math.maxInt(isize));
-        std.debug.assert(old_cnt != 0);
-
-        if (old_cnt == 1) {
-            @branchHint(.cold);
-        } else {
-            return false;
-        }
-
-        // fence
-        _ = self.refcnt.load(.acquire);
-
-        return true;
-    }
 };
 
 var file_node_allocator: std.heap.MemoryPool(FileNode) = std.heap.MemoryPool(FileNode).init(abi.mem.server_page_allocator);

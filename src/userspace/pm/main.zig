@@ -22,11 +22,6 @@ pub export var export_pm = abi.loader.Resource.new(.{
     .ty = .receiver,
 });
 
-pub export var import_initfs = abi.loader.Resource.new(.{
-    .name = "hiillos.initfsd.ipc",
-    .ty = .sender,
-});
-
 pub export var import_vfs = abi.loader.Resource.new(.{
     .name = "hiillos.vfs.ipc",
     .ty = .sender,
@@ -82,18 +77,18 @@ pub fn main() !void {
 
     // const init_elf = try open("initfs:///sbin/init");
 
-    const initfs = abi.InitfsProtocol.Client().init(.{ .cap = import_initfs.handle });
-    var res, const init_size = try initfs.call(.fileSize, .{
-        ("/sbin/init" ++ .{0} ** 22).*,
+    const vfs = abi.VfsProtocol.Client().init(.{ .cap = import_vfs.handle });
+    const res: Error!void, const init_elf_frame: abi.caps.Frame = try vfs.call(.openFile1, .{
+        ("initfs:///sbin/init" ++ .{0} ** 13).*,
+        @bitCast(abi.fs.OpenOptions{
+            .mode = .read_only,
+            .file_policy = .use_existing,
+            .dir_policy = .use_existing,
+        }),
     });
     try res;
 
-    res, const init_elf_frame = try initfs.call(.openFile, .{
-        ("/sbin/init" ++ .{0} ** 22).*,
-        try caps.Frame.create(init_size),
-    });
-    try res;
-
+    const init_elf_size = try init_elf_frame.getSize();
     const init_elf_addr = try system.self_vmem.map(
         init_elf_frame,
         0,
@@ -103,7 +98,10 @@ pub fn main() !void {
         .{},
     );
 
-    var init_elf = try abi.loader.Elf.init(@as([*]const u8, @ptrFromInt(init_elf_addr))[0..init_size]);
+    var init_elf = try abi.loader.Elf.init(@as(
+        [*]const u8,
+        @ptrFromInt(init_elf_addr),
+    )[0..init_elf_size]);
 
     // init (normal) (process)
     // all the critial system servers are running, so now "normal" Linux-like init can run
@@ -111,7 +109,7 @@ pub fn main() !void {
     // just runs normal processes according to the init configuration
     // launches stuff like the window manager and virtual TTYs
     log.info("exec init", .{});
-    const init_pid = try system.exec(&init_elf);
+    const init_pid = try system.exec(&init_elf, 0);
     std.debug.assert(init_pid == 1);
 
     const server = abi.PmProtocol.Server(.{
@@ -158,7 +156,11 @@ pub const System = struct {
     // empty process ids into ↑
     free_slots: std.fifo.LinearFifo(u32, .Dynamic) = .init(abi.mem.slab_allocator),
 
-    pub fn exec(system: *System, elf: *abi.loader.Elf) !u32 {
+    pub fn exec(
+        system: *System,
+        elf: *abi.loader.Elf,
+        as_uid: u32,
+    ) !u32 {
         const pid = try system.allocPid();
         std.debug.assert(pid != 0);
         errdefer system.freePid(pid) catch |err| {
@@ -176,7 +178,6 @@ pub const System = struct {
         errdefer thread.close();
 
         const entry = try elf.loadInto(system.self_vmem, vmem);
-
         try abi.loader.prepareSpawn(vmem, thread, entry);
 
         var id: u32 = 0;
@@ -186,6 +187,12 @@ pub const System = struct {
         std.debug.assert(id == 2);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_ps2.handle }).clone());
         std.debug.assert(id == 3);
+
+        const vfs = abi.VfsProtocol.Client().init(.{ .cap = import_vfs.handle });
+        const res: Error!void, const vfs_ipc: caps.Sender = try vfs.call(.newSender, .{as_uid});
+        try res;
+        id = try proc.giveHandle(vfs_ipc);
+        std.debug.assert(id == 4);
 
         _ = try proc.giveHandle(try (caps.Frame{ .cap = import_fb.handle }).clone());
         _ = try proc.giveHandle(try (caps.Frame{ .cap = import_fb_info.handle }).clone());

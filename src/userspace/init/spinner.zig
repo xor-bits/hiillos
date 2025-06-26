@@ -27,8 +27,9 @@ const color: u32 = 0xFF8000;
 const pm = abi.PmProtocol.Client().init(caps.Sender{ .cap = 1 });
 const hpet = abi.HpetProtocol.Client().init(caps.Sender{ .cap = 2 });
 const ps2 = abi.Ps2Protocol.Client().init(caps.Sender{ .cap = 3 });
-const fb_frame = caps.Frame{ .cap = 4 };
-const fb_info_frame = caps.Frame{ .cap = 5 };
+const vfs = abi.VfsProtocol.Client().init(caps.Sender{ .cap = 4 });
+const fb_frame = caps.Frame{ .cap = 5 };
+const fb_info_frame = caps.Frame{ .cap = 6 };
 
 //
 
