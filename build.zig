@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) !void {
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi);
     const initfs_tar_gz = createInitfsTarGz(b, &opts, abi);
-    const os_iso = createIso(b, kernel_elf, initfs_tar_gz, root_bin);
+    const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_gz, root_bin);
 
     runQemu(b, &opts, os_iso);
 }
@@ -197,6 +197,7 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
 
 fn createIso(
     b: *std.Build,
+    opts: *const Opts,
     kernel_elf: std.Build.LazyPath,
     initfs_tar_gz: std.Build.LazyPath,
     root_bin: std.Build.LazyPath,
@@ -226,15 +227,18 @@ fn createIso(
     _ = wf.addCopyFile(b.path("cfg/limine.conf"), "boot/limine/limine.conf");
     _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-bios.sys"), "boot/limine/limine-bios.sys");
     _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-bios-cd.bin"), "boot/limine/limine-bios-cd.bin");
-    _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-uefi-cd.bin"), "boot/limine/limine-uefi-cd.bin");
-    _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
-    _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTIA32.EFI"), "EFI/BOOT/BOOTIA32.EFI");
+    if (opts.use_ovmf) {
+        _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-uefi-cd.bin"), "boot/limine/limine-uefi-cd.bin");
+        _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
+        _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTIA32.EFI"), "EFI/BOOT/BOOTIA32.EFI");
+    }
 
     // create the ISO file (WARNING: this runs a binary from a dependency (limine_bootloader) at compile time)
     const wrapper_run = b.addRunArtifact(wrapper);
     wrapper_run.addDirectoryArg(limine_bootloader_pkg.path("."));
     wrapper_run.addDirectoryArg(wf.getDirectory());
     const os_iso = wrapper_run.addOutputFileArg("os.iso");
+    wrapper_run.addArg(if (opts.use_ovmf) "y" else "n");
     // wrapper_run.step.dependOn(&limine_step.step);
 
     const install_iso = b.addInstallFile(os_iso, "os.iso");
@@ -269,8 +273,9 @@ fn createInitfsTarGz(
             .root_source_file = b.path(source),
             .target = opts.target,
             // FIXME: manifest/imports/exports rely on symtab
-            .optimize = if (opts.optimize == .ReleaseSmall) .ReleaseFast else opts.optimize,
+            .optimize = opts.optimize,
             .pic = true,
+            .strip = false,
         });
         compile.root_module.addImport("abi", abi);
         b.installArtifact(compile);

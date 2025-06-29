@@ -8,12 +8,14 @@ pub var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 pub fn main() !void {
     const args = try std.process.argsAlloc(gpa.allocator());
-    if (args.len != 4)
-        return error.@"usage: xorriso_limine_wrapper <limine-dir> <iso-root> <iso-file>";
+    if (args.len != 5)
+        return error.@"usage: xorriso_limine_wrapper <limine-dir> <iso-root> <iso-file> <use-efi-y/n>";
 
     std.debug.print("running xorriso and limine\n", .{});
 
-    var xorriso = std.process.Child.init(&.{
+    const make_efi = std.mem.eql(u8, args[4], "y");
+
+    var xorriso = std.process.Child.init(if (make_efi) &.{
         "xorriso",
         "-as",
         "mkisofs",
@@ -28,6 +30,19 @@ pub fn main() !void {
         "-efi-boot-part",
         "--efi-boot-image",
         "--protective-msdos-label",
+        args[2],
+        "-o",
+        args[3],
+    } else &.{
+        "xorriso",
+        "-as",
+        "mkisofs",
+        "-b",
+        "boot/limine/limine-bios-cd.bin",
+        "-no-emul-boot",
+        "-boot-load-size",
+        "4",
+        "-boot-info-table",
         args[2],
         "-o",
         args[3],
