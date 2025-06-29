@@ -67,6 +67,14 @@ pub fn initCpu(id: u32, smpinfo: ?*limine.SmpInfo) !void {
 
     try CpuConfig.init(&tls.cpu_config, id);
 
+    if (CpuFeatures.read().pcid) {
+        var cr4 = Cr4.read();
+        cr4.page_global_enable = 1; // PGE required when PCID is on
+        cr4.pcid_enable = 1;
+        Cr4.write(cr4);
+        pcid_enabled = true;
+    }
+
     wrmsr(GS_BASE, @intFromPtr(tls));
     wrmsr(KERNELGS_BASE, 0);
 
@@ -1694,4 +1702,15 @@ test "structure sizes" {
     try std.testing.expectEqual(8, @sizeOf(GdtDescriptor));
     try std.testing.expectEqual(16, @sizeOf(Entry));
     try std.testing.expectEqual(8, @sizeOf(PageFaultError));
+}
+
+/// set to true after the first CPU enables PCID
+pub var pcid_enabled: bool = false;
+
+/// next PCID to hand out (0 is reserved for kernel/global)
+var pcid_next: std.atomic.Value(u16) = .init(1);
+
+/// allocate a unique PCID in the range 1..4095 (wrap-around ignored)
+pub fn allocPCID() u16 {
+    return pcid_next.fetchAdd(1, .monotonic) & 0x0FFF;
 }

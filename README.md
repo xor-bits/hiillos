@@ -50,7 +50,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
 - [x] kernel
   - [x] PMM
   - [x] VMM
-    - [ ] PCID for better context switch performance
+    - [x] PCID for better context switch performance
     - [x] VMM arch implementation back in the kernel,
           user-space vmm manages mapping of capabilities
           to the (single per thread) vmem capability.
