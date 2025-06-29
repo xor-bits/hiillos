@@ -96,8 +96,8 @@ pub fn build(b: *std.Build) !void {
     const abi = createAbi(b, &opts);
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi);
-    const initfs_tar_gz = createInitfsTarGz(b, &opts, abi);
-    const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_gz, root_bin);
+    const initfs_tar_zst = createInitfsTarZst(b, &opts, abi);
+    const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
     runQemu(b, &opts, os_iso);
 }
@@ -199,7 +199,7 @@ fn createIso(
     b: *std.Build,
     opts: *const Opts,
     kernel_elf: std.Build.LazyPath,
-    initfs_tar_gz: std.Build.LazyPath,
+    initfs_tar_zst: std.Build.LazyPath,
     root_bin: std.Build.LazyPath,
 ) std.Build.LazyPath {
 
@@ -222,7 +222,7 @@ fn createIso(
     // create virtual iso root
     const wf = b.addNamedWriteFiles("create virtual iso root");
     _ = wf.addCopyFile(kernel_elf, "boot/kernel");
-    _ = wf.addCopyFile(initfs_tar_gz, "boot/initfs.tar.gz");
+    _ = wf.addCopyFile(initfs_tar_zst, "boot/initfs.tar.zst");
     _ = wf.addCopyFile(root_bin, "boot/root.bin");
     _ = wf.addCopyFile(b.path("cfg/limine.conf"), "boot/limine/limine.conf");
     _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-bios.sys"), "boot/limine/limine-bios.sys");
@@ -247,7 +247,7 @@ fn createIso(
     return os_iso;
 }
 
-fn createInitfsTarGz(
+fn createInitfsTarZst(
     b: *std.Build,
     opts: *const Opts,
     abi: *std.Build.Module,
@@ -261,7 +261,7 @@ fn createInitfsTarGz(
         "init",
     };
 
-    // create virtual initfs.tar.gz root
+    // create virtual initfs.tar.zst root
     const initfs = b.addNamedWriteFiles("create virtual initfs root");
 
     inline for (initfs_processes) |name| {
@@ -283,19 +283,21 @@ fn createInitfsTarGz(
         _ = initfs.addCopyFile(compile.getEmittedBin(), path);
     }
 
-    const initfs_tar_gz = b.addSystemCommand(&.{
+    const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
-        "-czf",
+        "c",
+        "-Izstd -19 -T1",
+        "-f",
     });
-    const initfs_tar_gz_file = initfs_tar_gz.addOutputFileArg("initfs.tar.gz");
-    initfs_tar_gz.addArg("-C");
-    initfs_tar_gz.addDirectoryArg(initfs.getDirectory());
-    initfs_tar_gz.addArg(".");
+    const initfs_tar_zst_file = initfs_tar_zst.addOutputFileArg("initfs.tar.zst");
+    initfs_tar_zst.addArg("-C");
+    initfs_tar_zst.addDirectoryArg(initfs.getDirectory());
+    initfs_tar_zst.addArg(".");
 
-    const install_initfs_tar_gz = b.addInstallFile(initfs_tar_gz_file, "initfs.tar.gz");
-    b.getInstallStep().dependOn(&install_initfs_tar_gz.step);
+    const install_initfs_tar_zst = b.addInstallFile(initfs_tar_zst_file, "initfs.tar.zst");
+    b.getInstallStep().dependOn(&install_initfs_tar_zst.step);
 
-    return initfs_tar_gz_file;
+    return initfs_tar_zst_file;
 }
 
 fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {

@@ -7,13 +7,26 @@ const sys = @import("sys.zig");
 //
 
 pub fn spawn(comptime function: anytype, args: anytype) !void {
-    const vmem = try caps.Vmem.self();
+    try spawnOptions(function, args, .{});
+}
+
+pub const SpawnOptions = struct {
+    vmem: ?caps.Vmem = null,
+    proc: ?caps.Process = null,
+    thread: ?caps.Thread = null,
+    stack_size: usize = 1024 * 256,
+};
+
+pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOptions) !void {
+    if (opts.stack_size < 0x4000) @panic("stack too small");
+
+    const vmem = opts.vmem orelse try caps.Vmem.self();
     defer vmem.close();
 
-    const proc = try caps.Process.self();
+    const proc = opts.proc orelse try caps.Process.self();
     defer proc.close();
 
-    const thread = try caps.Thread.create(proc);
+    const thread = opts.thread orelse try caps.Thread.create(proc);
     defer thread.close();
 
     const Args = @TypeOf(args);
@@ -28,21 +41,22 @@ pub fn spawn(comptime function: anytype, args: anytype) !void {
     };
 
     // map a stack
-    const stack = try caps.Frame.create(1024 * 256);
+    const stack = try caps.Frame.create(opts.stack_size);
     defer stack.close();
     var stack_ptr = try vmem.map(
         stack,
         0,
         0,
-        1024 * 256,
+        opts.stack_size,
         .{ .writable = true },
         .{},
     );
     // FIXME: protect the stack guard region as
     // no read, no write, no exec and prevent mapping
     try vmem.unmap(stack_ptr, 0x1000);
+    std.log.info("thread stack = 0x{x}", .{stack_ptr});
 
-    stack_ptr += 1024 * 256; // top of the stack
+    stack_ptr += opts.stack_size; // top of the stack
     stack_ptr -= @sizeOf(Instance);
     const instance_ptr = stack_ptr;
     stack_ptr -= 0x100; // some extra zeroes that zig requires

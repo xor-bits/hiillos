@@ -78,7 +78,7 @@ pub fn init() !void {
     @atomicStore(u32, &initfs_ready.cap, (try caps.Notify.create()).cap, .seq_cst);
 
     log.info("starting initfs thread", .{});
-    try abi.thread.spawn(run, .{});
+    try abi.thread.spawnOptions(run, .{}, .{ .stack_size = 1024 * 1024 });
     log.info("yielding", .{});
     abi.sys.selfYield();
 }
@@ -117,14 +117,8 @@ fn run() !void {
         .release,
     );
 
-    const initfs: []const u8 = getBootInfoAddr().initfsData();
-
-    var initfs_tar_gz = std.io.fixedBufferStream(initfs);
-
     log.info("decompressing", .{});
-    try std.compress.flate.inflate.decompress(.gzip, initfs_tar_gz.reader(), initfs_tar.writer());
-    std.debug.assert(std.mem.eql(u8, initfs_tar.items[257..][0..8], "ustar\x20\x20\x00"));
-    log.info("decompressed initfs size: 0x{x}", .{initfs_tar.items.len});
+    try decompress();
 
     _ = try initfs_ready.notify();
 
@@ -137,6 +131,29 @@ fn run() !void {
         .root = rootHandler,
     }).init({}, initfs_recv);
     try server.run();
+}
+
+fn decompress() !void {
+    const initfs: []const u8 = getBootInfoAddr().initfsData();
+    var initfs_tar_zst = std.io.fixedBufferStream(initfs);
+
+    const buf = try abi.mem.server_page_allocator.alloc(
+        u8,
+        std.compress.zstd.DecompressorOptions.default_window_buffer_len,
+    );
+    defer abi.mem.server_page_allocator.free(buf);
+
+    var zstd_decompressor = std.compress.zstd.decompressor(
+        initfs_tar_zst.reader(),
+        .{ .window_buffer = buf },
+    );
+    try zstd_decompressor.reader().readAllArrayList(
+        &initfs_tar,
+        0x2000_0000_0000,
+    );
+    // try std.compress.flate.inflate.decompress(.gzip, initfs_tar_gz.reader(), initfs_tar.writer(),);
+    std.debug.assert(std.mem.eql(u8, initfs_tar.items[257..][0..8], "ustar\x20\x20\x00"));
+    log.info("decompressed initfs size: 0x{x}", .{initfs_tar.items.len});
 }
 
 fn openFileHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, caps.Frame } {

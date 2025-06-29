@@ -106,7 +106,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
   - [ ] stack traces with line info
 
 - [x] root + initfsd process
-  - [x] decompress initfs.tar.gz
+  - [x] decompress initfs.tar.zst
   - [x] server manifest embedded into the ELF
     - [x] name
     - [x] imports
