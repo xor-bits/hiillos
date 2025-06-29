@@ -1,3 +1,29 @@
+pub const KeyState = enum(u8) {
+    press,
+    release,
+    single,
+};
+
+pub const MouseEvent = union(enum) {
+    motion: struct {
+        delta_x: i16,
+        delta_y: i16,
+        delta_z: i16,
+    },
+    button: struct {
+        button: Button,
+        state: KeyState,
+    },
+};
+
+pub const Button = enum(u8) {
+    left,
+    middle,
+    right,
+    mb4,
+    mb5,
+};
+
 pub const KeyEvent = struct {
     code: KeyCode,
     state: KeyState,
@@ -302,10 +328,4 @@ pub const KeyCode = enum(u8) {
             else => null,
         };
     }
-};
-
-pub const KeyState = enum(u8) {
-    press,
-    release,
-    single,
 };

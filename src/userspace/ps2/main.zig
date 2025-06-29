@@ -209,6 +209,7 @@ pub const Controller = struct {
         try self.flush();
 
         try keyboard.Keyboard.disableOutput(&self);
+        try mouse.Mouse.disableOutput(&self);
 
         log.debug("enable interrupts", .{});
         try self.writeCmd(0x20);
@@ -219,52 +220,42 @@ pub const Controller = struct {
         try self.writeCmd(0x60);
         try self.writeData(@bitCast(config));
 
-        // if (self.is_dual) b: {
-        //     log.debug("reset mouse", .{});
-        //     try self.writeCmd(0xd4);
-        //     try self.writeData(0xff);
-        //     res0 = try self.readWait();
-        //     if (res0 == 0xfc) {
-        //         self.is_dual = false;
-        //         break :b;
-        //     }
-        //     res1 = try self.readWait();
-        //     if (res1 == 0xfc) {
-        //         self.is_dual = false;
-        //         break :b;
-        //     }
-        //     if (!(res0 == 0xfa and res1 == 0xaa) and !(res1 == 0xfa and res0 == 0xaa)) {
-        //         self.is_dual = false;
-        //         break :b;
-        //     }
-        //     try self.writeCmd(0xd4);
-        //     try self.writeData(0xf2);
-        //     device_id = try self.readWait();
-        //     log.debug("mouse type: {}", .{device_id});
-        // }
+        try self.flush();
+        try keyboard.Keyboard.reset(&self);
+        try self.flush();
+        try mouse.Mouse.reset(&self);
 
         try self.flush();
-
         try keyboard.Keyboard.disableOutput(&self);
+        try mouse.Mouse.disableOutput(&self);
 
         return self;
     }
 
     /// write controller commands
     pub fn writeCmd(self: *@This(), byte: u8) !void {
-        while (!try self.isInputEmpty()) abi.sys.selfYield();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        while (!try self.isInputEmptyLocked()) abi.sys.selfYield();
         try self.status.outb(byte);
     }
 
     /// write data to the keyboard
     pub fn writeKeyboard(self: *@This(), byte: u8) !void {
-        while (!try self.isInputEmpty()) abi.sys.selfYield();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        while (!try self.isInputEmptyLocked()) abi.sys.selfYield();
         try self.data.outb(byte);
     }
 
     /// write data to the mouse
     pub fn writeMouse(self: *@This(), byte: u8) !void {
-        while (!try self.isInputEmpty()) abi.sys.selfYield();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        while (!try self.isInputEmptyLocked()) abi.sys.selfYield();
         try self.status.outb(0xd4);
         try self.data.outb(byte);
     }
@@ -281,7 +272,10 @@ pub const Controller = struct {
 
     /// read a byte from the output without blocking
     pub fn read(self: *@This()) !?u8 {
-        if (!try self.isOutputEmpty()) {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (!try self.isOutputEmptyLocked()) {
             const b = try self.data.inb();
             log.debug("got byte 0x{x}", .{b});
             return b;
@@ -315,12 +309,12 @@ pub const Controller = struct {
     }
 
     /// check if bytes can be read
-    pub fn isOutputEmpty(self: *@This()) !bool {
+    pub fn isOutputEmptyLocked(self: *@This()) !bool {
         return try self.status.inb() & 0b01 == 0;
     }
 
     /// check if bytes can be written
-    pub fn isInputEmpty(self: *@This()) !bool {
+    pub fn isInputEmptyLocked(self: *@This()) !bool {
         return try self.status.inb() & 0b10 == 0;
     }
 

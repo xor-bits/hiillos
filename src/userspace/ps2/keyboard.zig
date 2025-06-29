@@ -40,7 +40,7 @@ pub const Keyboard = struct {
         for (0..3) |_| {
             try self.controller.writeKeyboard(0xf0); // set current scan code set
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
-            try self.controller.writeData(2); // to 2
+            try self.controller.writeKeyboard(2); // to 2
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
             // log.debug("{}", .{try self.readWait()});
             break;
@@ -52,7 +52,7 @@ pub const Keyboard = struct {
         for (0..3) |_| {
             try self.controller.writeKeyboard(0xf3); // set current typematic
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
-            try self.controller.writeData(0b0_01_00010); // to 25hz, 500ms
+            try self.controller.writeKeyboard(0b0_01_00010); // to 25hz, 500ms
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
             break;
         } else {
@@ -63,7 +63,7 @@ pub const Keyboard = struct {
         for (0..3) |_| {
             try self.controller.writeKeyboard(0xed); // set LEDs
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
-            try self.controller.writeData(0b000); // to all off
+            try self.controller.writeKeyboard(0b000); // to all off
             if (try check(try self.controller.readWaitKeyboard()) == .resend) continue;
             break;
         } else {
@@ -101,18 +101,33 @@ pub const Keyboard = struct {
 
     pub fn reset(controller: *main.Controller) !void {
         log.debug("reset keyboard", .{});
-        try controller.writeData(0xff);
-        const res0 = try controller.readWait();
+        try controller.writeKeyboard(0xff);
+        const res0 = try controller.readWaitKeyboard();
         if (res0 == 0xfc)
             return error.KeyboardSelfTestFail;
-        const res1 = try controller.readWait();
+        const res1 = try controller.readWaitKeyboard();
         if (res1 == 0xfc)
             return error.KeyboardSelfTestFail;
         if (!(res0 == 0xfa and res1 == 0xaa) and !(res1 == 0xfa and res0 == 0xaa))
             return error.KeyboardSelfTestFail;
-        try controller.writeData(0xf2);
-        const device_id = try controller.readWait();
-        log.debug("keyboard type: {}", .{device_id});
+
+        try controller.flush();
+        _ = try identify(controller);
+        try controller.flush();
+    }
+
+    pub fn identify(controller: *main.Controller) !u8 {
+        log.debug("identifying keyboard", .{});
+        for (0..3) |_| {
+            try controller.writeKeyboard(0xf2);
+            if (try check(try controller.readWaitKeyboard()) == .resend) continue;
+
+            const device_id = try controller.readWaitKeyboard();
+            log.info("keyboard type: {}", .{device_id});
+            return device_id;
+        } else {
+            return error.BadKeyboard;
+        }
     }
 
     /// decode a response byte

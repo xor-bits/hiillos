@@ -59,9 +59,9 @@ pub const CapMutex = struct {
         return self.inner.isLocked();
     }
 
-    pub fn unlock(self: *Self) !void {
+    pub fn unlock(self: *Self) void {
         self.inner.unlock();
-        _ = try self.notify.notify();
+        _ = self.notify.notify() catch unreachable;
     }
 };
 
