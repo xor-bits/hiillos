@@ -6,6 +6,7 @@ const conf = @import("conf.zig");
 const sys = @import("sys.zig");
 
 const log = std.log.scoped(.lock);
+const Error = sys.Error;
 
 //
 
@@ -16,12 +17,16 @@ pub const CapMutex = struct {
 
     const Self = @This();
 
-    pub fn new(notify: caps.Notify) Self {
-        return .{ .inner = .new(), .notify = notify };
+    pub fn new() Error!Self {
+        return .{ .inner = .new(), .notify = try caps.Notify.create() };
     }
 
-    pub fn newLocked(notify: caps.Notify) Self {
-        return .{ .inner = .newLocked(), .notify = notify };
+    pub fn newLocked() Error!Self {
+        return .{ .inner = .newLocked(), .notify = try caps.Notify.create() };
+    }
+
+    pub fn deinit(self: Self) void {
+        self.notify.close();
     }
 
     pub fn tryLock(self: *Self) bool {
