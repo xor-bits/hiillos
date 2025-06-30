@@ -421,16 +421,16 @@ pub const Notify = extern struct {
         sys.handleClose(this.cap);
     }
 
-    pub fn wait(self: @This()) sys.Error!void {
-        return try sys.notifyWait(self.cap);
+    pub fn wait(self: @This()) void {
+        return sys.notifyWait(self.cap) catch unreachable;
     }
 
-    pub fn poll(self: @This()) sys.Error!bool {
-        return try sys.notifyPoll(self.cap);
+    pub fn poll(self: @This()) bool {
+        return sys.notifyPoll(self.cap) catch unreachable;
     }
 
-    pub fn notify(self: @This()) sys.Error!bool {
-        return try sys.notifyNotify(self.cap);
+    pub fn notify(self: @This()) bool {
+        return sys.notifyNotify(self.cap) catch unreachable;
     }
 };
 

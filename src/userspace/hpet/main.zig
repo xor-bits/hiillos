@@ -203,7 +203,7 @@ fn hpetThreadMain(notify: caps.Notify) !void {
             }
         }
 
-        _ = try notify.wait();
+        _ = notify.wait();
     }
 }
 

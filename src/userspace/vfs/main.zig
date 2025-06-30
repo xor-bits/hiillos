@@ -67,67 +67,29 @@ pub fn main() !void {
     // inform the root that vfs is ready
     log.debug("vfs ready", .{});
 
-    const server = abi.VfsProtocol.Server(.{}, .{
-        .openFile1 = openFile1Handler,
-        .openFile2 = openFile2Handler,
-        .openDir1 = openDir1Handler,
-        .openDir2 = openDir2Handler,
-        .newSender = newSenderHandler,
-    }).init({}, .{ .cap = export_vfs.handle });
-    try server.run();
+    abi.lpc.daemon(Server{ .recv = .{ .cap = export_vfs.handle } });
 }
 
-const Context = struct {
-    uid: u32,
-    open_opts: abi.fs.OpenOptions,
+const Server = struct {
+    recv: caps.Receiver,
+
+    pub const routes = .{
+        openFile,
+        openDir,
+        newSender,
+    };
+    pub const Request = abi.VfsProtocol.Request;
 };
 
-fn openFile1Handler(
-    _: void,
-    uid_stamp: u32,
-    req: struct { [32:0]u8, u8 },
-) struct { Error!void, caps.Frame } {
-    const uri = req.@"0";
-    const open_opts = req.@"1";
-
-    const frame = abi.fs.withPath1(
-        Context{ .uid = uid_stamp, .open_opts = @as(abi.fs.OpenOptions, @bitCast(open_opts)) },
-        &uri,
-        openFile,
-    ) catch |err|
-        return .{ err, .{} };
-
-    return .{ {}, frame };
-}
-
-fn openFile2Handler(
-    _: void,
-    uid_stamp: u32,
-    req: struct { caps.Frame, usize, usize, u8 },
-) struct { Error!void, caps.Frame } {
-    const uri = req.@"0";
-    const uri_frame_offs = req.@"1";
-    const uri_len = req.@"2";
-    const open_opts = req.@"3";
-
-    const frame = abi.fs.withPath2(
-        Context{ .uid = uid_stamp, .open_opts = @as(abi.fs.OpenOptions, @bitCast(open_opts)) },
-        uri,
-        uri_frame_offs,
-        uri_len,
-        openFile,
-    ) catch |err|
-        return .{ err, .{} };
-
-    return .{ {}, frame };
-}
-
 fn openFile(
-    ctx: Context,
-    uri: []const u8,
-) Error!caps.Frame {
-    log.debug("openFile({s})", .{uri});
-    const path = try partsFromUri(uri);
+    _: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.OpenFileRequest),
+) !void {
+    const uri = try handler.req.path.getMap();
+    defer uri.deinit();
+
+    log.debug("openFile({s})", .{uri.p});
+    const path = try partsFromUri(uri.p);
     log.debug("scheme = {s}", .{path.scheme});
     log.debug("path = {s}", .{path.path});
     log.debug("parent_path = {s}", .{path.parent_path});
@@ -145,56 +107,36 @@ fn openFile(
     const parent_dir = try getDir(
         namespace,
         path.parent_path,
-        ctx.open_opts.dir_policy,
+        handler.req.open_opts.dir_policy,
     );
 
     const file = try parent_dir.getFile(
         path.entry_name,
-        ctx.open_opts.file_policy,
+        handler.req.open_opts.file_policy,
     );
     defer file.destroy();
 
-    return try file.getFrame();
+    handler.reply.send(.{ .ok = try file.getFrame() });
 }
 
-fn openDir1Handler(
-    _: void,
-    _: u32,
-    req: struct { [32:0]u8, u8 },
-) struct { Error!void, caps.Frame, usize } {
-    const path = req.@"0";
-    const open_opts = req.@"1";
-
-    _ = .{ path, open_opts };
-    return .{ Error.Unimplemented, .{}, 0 };
+fn openDir(
+    _: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
+) !void {
+    handler.reply.send(.{ .err = .unimplemented });
 }
 
-fn openDir2Handler(
-    _: void,
-    _: u32,
-    req: struct { caps.Frame, usize, usize, u8 },
-) struct { Error!void, caps.Frame, usize } {
-    const path = req.@"0";
-    const path_frame_offs = req.@"1";
-    const path_len = req.@"2";
-    const open_opts = req.@"3";
+fn newSender(
+    daemon: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.NewSenderRequest),
+) !void {
+    if (daemon.stamp != 0) {
+        handler.reply.send(.{ .err = .permission_denied });
+        return;
+    }
 
-    _ = .{ path, path_frame_offs, path_len, open_opts };
-    return .{ Error.Unimplemented, .{}, 0 };
-}
-
-fn newSenderHandler(
-    _: void,
-    _: u32,
-    req: struct { u32 },
-) struct { Error!void, caps.Sender } {
-    const uid = req.@"0";
-
-    const recv = caps.Receiver{ .cap = export_vfs.handle };
-    const send = caps.Sender.create(recv, uid) catch |err|
-        return .{ err, .{} };
-
-    return .{ {}, send };
+    const sender = try caps.Sender.create(daemon.ctx.recv, handler.req.uid);
+    handler.reply.send(.{ .ok = sender });
 }
 
 //

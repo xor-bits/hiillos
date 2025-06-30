@@ -63,6 +63,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 
 //
 
+/// sorry Zig, but error union type sucks
 pub fn Result(comptime Ok: type, comptime Err: type) type {
     return union(enum(u8)) {
         ok: Ok,
@@ -268,53 +269,77 @@ pub const FsProtocol = util.Protocol(struct {
     root: fn () struct { u128 },
 });
 
-pub const PmProtocol = util.Protocol(struct {
-    /// exec an elf file
-    execElf: fn (
-        path: [32:0]u8,
-    ) struct { sys.Error!void, usize },
-});
+pub const PmProtocol = struct {
+    // pub const Error = enum {
+    //     file_not_found,
+    //     internal,
+    // };
 
-// pub const VfsProtocol2 = struct {
-//     pub const NamespaceRequest = struct {};
-//     pub const NamespaceResult = struct {};
-//     pub const Client = util.Client;
-//     pub const Server = util.Server;
-// };
+    pub const Stdio = union(enum) {
+        ring: ring.SharedRing,
+        file: caps.Frame,
+        none: void,
+    };
 
-pub const VfsProtocol = util.Protocol(struct {
-    /// open a new file handle
-    openFile1: fn (
-        path: [32:0]u8,
-        open_opts: u8,
-    ) struct { sys.Error!void, caps.Frame },
+    pub const AllStdio = struct {
+        stdin: Stdio = .{ .none = {} },
+        stdout: Stdio = .{ .none = {} },
+        stderr: Stdio = .{ .none = {} },
+    };
 
-    /// open a new file handle
-    openFile2: fn (
-        path: caps.Frame,
-        path_frame_offs: usize,
-        path_len: usize,
-        open_opts: u8,
-    ) struct { sys.Error!void, caps.Frame },
+    /// exec an elf file and return the PID
+    pub const ExecElfRequest = struct {
+        path: fs.Path,
+        stdio: AllStdio,
 
-    /// open a new file handle
-    openDir1: fn (
-        path: [32:0]u8,
-        open_opts: u8,
-    ) struct { sys.Error!void, caps.Frame, usize },
+        pub const Response = Result(u32, sys.ErrorEnum);
+        pub const Union = Request;
+    };
 
-    /// open a new file handle
-    openDir2: fn (
-        path: caps.Frame,
-        path_frame_offs: usize,
-        path_len: usize,
-        open_opts: u8,
-    ) struct { sys.Error!void, caps.Frame, usize },
+    /// get the process local stdio
+    pub const GetStdioRequest = struct {
+        pub const Response = Result(AllStdio, sys.ErrorEnum);
+        pub const Union = Request;
+    };
 
-    newSender: fn (
+    pub const Request = lpc.Request(&.{
+        ExecElfRequest, GetStdioRequest,
+    });
+};
+
+pub const VfsProtocol = struct {
+    pub const DirEnts = struct {
+        data: caps.Frame,
+        count: usize,
+    };
+
+    pub const OpenFileRequest = struct {
+        path: fs.Path,
+        open_opts: fs.OpenOptions,
+
+        pub const Response = Result(caps.Frame, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const OpenDirRequest = struct {
+        path: fs.Path,
+        open_opts: fs.OpenOptions,
+
+        pub const Response = Result(DirEnts, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const NewSenderRequest = struct {
         uid: u32,
-    ) struct { sys.Error!void, caps.Sender },
-});
+
+        pub const Response = Result(caps.Sender, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        OpenFileRequest, OpenDirRequest, NewSenderRequest,
+    });
+};
 
 // pub const FdProtocol = util.Protocol(struct {
 //     // TODO: pager backed Frames

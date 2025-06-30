@@ -253,6 +253,7 @@ fn createInitfsTarZst(
     abi: *std.Build.Module,
 ) std.Build.LazyPath {
     const initfs_processes = .{
+        "coreutils",
         "hpet",
         "init",
         "pci",

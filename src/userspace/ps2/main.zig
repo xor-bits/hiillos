@@ -319,13 +319,13 @@ pub const Controller = struct {
     /// wait for keyboard interrupts
     pub fn waitKeyboard(self: *@This()) !void {
         log.debug("waiting for keyboard interrupts", .{});
-        _ = try self.primary_irq.wait();
+        _ = self.primary_irq.wait();
     }
 
     /// wait for mouse interrupts
     pub fn waitMouse(self: *@This()) !void {
         log.debug("waiting for mouse interrupts", .{});
-        _ = try self.secondary_irq.wait();
+        _ = self.secondary_irq.wait();
     }
 };
 

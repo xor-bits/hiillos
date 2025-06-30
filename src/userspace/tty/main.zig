@@ -34,12 +34,15 @@ pub export var import_ps2 = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
+pub export var import_pm = abi.loader.Resource.new(.{
+    .name = "hiillos.pm.ipc",
+    .ty = .sender,
+});
+
 //
 
 pub fn main() !void {
     log.info("hello from tty", .{});
-
-    const ps2 = abi.Ps2Protocol.Client().init(.{ .cap = import_ps2.handle });
 
     const vmem = try caps.Vmem.self();
     defer vmem.close();
@@ -79,9 +82,35 @@ pub fn main() !void {
     const stderr = try abi.ring.Ring(u8).new(0x8000);
     defer stderr.deinit();
 
-    _ = try stdin.share();
-    _ = try stdout.share();
-    _ = try stderr.share();
+    @memset(stdin.storage(), 0);
+    @memset(stdout.storage(), 0);
+    @memset(stderr.storage(), 0);
+
+    try abi.thread.spawn(kb_reader, .{stdin});
+
+    _ = try abi.lpc.call(
+        abi.PmProtocol.ExecElfRequest,
+        .{
+            .path = comptime abi.fs.Path.new("initfs:///sbin/coreutils") catch unreachable,
+            .stdio = .{
+                .stdin = .{ .ring = try stdin.share() },
+                .stdout = .{ .ring = try stdout.share() },
+                .stderr = .{ .ring = try stderr.share() },
+            },
+        },
+        .{ .cap = import_pm.handle },
+    );
+
+    var buf: [0x1000]u8 = undefined;
+    while (true) {
+        const recv = try stdout.readWait(&buf);
+        tty1.writeBytes(recv);
+        tty1.flush();
+    }
+}
+
+pub fn kb_reader(stdin: abi.ring.Ring(u8)) !void {
+    const ps2 = abi.Ps2Protocol.Client().init(.{ .cap = import_ps2.handle });
 
     var shift = false;
     while (true) {
@@ -96,8 +125,7 @@ pub fn main() !void {
         if (code == .left_shift or code == .left_shift) shift = !shift;
 
         if (if (shift) code.toCharShift() else code.toChar()) |ch| {
-            tty1.writeByte(ch);
-            tty1.flush();
+            try stdin.push(ch);
         }
     }
 }

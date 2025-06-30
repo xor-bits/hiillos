@@ -50,7 +50,7 @@ pub const CapMutex = struct {
             }
 
             self.sleepers.store(true, .seq_cst);
-            self.notify.wait() catch unreachable; // notify cap shouldnt be invalid
+            self.notify.wait();
             if (self.tryLock()) return;
         }
     }
@@ -61,7 +61,7 @@ pub const CapMutex = struct {
 
     pub fn unlock(self: *Self) void {
         self.inner.unlock();
-        _ = self.notify.notify() catch unreachable;
+        _ = self.notify.notify();
     }
 };
 

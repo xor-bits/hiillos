@@ -84,7 +84,7 @@ pub fn init() !void {
 }
 
 pub fn wait() !void {
-    try initfs_ready.wait();
+    initfs_ready.wait();
 }
 
 pub fn getReceiver() !caps.Receiver {
@@ -120,7 +120,7 @@ fn run() !void {
     log.info("decompressing", .{});
     try decompress();
 
-    _ = try initfs_ready.notify();
+    _ = initfs_ready.notify();
 
     log.info("initfs ready", .{});
     var server = abi.FsProtocol.Server(.{

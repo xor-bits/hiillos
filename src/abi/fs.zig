@@ -145,3 +145,81 @@ pub fn withPath2(
 
     return f(ctx, std.mem.sliceTo(path_ptr[0..path_len], 0));
 }
+
+pub const Path = union(enum(u8)) {
+    short: [32:0]u8,
+    long: struct {
+        frame: caps.Frame,
+        offs: usize,
+        len: usize,
+    },
+
+    pub fn new(s: []const u8) sys.Error!Path {
+        if (s.len <= 32) {
+            var short: [32:0]u8 = [1:0]u8{0} ** 32;
+            std.mem.copyForwards(u8, &short, s);
+            return .{ .short = short };
+        } else {
+            const frame = try caps.Frame.create(s.len);
+            try frame.write(0, s);
+            return .{ .frame = frame, .offs = 0, .len = s.len };
+        }
+    }
+
+    pub fn deinit(self: @This()) void {
+        switch (self) {
+            .long => |v| v.frame.deinit(),
+            else => {},
+        }
+    }
+
+    pub fn len(self: @This()) usize {
+        switch (self) {
+            .short => |v| return v.len,
+            .long => |v| return v.len,
+        }
+    }
+
+    pub fn getCopy(self: @This(), buf: []u8) sys.Error!void {
+        switch (self) {
+            .short => |v| std.mem.copyForwards(u8, buf, &v),
+            .long => |v| try v.frame.read(v.offs, buf[0..v.len]),
+        }
+    }
+
+    pub fn getMap(self: *const @This()) sys.Error!AccessiblePath {
+        switch (self.*) {
+            .short => |*v| return .{ .p = std.mem.sliceTo(v, 0) },
+            .long => |v| {
+                const vmem = try caps.Vmem.self();
+                const addr = try vmem.map(
+                    v.frame, // FIXME: make the v.frame copy-on-write
+                    v.offs,
+                    0,
+                    v.len,
+                    .{},
+                    .{},
+                );
+
+                v.frame.close();
+
+                return .{
+                    .p = @as([*]const u8, @ptrFromInt(addr))[0..v.len],
+                    .vmem = vmem,
+                };
+            },
+        }
+    }
+};
+
+pub const AccessiblePath = struct {
+    p: []const u8,
+    vmem: ?caps.Vmem = null,
+
+    pub fn deinit(self: @This()) void {
+        const vmem = self.vmem orelse return;
+
+        vmem.unmap(@intFromPtr(self.p.ptr), self.p.len) catch
+            unreachable;
+    }
+};

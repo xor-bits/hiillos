@@ -12,8 +12,8 @@ const volat = util.volat;
 
 pub fn CachePadded(comptime T: type) type {
     return extern struct {
-        val: T,
-        _pad: [std.atomic.cache_line - @sizeOf(T) % std.atomic.cache_line]u8 = undefined,
+        val: T align(std.atomic.cache_line),
+        _: void align(std.atomic.cache_line) = {},
     };
 }
 
@@ -22,7 +22,16 @@ pub const Error = error{
     Full,
 };
 
-pub const SharedRing = struct { caps.Frame, usize };
+pub const SharedRing = struct {
+    notify: caps.Notify,
+    frame: caps.Frame,
+    capacity: usize,
+
+    pub fn deinit(self: @This()) void {
+        self.notify.close();
+        self.frame.close();
+    }
+};
 
 /// single reader and single writer fixed size ring buffer
 ///
@@ -31,6 +40,7 @@ pub const SharedRing = struct { caps.Frame, usize };
 /// reading and writing at the same time is allowed
 pub fn Ring(comptime T: type) type {
     return struct {
+        notify: caps.Notify,
         frame: caps.Frame,
         self_vmem: caps.Vmem,
         capacity: usize,
@@ -43,20 +53,27 @@ pub fn Ring(comptime T: type) type {
             const frame = try caps.Frame.create(size_bytes);
             errdefer frame.close();
 
-            return try fromShared(frame, size_bytes, capacity);
+            const notify = try caps.Notify.create();
+            errdefer notify.close();
+
+            return try fromShared(.{
+                .notify = notify,
+                .frame = frame,
+                .capacity = capacity,
+            }, size_bytes);
         }
 
-        pub fn fromShared(frame: caps.Frame, frame_size: ?usize, capacity: usize) !Self {
-            const size_bytes = frame_size orelse try frame.getSize();
+        pub fn fromShared(shared: SharedRing, frame_size: ?usize) !Self {
+            const size_bytes = frame_size orelse try shared.frame.getSize();
 
-            if (size_bytes < sizeOf(capacity))
+            if (size_bytes < sizeOf(shared.capacity))
                 return Error.InvalidState;
 
             const self_vmem = try caps.Vmem.self();
             errdefer self_vmem.close();
 
             const addr = try self_vmem.map(
-                frame,
+                shared.frame,
                 0,
                 0,
                 size_bytes,
@@ -65,15 +82,20 @@ pub fn Ring(comptime T: type) type {
             );
 
             return .{
-                .frame = frame,
+                .notify = shared.notify,
+                .frame = shared.frame,
                 .self_vmem = self_vmem,
-                .capacity = capacity,
+                .capacity = shared.capacity,
                 .mapped_data = @as([*]volatile u8, @ptrFromInt(addr))[0..size_bytes],
             };
         }
 
         pub fn share(self: Self) !SharedRing {
-            return .{ try self.frame.clone(), self.capacity };
+            return .{
+                .notify = try self.notify.clone(),
+                .frame = try self.frame.clone(),
+                .capacity = self.capacity,
+            };
         }
 
         pub fn deinit(self: Self) void {
@@ -102,39 +124,56 @@ pub fn Ring(comptime T: type) type {
         //     return storage_bytes / @sizeOf(T);
         // }
 
-        pub fn marker(self: *Self) *Marker {
-            return @ptrCast(self.mapped_data.ptr);
+        pub fn marker(self: *const Self) *Marker {
+            return @volatileCast(@alignCast(@ptrCast(self.mapped_data.ptr)));
         }
 
-        pub fn storage(self: *Self) []volatile T {
-            return @as([*]volatile T, @ptrCast(std.mem.alignForward(
+        pub fn storage(self: *const Self) []volatile T {
+            return @as([*]volatile T, @ptrFromInt(std.mem.alignForward(
                 usize,
                 @intFromPtr(self.mapped_data.ptr) + @sizeOf(Marker),
                 @alignOf(T),
             )))[0..self.capacity];
         }
 
-        pub fn canWrite(self: *Self, n: usize) Error!bool {
+        pub fn canWrite(self: *const Self, n: usize) Error!bool {
             return try self.marker().acquire(n, self.capacity) != null;
         }
 
-        pub fn canRead(self: *Self, n: usize) Error!bool {
+        pub fn canRead(self: *const Self, n: usize) Error!bool {
             return try self.marker().consume(n, self.capacity) != null;
         }
 
-        pub fn push(self: *Self, v: T) Error!void {
+        pub fn push(self: *const Self, v: T) Error!void {
             const m = self.marker();
             const s = self.storage();
 
-            const slot = m.acquire(1) orelse
+            const slot = try m.acquire(1, self.capacity) orelse
                 return error.Full;
 
             volat(&s[slot.first]).* = v;
 
-            m.produce(slot);
+            try m.produce(slot, self.capacity, self.notify);
         }
 
-        pub fn pop(self: *Self) ?T {
+        pub fn pushWait(self: *const Self, v: T) Error!void {
+            var res = self.push(v);
+            if (res != Error.Full) return res;
+
+            const m = self.marker();
+
+            defer m.write_waiter.val.store(false, .seq_cst);
+            while (true) {
+                m.write_waiter.val.store(true, .seq_cst);
+
+                res = self.push(v);
+                if (res != Error.Full) return res;
+
+                self.notify.wait();
+            }
+        }
+
+        pub fn pop(self: *const Self) Error!?T {
             const m = self.marker();
             const s = self.storage();
 
@@ -144,35 +183,86 @@ pub fn Ring(comptime T: type) type {
             const val = volat(&s[slot.first]).*;
             volat(&s[slot.first]).* = undefined; // debug
 
-            m.release(slot, self.capacity);
+            try m.release(slot, self.capacity, self.notify);
             return val;
         }
 
-        pub fn write(self: *Self, v: []const T) Error!void {
+        pub fn popWait(self: *const Self) Error!T {
+            if (try self.pop()) |result| return result;
+
             const m = self.marker();
-            const s = self.storage();
 
-            const slot = try m.acquire(v.len, self.capacity) orelse return error.Full;
-            const slices = slot.slices(T, s[0..]);
+            defer m.read_waiter.val.store(false, .seq_cst);
+            while (true) {
+                m.read_waiter.val.store(true, .seq_cst);
 
-            util.copyForwardsVolatile(T, slices[0], v[0..slices[0].len]);
-            util.copyForwardsVolatile(T, slices[1], v[slices[0].len..]);
+                if (try self.pop()) |result| return result;
 
-            m.produce(slot, self.capacity);
+                self.notify.wait();
+            }
         }
 
-        pub fn read(self: *Self, buf: []T) ?[]T {
+        pub fn write(self: *const Self, buf: []const T) Error!void {
             const m = self.marker();
             const s = self.storage();
 
-            const slot = try m.consume(buf.len) orelse return null;
+            const slot = try m.acquire(buf.len, self.capacity) orelse
+                return error.Full;
             const slices = slot.slices(T, s[0..]);
 
-            util.copyForwardsVolatile(T, buf[0..slices[0].len], slices[0]);
-            util.copyForwardsVolatile(T, buf[slices[0].len..], slices[1]);
+            @memcpy(slices[0], buf[0..slices[0].len]);
+            @memcpy(slices[1], buf[slices[0].len..][0..slices[1].len]);
 
-            m.release(slot, self.capacity);
+            try m.produce(slot, self.capacity, self.notify);
+        }
+
+        pub fn writeWait(self: *const Self, buf: []const T) Error!void {
+            var res = self.write(buf);
+            if (res != Error.Full) return res;
+
+            const m = self.marker();
+
+            defer m.write_waiter.val.store(false, .seq_cst);
+            while (true) {
+                m.write_waiter.val.store(true, .seq_cst);
+
+                res = self.write(buf);
+                if (res != Error.Full) return res;
+
+                self.notify.wait();
+            }
+        }
+
+        pub fn read(self: *const Self, buf: []T) Error![]T {
+            const m = self.marker();
+            const s = self.storage();
+
+            const slot = try m.consumeUpTo(buf.len, self.capacity) orelse
+                return &.{};
+            const slices = slot.slices(T, s[0..]);
+
+            @memcpy(buf[0..slices[0].len], slices[0]);
+            @memcpy(buf[slices[0].len..][0..slices[1].len], slices[1]);
+
+            try m.release(slot, self.capacity, self.notify);
             return buf[0..slot.len];
+        }
+
+        pub fn readWait(self: *const Self, buf: []T) Error![]T {
+            var result = try self.read(buf);
+            if (result.len != 0) return result;
+
+            const m = self.marker();
+
+            defer m.read_waiter.val.store(false, .seq_cst);
+            while (true) {
+                m.read_waiter.val.store(true, .seq_cst);
+
+                result = try self.read(buf);
+                if (result.len != 0) return result;
+
+                self.notify.wait();
+            }
         }
     };
 }
@@ -192,7 +282,7 @@ pub const Slot = struct {
         return Self{ .first = self.first, .len = @min(n, self.len) };
     }
 
-    pub fn slices(self: Self, comptime T: type, storage: []T) [2][]T {
+    pub fn slices(self: Self, comptime T: type, storage: []volatile T) [2][]volatile T {
         std.debug.assert(self.len <= storage.len);
 
         if (self.first + self.len <= storage.len) {
@@ -207,6 +297,8 @@ pub const Slot = struct {
 pub const Marker = extern struct {
     read_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },
     write_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },
+    read_waiter: CachePadded(std.atomic.Value(bool)) = .{ .val = .{ .raw = false } },
+    write_waiter: CachePadded(std.atomic.Value(bool)) = .{ .val = .{ .raw = false } },
 
     const Self = @This();
 
@@ -263,11 +355,15 @@ pub const Marker = extern struct {
         return (try self.uninitSlot(capacity)).min(n);
     }
 
-    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize) Error!void {
+    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize, notify: caps.Notify) Error!void {
         const new_write_end = (acquired_slot.first + acquired_slot.len) % capacity;
         const old = self.write_end.val.swap(new_write_end, .release);
         if (old != acquired_slot.first)
             return Error.InvalidState;
+
+        if (self.read_waiter.val.swap(false, .release)) {
+            _ = notify.notify();
+        }
     }
 
     pub fn consume(self: *Self, n: usize, capacity: usize) Error!?Slot {
@@ -279,10 +375,14 @@ pub const Marker = extern struct {
         return (try self.initSlot(capacity)).min(n);
     }
 
-    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize) Error!void {
+    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize, notify: caps.Notify) Error!void {
         const new_read_end = (consumed_slot.first + consumed_slot.len) % capacity;
         const old = self.read_end.val.swap(new_read_end, .release);
         if (old != consumed_slot.first)
             return Error.InvalidState;
+
+        if (self.write_waiter.val.swap(false, .release)) {
+            _ = notify.notify();
+        }
     }
 };
