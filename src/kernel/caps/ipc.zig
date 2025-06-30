@@ -26,7 +26,7 @@ pub const Receiver = struct {
 
     /// a linked list of waiting callers
     queue_lock: spin.Mutex = .newLocked(),
-    queue: util.Queue(caps.Thread, "next", "prev") = .{},
+    queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -301,7 +301,7 @@ pub const Notify = struct {
 
     // waiter queue
     queue_lock: spin.Mutex = .newLocked(),
-    queue: util.Queue(caps.Thread, "next", "prev") = .{},
+    queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)

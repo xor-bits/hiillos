@@ -22,7 +22,7 @@ var queues: [4]Queue = .{Queue{}} ** 4;
 var queue_locks: [4]spin.Mutex = .{spin.Mutex{}} ** 4;
 var waiters: [256]Waiter = .{Waiter.init(null)} ** 256;
 
-const Queue = util.Queue(caps.Thread, "next", "prev");
+const Queue = abi.util.Queue(caps.Thread, "next", "prev");
 const Waiter = std.atomic.Value(?*main.CpuLocalStorage);
 
 //

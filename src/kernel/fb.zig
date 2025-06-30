@@ -1,5 +1,4 @@
 const abi = @import("abi");
-const font = @import("font");
 const limine = @import("limine");
 const std = @import("std");
 
@@ -11,7 +10,8 @@ const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
 const util = @import("util.zig");
 
-const volat = util.volat;
+const font = abi.font;
+const volat = abi.util.volat;
 
 //
 
@@ -103,7 +103,7 @@ pub fn clear() void {
 
 var cursor_x: u32 = 0;
 var cursor_y: u32 = 0;
-var fb: util.Image([*]volatile u8) = undefined;
+var fb: abi.util.Image([*]volatile u8) = undefined;
 var terminal_buf: []u8 = &.{};
 var terminal_buf_prev: []u8 = &.{};
 var terminal_size: struct { w: u32, h: u32 } = undefined;
@@ -121,7 +121,7 @@ fn init_fb() void {
     }
 
     const fb_raw = framebuffer_response.framebuffers()[0];
-    fb = util.Image([*]volatile u8){
+    fb = abi.util.Image([*]volatile u8){
         .width = @intCast(fb_raw.width),
         .height = @intCast(fb_raw.height),
         .pitch = @intCast(fb_raw.pitch),

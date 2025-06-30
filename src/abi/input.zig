@@ -328,4 +328,168 @@ pub const KeyCode = enum(u8) {
             else => null,
         };
     }
+
+    pub fn toChar(self: @This()) ?u8 {
+        return switch (self) {
+            .oem8 => '`',
+            .key1 => '1',
+            .key2 => '2',
+            .key3 => '3',
+            .key4 => '4',
+            .key5 => '5',
+            .key6 => '6',
+            .key7 => '7',
+            .key8 => '8',
+            .key9 => '9',
+            .key0 => '0',
+            .oem_minus => '-',
+            .oem_plus => '=',
+
+            .numpad_div => '/',
+            .numpad_mul => '*',
+            .numpad_sub => '-',
+
+            .q => 'q',
+            .w => 'w',
+            .e => 'e',
+            .r => 'r',
+            .t => 't',
+            .y => 'y',
+            .u => 'u',
+            .i => 'i',
+            .o => 'o',
+            .p => 'p',
+            .oem4 => '[',
+            .oem6 => ']',
+            .oem5 => '\\',
+            .oem7 => '#',
+
+            .numpad7 => '7',
+            .numpad8 => '8',
+            .numpad9 => '9',
+            .numpad_add => '+',
+
+            .a => 'a',
+            .s => 's',
+            .d => 'd',
+            .f => 'f',
+            .g => 'g',
+            .h => 'h',
+            .j => 'j',
+            .k => 'k',
+            .l => 'l',
+            .oem1 => ';',
+            .oem3 => '\'',
+            .enter => '\n',
+
+            .numpad4 => '4',
+            .numpad5 => '5',
+            .numpad6 => '6',
+
+            .z => 'z',
+            .x => 'x',
+            .c => 'c',
+            .v => 'v',
+            .b => 'b',
+            .n => 'n',
+            .m => 'm',
+            .oem_comma => ',',
+            .oem_period => '.',
+            .oem2 => '/',
+
+            .numpad1 => '1',
+            .numpad2 => '2',
+            .numpad3 => '3',
+            .numpad_enter => '\n',
+
+            .space => ' ',
+
+            .numpad0 => '0',
+            .numpad_period => '.',
+
+            else => null,
+        };
+    }
+
+    pub fn toCharShift(self: @This()) ?u8 {
+        return switch (self) {
+            .oem8 => '~',
+            .key1 => '!',
+            .key2 => '@',
+            .key3 => '#',
+            .key4 => '$',
+            .key5 => '%',
+            .key6 => '^',
+            .key7 => '&',
+            .key8 => '*',
+            .key9 => '(',
+            .key0 => ')',
+            .oem_minus => '_',
+            .oem_plus => '+',
+
+            .numpad_div => '/',
+            .numpad_mul => '*',
+            .numpad_sub => '-',
+
+            .q => 'Q',
+            .w => 'W',
+            .e => 'E',
+            .r => 'R',
+            .t => 'T',
+            .y => 'Y',
+            .u => 'U',
+            .i => 'I',
+            .o => 'O',
+            .p => 'P',
+            .oem4 => '{',
+            .oem6 => '}',
+            .oem5 => '|',
+            .oem7 => '~',
+
+            .numpad7 => '7',
+            .numpad8 => '8',
+            .numpad9 => '9',
+            .numpad_add => '+',
+
+            .a => 'A',
+            .s => 'S',
+            .d => 'D',
+            .f => 'F',
+            .g => 'G',
+            .h => 'H',
+            .j => 'J',
+            .k => 'K',
+            .l => 'L',
+            .oem1 => ':',
+            .oem3 => '\"',
+            .enter => '\n',
+
+            .numpad4 => '4',
+            .numpad5 => '5',
+            .numpad6 => '6',
+
+            .z => 'Z',
+            .x => 'X',
+            .c => 'C',
+            .v => 'V',
+            .b => 'B',
+            .n => 'N',
+            .m => 'M',
+            .oem_comma => '<',
+            .oem_period => '>',
+            .oem2 => '?',
+
+            .numpad1 => '1',
+            .numpad2 => '2',
+            .numpad3 => '3',
+            .numpad_enter => '\n',
+
+            .space => ' ',
+
+            .numpad0 => '0',
+            .numpad_period => '.',
+
+            else => null,
+        };
+    }
 };

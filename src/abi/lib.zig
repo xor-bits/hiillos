@@ -6,6 +6,7 @@ pub const btree = @import("btree.zig");
 pub const caps = @import("caps.zig");
 pub const conf = @import("conf.zig");
 pub const epoch = @import("epoch.zig");
+pub const font = @import("font");
 pub const fs = @import("fs.zig");
 pub const input = @import("input.zig");
 pub const loader = @import("loader.zig");

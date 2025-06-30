@@ -66,16 +66,16 @@ pub fn printInfo() void {
     }
 
     log.info("usable memory: {0any}B ({0any:.1024}B)", .{
-        util.NumberPrefix(usize, .binary).new(usable_memory),
+        abi.util.NumberPrefix(usize, .binary).new(usable_memory),
     });
     log.info("bootloader (reclaimable) overhead: {any}B", .{
-        util.NumberPrefix(usize, .binary).new(reclaimable),
+        abi.util.NumberPrefix(usize, .binary).new(reclaimable),
     });
     log.info("page allocator overhead: {any}B", .{
-        util.NumberPrefix(usize, .binary).new(overhead),
+        abi.util.NumberPrefix(usize, .binary).new(overhead),
     });
     log.info("kernel code overhead: {any}B", .{
-        util.NumberPrefix(usize, .binary).new(kernel_usage),
+        abi.util.NumberPrefix(usize, .binary).new(kernel_usage),
     });
 }
 
@@ -323,7 +323,7 @@ pub fn init() !void {
         };
     }
 
-    util.volat(&initialized).* = if (conf.IS_DEBUG) true else {};
+    abi.util.volat(&initialized).* = if (conf.IS_DEBUG) true else {};
 
     log.info("freeing usable memory", .{});
     for (memory_response.entries()) |memory_map_entry| {
@@ -355,7 +355,7 @@ pub fn init() !void {
         }
     }
 
-    util.volat(&pmem_ready).* = true;
+    abi.util.volat(&pmem_ready).* = true;
 
     printInfo();
 }

@@ -42,18 +42,6 @@ pub export var import_pci = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
-// temporary:
-pub export var import_fb = abi.loader.Resource.new(.{
-    .name = "hiillos.root.fb",
-    .ty = .frame,
-});
-
-// temporary:
-pub export var import_fb_info = abi.loader.Resource.new(.{
-    .name = "hiillos.root.fb_info",
-    .ty = .frame,
-});
-
 //
 
 pub fn main() !void {
@@ -193,9 +181,6 @@ pub const System = struct {
         try res;
         id = try proc.giveHandle(vfs_ipc);
         std.debug.assert(id == 4);
-
-        _ = try proc.giveHandle(try (caps.Frame{ .cap = import_fb.handle }).clone());
-        _ = try proc.giveHandle(try (caps.Frame{ .cap = import_fb_info.handle }).clone());
 
         try thread.start();
 

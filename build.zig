@@ -253,12 +253,13 @@ fn createInitfsTarZst(
     abi: *std.Build.Module,
 ) std.Build.LazyPath {
     const initfs_processes = .{
-        "pm",
-        "vfs",
         "hpet",
-        "ps2",
-        "pci",
         "init",
+        "pci",
+        "pm",
+        "ps2",
+        "tty",
+        "vfs",
     };
 
     // create virtual initfs.tar.zst root
@@ -375,7 +376,6 @@ fn createKernelElf(
     });
     kernel_module.addImport("limine", b.dependency("limine", .{}).module("limine"));
     kernel_module.addImport("abi", abi);
-    kernel_module.addImport("font", createFont(b));
     kernel_module.addImport("git-rev", git_rev_mod);
     kernel_module.addImport("sources", try generateSourcesZig(b, opts));
 
@@ -460,6 +460,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
         .optimize = opts.optimize,
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
+    mod.addImport("font", createFont(b));
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),

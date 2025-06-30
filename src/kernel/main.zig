@@ -15,7 +15,6 @@ const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
 const spin = @import("spin.zig");
-const util = @import("util.zig");
 
 //
 
@@ -23,6 +22,7 @@ const conf = abi.conf;
 pub const std_options = logs.std_options;
 pub const panic = logs.panic;
 const Error = abi.sys.Error;
+const volat = abi.util.volat;
 
 //
 
@@ -55,7 +55,7 @@ pub const CpuLocalStorage = struct {
 
     epoch_locals: abi.epoch.Locals = .{},
 
-    tlb_shootdown_queue: util.Queue(caps.TlbShootdown, "next", "prev") = .{},
+    tlb_shootdown_queue: abi.util.Queue(caps.TlbShootdown, "next", "prev") = .{},
     tlb_shootdown_queue_lock: spin.Mutex = .{},
     initialized: std.atomic.Value(bool),
 
@@ -96,7 +96,7 @@ pub fn main() noreturn {
         std.debug.panic("failed to initialize PMM: {}", .{err});
     };
 
-    util.volat(&all_cpu_locals).* = pmem.page_allocator.alloc(CpuLocalStorage, arch.cpuCount()) catch |err| {
+    volat(&all_cpu_locals).* = pmem.page_allocator.alloc(CpuLocalStorage, arch.cpuCount()) catch |err| {
         std.debug.panic("failed to CPU locals: {}", .{err});
     };
     for (all_cpu_locals) |*locals| locals.initialized.store(false, .release);
@@ -621,7 +621,7 @@ fn handle_syscall(
                     const limit = @min(len, chunk.len);
                     len -= limit;
 
-                    log.info("{}", .{util.hex(@volatileCast(chunk[0..limit]))});
+                    log.info("{}", .{abi.util.hex(@volatileCast(chunk[0..limit]))});
                     if (len == 0) break;
                 }
             }

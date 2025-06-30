@@ -13,7 +13,7 @@ const util = @import("../util.zig");
 const conf = abi.conf;
 const log = std.log.scoped(.ioport);
 const Error = abi.sys.Error;
-const volat = util.volat;
+const volat = abi.util.volat;
 
 //
 
