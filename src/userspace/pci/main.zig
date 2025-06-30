@@ -5,8 +5,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
 pub const log_level = .info;
 
 const log = std.log.scoped(.pci);
@@ -275,7 +273,3 @@ pub const PcieDevice = extern struct {
         };
     }
 };
-
-comptime {
-    abi.rt.installRuntime();
-}

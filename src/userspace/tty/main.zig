@@ -5,9 +5,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
-
 const log = std.log.scoped(.tty);
 const Error = abi.sys.Error;
 
@@ -244,7 +241,3 @@ pub const Tty = struct {
         }
     }
 };
-
-comptime {
-    abi.rt.installRuntime();
-}

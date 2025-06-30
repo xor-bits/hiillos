@@ -5,9 +5,6 @@ const spinner = @import("spinner.zig");
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
-
 const caps = abi.caps;
 const log = std.log.scoped(.init);
 
@@ -56,8 +53,4 @@ fn notifyWaitStressTest(notify: caps.Notify) !void {
 fn notifyPollStressTest(notify: caps.Notify) !void {
     defer notify.close();
     while (true) _ = try notify.poll();
-}
-
-comptime {
-    abi.rt.installRuntime();
 }

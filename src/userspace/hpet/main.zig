@@ -5,9 +5,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
-
 const log = std.log.scoped(.hpet);
 const Error = abi.sys.Error;
 
@@ -378,7 +375,3 @@ const TimerNConfigAndCaps = packed struct {
     reserved2: u16 = 0,
     int_route_cap: u32,
 };
-
-comptime {
-    abi.rt.installRuntime();
-}

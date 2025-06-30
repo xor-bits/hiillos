@@ -269,19 +269,36 @@ fn createInitfsTarZst(
         const source = std.fmt.comptimePrint("src/userspace/{s}/main.zig", .{name});
         const path = std.fmt.comptimePrint("sbin/{s}", .{name});
 
-        const compile = b.addExecutable(.{
-            .name = name,
+        const proc = b.addModule(name, .{
             .root_source_file = b.path(source),
+            .target = opts.target,
+            .optimize = opts.optimize,
+        });
+        proc.addImport("abi", abi);
+
+        const wf = b.addWriteFiles();
+        const userspace_entry_wrapper_zig = wf.add("userspace_entry_wrapper.zig",
+            \\pub usingnamespace @import("proc");
+            \\comptime { @import("abi").rt.installRuntime(); }
+            \\pub const std_options = @import("abi").std_options;
+            \\pub const panic = @import("abi").panic;
+        );
+
+        const userspace_entry_wrapper = b.addExecutable(.{
+            .name = name,
+            .root_source_file = userspace_entry_wrapper_zig,
             .target = opts.target,
             // FIXME: manifest/imports/exports rely on symtab
             .optimize = opts.optimize,
             .pic = true,
             .strip = false,
         });
-        compile.root_module.addImport("abi", abi);
-        b.installArtifact(compile);
+        userspace_entry_wrapper.root_module.addImport("abi", abi);
+        userspace_entry_wrapper.root_module.addImport("proc", proc);
 
-        _ = initfs.addCopyFile(compile.getEmittedBin(), path);
+        b.installArtifact(userspace_entry_wrapper);
+
+        _ = initfs.addCopyFile(userspace_entry_wrapper.getEmittedBin(), path);
     }
 
     const initfs_tar_zst = b.addSystemCommand(&.{

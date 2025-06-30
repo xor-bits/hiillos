@@ -5,9 +5,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
-
 const log = std.log.scoped(.vfs);
 const Error = abi.sys.Error;
 
@@ -716,9 +713,3 @@ var file_node_allocator: std.heap.MemoryPool(FileNode) = std.heap.MemoryPool(Fil
 var file_node_allocator_lock: abi.lock.YieldMutex = .{};
 var dir_node_allocator: std.heap.MemoryPool(DirNode) = std.heap.MemoryPool(DirNode).init(abi.mem.server_page_allocator);
 var dir_node_allocator_lock: abi.lock.YieldMutex = .{};
-
-//
-
-comptime {
-    abi.rt.installRuntime();
-}

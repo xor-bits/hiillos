@@ -293,11 +293,14 @@ fn loadAllServers(
     servers: *std.ArrayList(Server),
 ) !void {
     for (servers.items) |*server| {
+        const server_manifest = try server.bin.manifest() orelse continue;
+
         server.vmem = try caps.Vmem.create();
         server.proc = try caps.Process.create(server.vmem);
         server.thread = try caps.Thread.create(server.proc);
 
         const entry = try server.bin.loadInto(caps.ROOT_SELF_VMEM, server.vmem);
+        log.debug("{s}'s entrypoint = 0x{x}'", .{ server_manifest.getName(), entry });
         try abi.loader.prepareSpawn(server.vmem, server.thread, entry);
     }
 }

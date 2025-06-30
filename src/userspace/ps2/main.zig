@@ -8,8 +8,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
 pub const log_level = .info;
 
 const log = std.log.scoped(.ps2);
@@ -341,7 +339,3 @@ const ControllerConfig = packed struct {
     keyboard_translation: enum(u1) { disable, enable },
     zero1: u1 = 0,
 };
-
-comptime {
-    abi.rt.installRuntime();
-}

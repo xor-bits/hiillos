@@ -13,14 +13,14 @@ pub var vm_ipc: caps.Sender = .{ .cap = 0 };
 pub var vmem_handle: usize = 0;
 
 pub fn installRuntime() void {
-    if (builtin.is_test) return;
+    // if (builtin.is_test) return;
 
-    @export(&_start, .{
-        .name = "_start",
-    });
+    // @export(&_start, .{
+    //     .name = "_start",
+    // });
 }
 
-fn _start() callconv(.SysV) noreturn {
+pub export fn _start() callconv(.SysV) noreturn {
     thread.callFn(root.main, .{});
     sys.selfStop();
 }

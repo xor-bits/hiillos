@@ -5,9 +5,6 @@ const caps = abi.caps;
 
 //
 
-pub const std_options = abi.std_options;
-pub const panic = abi.panic;
-
 const log = std.log.scoped(.pm);
 const Error = abi.sys.Error;
 
@@ -323,8 +320,4 @@ fn newSenderHandler(ctx: *System, sender: u32, _: void) struct { Error!void, cap
     };
 
     return .{ {}, pm_sender };
-}
-
-comptime {
-    abi.rt.installRuntime();
 }
