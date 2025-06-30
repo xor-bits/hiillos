@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const abi = @import("lib.zig");
 const ring = @import("ring.zig");
@@ -263,8 +264,45 @@ pub const Error = error{
     UnknownError,
 };
 
+pub const ErrorEnum = enum(u8) {
+    unimplemented,
+    invalid_address,
+    invalid_flags,
+    invalid_type,
+    invalid_argument,
+    invalid_capability,
+    invalid_syscall,
+    out_of_memory,
+    out_of_virtual_memory,
+    entry_not_present,
+    entry_is_huge,
+    not_stopped,
+    is_stopped,
+    no_vmem,
+    thread_safety,
+    already_mapped,
+    not_mapped,
+    mapping_overlap,
+    permission_denied,
+    internal,
+    no_reply_target,
+    notify_already_subscribed,
+    irq_already_subscribed,
+    too_many_irqs,
+    out_of_bounds,
+    not_found,
+    read_fault,
+    write_fault,
+    exec_fault,
+    null_handle,
+    bad_handle,
+    retry,
+    _,
+};
+
 pub fn errorToInt(err: Error) u32 {
-    std.debug.assert(err != Error.UnknownError);
+    if (!builtin.is_test)
+        std.debug.assert(err != Error.UnknownError);
     const errors = @typeInfo(Error).error_set.?;
 
     switch (err) {
@@ -291,6 +329,10 @@ pub fn intToError(i: usize) Error {
             return @field(Error, errors[j].name);
         },
     }
+}
+
+pub fn Result(comptime Ok: type) type {
+    return abi.Result(Ok, ErrorEnum);
 }
 
 /// FIXME: should be Error!u32
@@ -758,6 +800,7 @@ pub fn handleDuplicate(cap: u32) Error!u32 {
 }
 
 pub fn handleClose(cap: u32) void {
+    if (builtin.is_test) return;
     _ = syscall(.handle_close, .{cap}, .{}) catch unreachable;
 }
 
@@ -775,13 +818,28 @@ pub fn selfDump() void {
     _ = syscall(.selfDump, .{}, .{}) catch unreachable;
 }
 
+pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };
+
+var mock_extra_regs: [128]ExtraReg = [1]ExtraReg{.{}} ** 128;
+
 pub fn selfSetExtra(idx: u7, val: u64, is_cap: bool) Error!void {
+    if (builtin.is_test) {
+        mock_extra_regs[idx] = .{ .val = val, .is_cap = is_cap };
+        return;
+    }
+
     _ = try syscall(.self_set_extra, .{
         idx, val, @intFromBool(is_cap),
     }, .{});
 }
 
-pub fn selfGetExtra(idx: u7) Error!struct { val: u64, is_cap: bool } {
+pub fn selfGetExtra(idx: u7) Error!ExtraReg {
+    if (builtin.is_test) {
+        const res = mock_extra_regs[idx];
+        mock_extra_regs[idx] = .{};
+        return res;
+    }
+
     var val: u64 = undefined;
     const is_cap = try syscall(.self_get_extra, .{
         idx,

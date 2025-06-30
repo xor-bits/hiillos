@@ -22,6 +22,8 @@ pub const Error = error{
     Full,
 };
 
+pub const SharedRing = struct { caps.Frame, usize };
+
 /// single reader and single writer fixed size ring buffer
 ///
 /// multiple concurrent readers or multiple concurrent writers cause data corruption within the Frame
@@ -70,7 +72,7 @@ pub fn Ring(comptime T: type) type {
             };
         }
 
-        pub fn share(self: Self) !struct { caps.Frame, usize } {
+        pub fn share(self: Self) !SharedRing {
             return .{ try self.frame.clone(), self.capacity };
         }
 

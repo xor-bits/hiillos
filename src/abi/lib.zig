@@ -63,6 +63,48 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 
 //
 
+pub fn Result(comptime Ok: type, comptime Err: type) type {
+    return union(enum(u8)) {
+        ok: Ok,
+        err: Err,
+
+        pub fn tryOk(self: @This()) ?Ok {
+            switch (self) {
+                .ok => |v| return v,
+                else => return null,
+            }
+        }
+
+        pub fn tryErr(self: @This()) ?Err {
+            switch (self) {
+                .err => |v| return v,
+                else => return null,
+            }
+        }
+
+        pub fn fromErrorUnion(v: sys.Error!Ok) @This() {
+            comptime std.debug.assert(Err == sys.ErrorEnum);
+
+            if (v) |ok| {
+                return .{ .ok = ok };
+            } else |err| {
+                return .{ .err = @enumFromInt(sys.errorToInt(err)) };
+            }
+        }
+
+        pub fn asErrorUnion(self: @This()) sys.Error!Ok {
+            comptime std.debug.assert(Err == sys.ErrorEnum);
+
+            switch (self) {
+                .ok => |v| return v,
+                .err => |v| return sys.intToError(@intFromEnum(v)),
+            }
+        }
+    };
+}
+
+//
+
 /// kernel object variant that a capability points to
 pub const ObjectType = enum(u8) {
     /// an unallocated/invalid capability
