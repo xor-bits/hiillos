@@ -471,13 +471,15 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     const syscall_zig = syscall_generator_tool_run.addOutputFileArg("syscall.zig");
     syscall_generator_tool_run.has_side_effects = false;
 
+    const font = createFont(b);
+
     const mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),
         .target = opts.target,
         .optimize = opts.optimize,
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
-    mod.addImport("font", createFont(b));
+    mod.addImport("font", font);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),
@@ -485,6 +487,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
         .optimize = opts.optimize,
     });
     test_mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
+    test_mod.addImport("font", font);
 
     const tests = b.addTest(.{
         .name = "abi-unit-test",
