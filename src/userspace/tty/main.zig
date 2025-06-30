@@ -72,6 +72,17 @@ pub fn main() !void {
     tty1.writeBytes("hello from tty1");
     tty1.flush();
 
+    const stdin = try abi.ring.Ring(u8).new(0x8000);
+    defer stdin.deinit();
+    const stdout = try abi.ring.Ring(u8).new(0x8000);
+    defer stdout.deinit();
+    const stderr = try abi.ring.Ring(u8).new(0x8000);
+    defer stderr.deinit();
+
+    _ = try stdin.share();
+    _ = try stdout.share();
+    _ = try stderr.share();
+
     var shift = false;
     while (true) {
         const res, const code: abi.input.KeyCode, const state: abi.input.KeyState = try ps2.call(
