@@ -14,6 +14,19 @@ pub const ROOT_X86_IRQ_ALLOCATOR: X86IrqAllocator = .{ .cap = 6 };
 
 pub const Handle = extern struct {
     cap: u32 = 0,
+
+    pub fn identify(this: @This()) abi.ObjectType {
+        return sys.handleIdentify(this.cap);
+    }
+
+    pub fn clone(this: @This()) sys.Error!@This() {
+        const cap = try sys.handleDuplicate(this.cap);
+        return .{ .cap = cap };
+    }
+
+    pub fn close(this: @This()) void {
+        sys.handleClose(this.cap);
+    }
 };
 
 /// capability to manage a single process
