@@ -58,6 +58,27 @@ pub const Vmem = struct {
             log.debug("context switched", .{});
     }
 
+    /// same as switchTo but includes a PCID (requires PCID enabled in CR4).
+    pub fn switchToWithPCID(self: addr.Phys, pcid: u16) void {
+        const cur = arch.Cr3.read();
+
+        if (cur.pml4_phys_base == self.toParts().page and cur.pcid == pcid) {
+            if (conf.LOG_CTX_SWITCHES)
+                log.debug("context switch avoided", .{});
+            return;
+        }
+
+        const new_cr3_val: u64 =
+            ((@as(u64, self.toParts().page) << 12) | // physical base address
+                (@as(u64, pcid & 0x0FFF)) | // pcid in low 12 bits
+                (1 << 63)); // bit 63 = 1 => no flush for this PCID
+
+        arch.wrcr3(new_cr3_val);
+
+        if (conf.LOG_CTX_SWITCHES)
+            log.debug("context switched", .{});
+    }
+
     pub fn printMappings(self: *volatile @This()) !void {
         // go through every single page in this address space,
         // and print contiguous similar chunks.
