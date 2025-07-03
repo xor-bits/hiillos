@@ -17,7 +17,7 @@ pub fn CachePadded(comptime T: type) type {
     };
 }
 
-pub const Error = error{
+pub const RingError = error{
     InvalidState,
     Full,
 };
@@ -27,10 +27,52 @@ pub const SharedRing = struct {
     frame: caps.Frame,
     capacity: usize,
 
+    pub fn clone(self: @This()) abi.sys.Error!@This() {
+        return .{
+            .notify = try self.notify.clone(),
+            .frame = try self.frame.clone(),
+            .capacity = self.capacity,
+        };
+    }
+
     pub fn deinit(self: @This()) void {
         self.notify.close();
         self.frame.close();
     }
+};
+
+pub const RingReader = struct {
+    ring: *const Ring(u8),
+
+    pub const Error = RingError;
+
+    pub fn read(self: @This(), buf: []u8) Error!usize {
+        const got = try self.ring.readWait(buf);
+        return got.len;
+    }
+
+    pub fn flush(_: @This()) Error!void {}
+};
+
+pub const RingWriter = struct {
+    ring: *const Ring(u8),
+
+    pub const Error = RingError;
+
+    pub fn write(self: @This(), bytes: []const u8) Error!usize {
+        try self.writeAll(bytes);
+        return bytes.len;
+    }
+
+    pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
+        try self.ring.writeWait(bytes);
+    }
+
+    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
+        for (0..n) |_| try self.writeAll(bytes);
+    }
+
+    pub fn flush(_: @This()) Error!void {}
 };
 
 /// single reader and single writer fixed size ring buffer
@@ -67,7 +109,7 @@ pub fn Ring(comptime T: type) type {
             const size_bytes = frame_size orelse try shared.frame.getSize();
 
             if (size_bytes < sizeOf(shared.capacity))
-                return Error.InvalidState;
+                return RingError.InvalidState;
 
             const self_vmem = try caps.Vmem.self();
             errdefer self_vmem.close();
@@ -136,15 +178,15 @@ pub fn Ring(comptime T: type) type {
             )))[0..self.capacity];
         }
 
-        pub fn canWrite(self: *const Self, n: usize) Error!bool {
+        pub fn canWrite(self: *const Self, n: usize) RingError!bool {
             return try self.marker().acquire(n, self.capacity) != null;
         }
 
-        pub fn canRead(self: *const Self, n: usize) Error!bool {
+        pub fn canRead(self: *const Self, n: usize) RingError!bool {
             return try self.marker().consume(n, self.capacity) != null;
         }
 
-        pub fn push(self: *const Self, v: T) Error!void {
+        pub fn push(self: *const Self, v: T) RingError!void {
             const m = self.marker();
             const s = self.storage();
 
@@ -156,9 +198,9 @@ pub fn Ring(comptime T: type) type {
             try m.produce(slot, self.capacity, self.notify);
         }
 
-        pub fn pushWait(self: *const Self, v: T) Error!void {
+        pub fn pushWait(self: *const Self, v: T) RingError!void {
             var res = self.push(v);
-            if (res != Error.Full) return res;
+            if (res != RingError.Full) return res;
 
             const m = self.marker();
 
@@ -167,13 +209,13 @@ pub fn Ring(comptime T: type) type {
                 m.write_waiter.val.store(true, .seq_cst);
 
                 res = self.push(v);
-                if (res != Error.Full) return res;
+                if (res != RingError.Full) return res;
 
                 self.notify.wait();
             }
         }
 
-        pub fn pop(self: *const Self) Error!?T {
+        pub fn pop(self: *const Self) RingError!?T {
             const m = self.marker();
             const s = self.storage();
 
@@ -187,7 +229,7 @@ pub fn Ring(comptime T: type) type {
             return val;
         }
 
-        pub fn popWait(self: *const Self) Error!T {
+        pub fn popWait(self: *const Self) RingError!T {
             if (try self.pop()) |result| return result;
 
             const m = self.marker();
@@ -202,7 +244,7 @@ pub fn Ring(comptime T: type) type {
             }
         }
 
-        pub fn write(self: *const Self, buf: []const T) Error!void {
+        pub fn write(self: *const Self, buf: []const T) RingError!void {
             const m = self.marker();
             const s = self.storage();
 
@@ -216,9 +258,9 @@ pub fn Ring(comptime T: type) type {
             try m.produce(slot, self.capacity, self.notify);
         }
 
-        pub fn writeWait(self: *const Self, buf: []const T) Error!void {
+        pub fn writeWait(self: *const Self, buf: []const T) RingError!void {
             var res = self.write(buf);
-            if (res != Error.Full) return res;
+            if (res != RingError.Full) return res;
 
             const m = self.marker();
 
@@ -227,13 +269,13 @@ pub fn Ring(comptime T: type) type {
                 m.write_waiter.val.store(true, .seq_cst);
 
                 res = self.write(buf);
-                if (res != Error.Full) return res;
+                if (res != RingError.Full) return res;
 
                 self.notify.wait();
             }
         }
 
-        pub fn read(self: *const Self, buf: []T) Error![]T {
+        pub fn read(self: *const Self, buf: []T) RingError![]T {
             const m = self.marker();
             const s = self.storage();
 
@@ -248,7 +290,7 @@ pub fn Ring(comptime T: type) type {
             return buf[0..slot.len];
         }
 
-        pub fn readWait(self: *const Self, buf: []T) Error![]T {
+        pub fn readWait(self: *const Self, buf: []T) RingError![]T {
             var result = try self.read(buf);
             if (result.len != 0) return result;
 
@@ -263,6 +305,16 @@ pub fn Ring(comptime T: type) type {
 
                 self.notify.wait();
             }
+        }
+
+        pub fn reader(self: *const Self) RingReader {
+            if (T != u8) @compileError("T must be u8 for RingReader");
+            return RingReader{ .ring = self };
+        }
+
+        pub fn writer(self: *const Self) RingWriter {
+            if (T != u8) @compileError("T must be u8 for RingWriter");
+            return RingWriter{ .ring = self };
         }
     };
 }
@@ -302,12 +354,12 @@ pub const Marker = extern struct {
 
     const Self = @This();
 
-    pub fn uninitSlot(self: *Self, capacity: usize) Error!Slot {
+    pub fn uninitSlot(self: *Self, capacity: usize) RingError!Slot {
         const write = self.write_end.val.load(.acquire);
         const read = self.read_end.val.load(.acquire);
 
         if (write >= capacity or read >= capacity)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         // read end - 1 is the limit, the number of available spaces can only grow
         // read=write would be ambiguous so read=write always means that the whole buf is empty
@@ -317,7 +369,7 @@ pub const Marker = extern struct {
         else
             capacity - write + read;
         if (avail > capacity)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         return Slot{
             .first = write,
@@ -325,12 +377,12 @@ pub const Marker = extern struct {
         };
     }
 
-    pub fn initSlot(self: *Self, capacity: usize) Error!Slot {
+    pub fn initSlot(self: *Self, capacity: usize) RingError!Slot {
         const read = self.read_end.val.load(.acquire);
         const write = self.write_end.val.load(.acquire);
 
         if (write >= capacity or read >= capacity)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         // write end is the limit, the number of available items can only grow
         const avail = if (write >= read)
@@ -338,7 +390,7 @@ pub const Marker = extern struct {
         else
             capacity - read + write;
         if (avail > capacity)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         return Slot{
             .first = read,
@@ -346,40 +398,40 @@ pub const Marker = extern struct {
         };
     }
 
-    pub fn acquire(self: *Self, n: usize, capacity: usize) Error!?Slot {
+    pub fn acquire(self: *Self, n: usize, capacity: usize) RingError!?Slot {
         if (n > capacity) return null;
         return (try self.uninitSlot(capacity)).take(n);
     }
 
-    pub fn acquireUpTo(self: *Self, n: usize, capacity: usize) Error!?Slot {
+    pub fn acquireUpTo(self: *Self, n: usize, capacity: usize) RingError!?Slot {
         return (try self.uninitSlot(capacity)).min(n);
     }
 
-    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize, notify: caps.Notify) Error!void {
+    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize, notify: caps.Notify) RingError!void {
         const new_write_end = (acquired_slot.first + acquired_slot.len) % capacity;
         const old = self.write_end.val.swap(new_write_end, .release);
         if (old != acquired_slot.first)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         if (self.read_waiter.val.swap(false, .release)) {
             _ = notify.notify();
         }
     }
 
-    pub fn consume(self: *Self, n: usize, capacity: usize) Error!?Slot {
+    pub fn consume(self: *Self, n: usize, capacity: usize) RingError!?Slot {
         if (n > capacity) return null;
         return (try self.initSlot(capacity)).take(n);
     }
 
-    pub fn consumeUpTo(self: *Self, n: usize, capacity: usize) Error!?Slot {
+    pub fn consumeUpTo(self: *Self, n: usize, capacity: usize) RingError!?Slot {
         return (try self.initSlot(capacity)).min(n);
     }
 
-    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize, notify: caps.Notify) Error!void {
+    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize, notify: caps.Notify) RingError!void {
         const new_read_end = (consumed_slot.first + consumed_slot.len) % capacity;
         const old = self.read_end.val.swap(new_read_end, .release);
         if (old != consumed_slot.first)
-            return Error.InvalidState;
+            return RingError.InvalidState;
 
         if (self.write_waiter.val.swap(false, .release)) {
             _ = notify.notify();

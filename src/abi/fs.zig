@@ -162,7 +162,11 @@ pub const Path = union(enum(u8)) {
         } else {
             const frame = try caps.Frame.create(s.len);
             try frame.write(0, s);
-            return .{ .frame = frame, .offs = 0, .len = s.len };
+            return .{ .long = .{
+                .frame = frame,
+                .offs = 0,
+                .len = s.len,
+            } };
         }
     }
 

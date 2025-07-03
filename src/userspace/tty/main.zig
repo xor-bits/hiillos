@@ -72,7 +72,7 @@ pub fn main() !void {
     abi.util.fillVolatile(u32, fb, 0);
 
     var tty1 = try Tty.new(fb_addr, fb_info);
-    tty1.writeBytes("hello from tty1");
+    tty1.writeBytes("hello from tty1\n");
     tty1.flush();
 
     const stdin = try abi.ring.Ring(u8).new(0x8000);
@@ -88,19 +88,17 @@ pub fn main() !void {
 
     try abi.thread.spawn(kb_reader, .{stdin});
 
-    _ = try abi.lpc.call(
-        abi.PmProtocol.ExecElfRequest,
-        .{
-            .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install"),
-            .env_map = try caps.Frame.create(0x1000),
-            .stdio = .{
-                .stdin = .{ .ring = try stdin.share() },
-                .stdout = .{ .ring = try stdout.share() },
-                .stderr = .{ .ring = try stderr.share() },
-            },
+    _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
+        .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install\x00--sh"),
+        .env_map = try caps.Frame.create(0x1000),
+        .stdio = .{
+            .stdin = .{ .ring = try stdin.share() },
+            .stdout = .{ .ring = try stdout.share() },
+            .stderr = .{ .ring = try stderr.share() },
         },
-        .{ .cap = import_pm.handle },
-    );
+    }, .{
+        .cap = import_pm.handle,
+    });
 
     var buf: [0x1000]u8 = undefined;
     while (true) {

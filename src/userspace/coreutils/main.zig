@@ -6,6 +6,18 @@ const std = @import("std");
 const log = std.log.scoped(.coreutils);
 const Error = abi.sys.Error;
 
+const Command = enum {
+    coreutils,
+    sh,
+};
+
+const commands = .{
+    .coreutils = @import("coreutils.zig"),
+    .sh = @import("sh.zig"),
+};
+
+pub var stdio: abi.PmProtocol.AllStdio = undefined;
+
 //
 
 pub fn main() !void {
@@ -14,7 +26,7 @@ pub fn main() !void {
     try abi.process.init();
     // try abi.io.init();
 
-    const stdio = try (try abi.lpc.call(
+    stdio = try (try abi.lpc.call(
         abi.PmProtocol.GetStdioRequest,
         .{},
         .{ .cap = 1 },
@@ -25,28 +37,28 @@ pub fn main() !void {
     const stdout = try abi.ring.Ring(u8)
         .fromShared(stdio.stdout.ring, null);
 
-    try stdout.writeWait("\nhello from coreutils\n");
+    // const stdin_reader = stdin.reader();
+    const stdout_writer = stdout.writer();
+
+    // try std.fmt.format(stdout_writer, "\nhello from coreutils\n", .{});
 
     var args = abi.process.args();
-    while (args.next()) |arg| {
-        try stdout.writeWait(arg);
-        try stdout.pushWait(' ');
+    const cmd_name = std.fs.path.basename(args.next().?);
+    const cmd = std.meta.stringToEnum(Command, cmd_name) orelse {
+        try std.fmt.format(
+            stdout_writer,
+            "{s} is not part of coreutils\n",
+            .{cmd_name},
+        );
+        return;
+    };
+
+    switch (cmd) {
+        inline else => |c| {
+            try @field(commands, @tagName(c))
+                .main(&args, &stdin, stdout_writer);
+        },
     }
 
-    try stdout.writeWait("\n> ");
-
-    // var command: [0x100]u8 = undefined;
-    // var command_len: usize = 0;
-
-    while (true) {
-        // const ch = try stdin.popWait();
-        // try stdout.writeWait(&.{ ch, ch });
-
-        const ch = try stdin.popWait();
-        if (ch == '\n') {
-            try stdout.writeWait("\ncommand not found\n\n> ");
-        } else {
-            try stdout.pushWait(ch);
-        }
-    }
+    _ = .{ stdin, stdout_writer };
 }

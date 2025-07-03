@@ -279,13 +279,46 @@ pub const PmProtocol = struct {
     pub const Stdio = union(enum) {
         ring: ring.SharedRing,
         file: caps.Frame,
+        inherit: void,
         none: void,
+
+        pub fn clone(self: @This()) sys.Error!@This() {
+            return switch (self) {
+                .ring => |v| .{ .ring = try v.clone() },
+                .file => |v| .{ .file = try v.clone() },
+                .inherit => .{ .inherit = {} },
+                .none => .{ .inherit = {} },
+            };
+        }
+
+        pub fn deinit(self: @This()) void {
+            switch (self) {
+                .ring => |v| v.deinit(),
+                .file => |v| v.close(),
+                .inherit => {},
+                .none => {},
+            }
+        }
     };
 
     pub const AllStdio = struct {
         stdin: Stdio = .{ .none = {} },
         stdout: Stdio = .{ .none = {} },
         stderr: Stdio = .{ .none = {} },
+
+        pub fn clone(self: @This()) sys.Error!@This() {
+            return .{
+                .stdin = try self.stdin.clone(),
+                .stdout = try self.stdout.clone(),
+                .stderr = try self.stderr.clone(),
+            };
+        }
+
+        pub fn deinit(self: @This()) void {
+            self.stdin.deinit();
+            self.stdout.deinit();
+            self.stderr.deinit();
+        }
     };
 
     /// exec an elf file and return the PID

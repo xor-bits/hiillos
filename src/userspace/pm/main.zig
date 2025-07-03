@@ -115,7 +115,7 @@ pub const Process = struct {
     thread: caps.Thread,
     uid: u32,
 
-    self_stdio: ?abi.PmProtocol.AllStdio,
+    self_stdio: abi.PmProtocol.AllStdio,
 };
 
 pub const System = struct {
@@ -222,8 +222,20 @@ fn execElf(
     // defer path.deinit();
     // log.info("pm got execElf path={s}", .{path.p});
 
-    const sender = daemon.ctx.processes.items[daemon.stamp].?;
-    const uid = sender.uid;
+    // log.info("execElf from {}", .{daemon.stamp});
+    // log.info("processes {}", .{daemon.ctx.processes.items.len});
+
+    const uid = if (daemon.stamp == 0)
+        0
+    else
+        daemon.ctx.processes.items[daemon.stamp - 1].?.uid;
+
+    const stdio = handler.req.stdio;
+    // errdefer stdio.deinit();
+    // // FIXME: ring shouldnt be cloned
+    // if (stdio.stdin == .inherit) stdio.stdin = try sender.self_stdio.stdin.clone();
+    // if (stdio.stdout == .inherit) stdio.stdout = try sender.self_stdio.stdout.clone();
+    // if (stdio.stderr == .inherit) stdio.stderr = try sender.self_stdio.stderr.clone();
 
     // FIXME: make the arg_map frame copy-on-write
 
@@ -241,22 +253,20 @@ fn execElf(
 
     log.info("exec '{s}'", .{cmd});
 
-    const file_resp = try abi.lpc.call(
-        abi.VfsProtocol.OpenFileRequest,
-        .{
-            .path = .{ .long = .{
-                .frame = try handler.req.arg_map.clone(),
-                .offs = 0,
-                .len = cmd.len,
-            } },
-            .open_opts = .{
-                .mode = .read_only,
-                .file_policy = .use_existing,
-                .dir_policy = .use_existing,
-            },
+    const file_resp = try abi.lpc.call(abi.VfsProtocol.OpenFileRequest, .{
+        .path = .{ .long = .{
+            .frame = try handler.req.arg_map.clone(),
+            .offs = 0,
+            .len = cmd.len,
+        } },
+        .open_opts = .{
+            .mode = .read_only,
+            .file_policy = .use_existing,
+            .dir_policy = .use_existing,
         },
-        .{ .cap = import_vfs.handle },
-    );
+    }, .{
+        .cap = import_vfs.handle,
+    });
 
     const elf_file = handler.reply.unwrapResult(
         caps.Frame,
@@ -277,7 +287,7 @@ fn execElf(
     const pid = try daemon.ctx.exec(
         &elf,
         uid,
-        handler.req.stdio,
+        stdio,
         handler.req.arg_map,
         handler.req.env_map,
     );
@@ -288,13 +298,8 @@ fn getStdio(
     daemon: *abi.lpc.Daemon(System),
     handler: abi.lpc.Handler(abi.PmProtocol.GetStdioRequest),
 ) !void {
-    const proc = &daemon.ctx.processes.items[daemon.stamp - 1].?;
-    const stdio = proc.self_stdio;
-    proc.self_stdio = null;
+    errdefer handler.reply.send(.{ .err = .internal });
 
-    if (stdio) |some| {
-        handler.reply.send(.{ .ok = some });
-    } else {
-        handler.reply.send(.{ .err = .already_mapped });
-    }
+    const proc = &daemon.ctx.processes.items[daemon.stamp - 1].?;
+    handler.reply.send(.{ .ok = try proc.self_stdio.clone() });
 }
