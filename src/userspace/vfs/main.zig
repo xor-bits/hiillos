@@ -76,6 +76,7 @@ const Server = struct {
     pub const routes = .{
         openFile,
         openDir,
+        symlink,
         newSender,
     };
     pub const Request = abi.VfsProtocol.Request;
@@ -85,6 +86,10 @@ fn openFile(
     _: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenFileRequest),
 ) !void {
+    errdefer handler.reply.send(.{ .err = .internal });
+
+    // TODO: error handling with `handler.reply.unwrapResult`
+
     const uri = try handler.req.path.getMap();
     defer uri.deinit();
 
@@ -124,6 +129,51 @@ fn openDir(
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
 ) !void {
     handler.reply.send(.{ .err = .unimplemented });
+}
+
+fn symlink(
+    _: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.SymlinkRequest),
+) !void {
+    errdefer handler.reply.send(.{ .err = .internal });
+
+    // TODO: error handling with `handler.reply.unwrapResult`
+
+    const old_uri = try handler.req.oldpath.getMap();
+    defer old_uri.deinit();
+    const old_path = try partsFromUri(old_uri.p);
+
+    const old_namespace = try getDir(
+        global_root.clone(),
+        old_path.scheme,
+        .use_existing,
+    );
+    const old_parent_dir = try getDir(
+        old_namespace,
+        old_path.parent_path,
+        .use_existing,
+    );
+    const old_entry = try old_parent_dir.get(old_path.entry_name, .use_existing);
+
+    const new_uri = try handler.req.newpath.getMap();
+    defer new_uri.deinit();
+    const new_path = try partsFromUri(new_uri.p);
+
+    const new_namespace = try getDir(
+        global_root.clone(),
+        new_path.scheme,
+        .use_existing,
+    );
+    const new_parent_dir = try getDir(
+        new_namespace,
+        new_path.parent_path,
+        .use_existing,
+    );
+    defer new_parent_dir.destroy();
+
+    try new_parent_dir.add(new_path.entry_name, old_entry);
+
+    handler.reply.send(.{ .ok = {} });
 }
 
 fn newSender(
@@ -480,6 +530,14 @@ const DirNode = struct {
         return next.clone();
     }
 
+    /// takes ownership of `entry` but NOT `self`
+    pub fn add(self: *@This(), name: []const u8, entry: DirEntry) Error!void {
+        self.cache_lock.lock();
+        defer self.cache_lock.unlock();
+
+        try self.addLocked(name, entry);
+    }
+
     /// takes ownership of `self` and returns an owned `*DirNode`
     pub fn getParent(self: *@This()) *DirNode {
         defer self.destroy();
@@ -611,7 +669,7 @@ const DirNode = struct {
     }
 
     fn addEntryLocked(self: *@This(), stat: abi.Stat, name: []const u8) Error!void {
-        const node: DirEntry = switch (stat.mode.type) {
+        const entry: DirEntry = switch (stat.mode.type) {
             .dir => .{ .dir = try DirNode.create(self.clone(), stat.inode) },
             .file => .{ .file = try FileNode.create(self.clone(), stat.inode) },
             else => {
@@ -619,19 +677,25 @@ const DirNode = struct {
                 return;
             },
         };
-        errdefer node.destroy();
+
+        try self.addLocked(name, entry);
+    }
+
+    /// takes ownership of `entry` but NOT `self`
+    fn addLocked(self: *@This(), name: []const u8, entry: DirEntry) Error!void {
+        errdefer entry.destroy();
 
         const s = try abi.mem.slab_allocator.dupe(u8, name);
         errdefer abi.mem.slab_allocator.free(s);
 
         const result = try self.entries.getOrPut(s);
         if (result.found_existing) {
-            node.destroy();
+            entry.destroy();
             abi.mem.slab_allocator.free(s);
             log.err("filesystem returned duplicate directory entries: {s}", .{s});
             return;
         }
-        result.value_ptr.* = node;
+        result.value_ptr.* = entry;
     }
 
     pub const GetResult = union(enum) {
