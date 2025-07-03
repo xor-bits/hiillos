@@ -11,6 +11,9 @@ const Error = abi.sys.Error;
 pub fn main() !void {
     std.log.info("hello from coreutils", .{});
 
+    try abi.process.init();
+    // try abi.io.init();
+
     const stdio = try (try abi.lpc.call(
         abi.PmProtocol.GetStdioRequest,
         .{},
@@ -24,7 +27,13 @@ pub fn main() !void {
 
     try stdout.writeWait("\nhello from coreutils\n");
 
-    try stdout.writeWait("> ");
+    var args = abi.process.args();
+    while (args.next()) |arg| {
+        try stdout.writeWait(arg);
+        try stdout.pushWait(' ');
+    }
+
+    try stdout.writeWait("\n> ");
 
     // var command: [0x100]u8 = undefined;
     // var command_len: usize = 0;

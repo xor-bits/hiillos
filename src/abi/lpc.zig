@@ -81,6 +81,10 @@ pub fn Daemon(comptime Ctx: type) type {
                         @compileError(std.fmt.comptimePrint("missing handler for {}", .{Req}));
                     };
 
+                    // log.debug("handling {} -> {}", .{ Req, Resp });
+                    // errdefer log.debug("error handling {}", .{Req});
+                    // log.debug("input {}", .{v});
+
                     var reply: Reply(Resp) = .{};
                     const res: void = try handler(self, .{ .req = v, .reply = &reply });
                     _ = res;

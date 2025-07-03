@@ -96,7 +96,13 @@ pub fn main() !void {
     // just runs normal processes according to the init configuration
     // launches stuff like the window manager and virtual TTYs
     log.info("exec init", .{});
-    const init_pid = try system.exec(&init_elf, 0, .{});
+    const init_pid = try system.exec(
+        &init_elf,
+        0,
+        .{},
+        try caps.Frame.create(0x1000),
+        try caps.Frame.create(0x1000),
+    );
     std.debug.assert(init_pid == 1);
 
     log.debug("pm ready", .{});
@@ -131,6 +137,8 @@ pub const System = struct {
         elf: *abi.loader.Elf,
         as_uid: u32,
         stdio: abi.PmProtocol.AllStdio,
+        args: caps.Frame,
+        env: caps.Frame,
     ) !u32 {
         const pid = try system.allocPid();
         std.debug.assert(pid != 0);
@@ -168,6 +176,10 @@ pub const System = struct {
 
         id = try proc.giveHandle(vfs_ipc);
         std.debug.assert(id == 4);
+        id = try proc.giveHandle(args);
+        std.debug.assert(id == 5);
+        id = try proc.giveHandle(env);
+        std.debug.assert(id == 6);
 
         try thread.start();
 
@@ -213,10 +225,30 @@ fn execElf(
     const sender = daemon.ctx.processes.items[daemon.stamp].?;
     const uid = sender.uid;
 
+    // FIXME: make the arg_map frame copy-on-write
+
+    const arg_map_len = try handler.req.arg_map.getSize();
+    const arg_map_addr = try daemon.ctx.self_vmem.map(
+        handler.req.arg_map,
+        0,
+        0,
+        0,
+        .{},
+        .{},
+    );
+    const arg_map: []const u8 = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
+    const cmd: []const u8 = std.mem.sliceTo(arg_map, 0);
+
+    log.info("exec '{s}'", .{cmd});
+
     const file_resp = try abi.lpc.call(
         abi.VfsProtocol.OpenFileRequest,
         .{
-            .path = handler.req.path,
+            .path = .{ .long = .{
+                .frame = try handler.req.arg_map.clone(),
+                .offs = 0,
+                .len = cmd.len,
+            } },
             .open_opts = .{
                 .mode = .read_only,
                 .file_policy = .use_existing,
@@ -242,7 +274,13 @@ fn execElf(
 
     // TODO: get file stats for setuid, exec rights, etc.
 
-    const pid = try daemon.ctx.exec(&elf, uid, handler.req.stdio);
+    const pid = try daemon.ctx.exec(
+        &elf,
+        uid,
+        handler.req.stdio,
+        handler.req.arg_map,
+        handler.req.env_map,
+    );
     handler.reply.send(.{ .ok = pid });
 }
 

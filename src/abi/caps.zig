@@ -235,6 +235,12 @@ pub const Frame = extern struct {
         return .{ .cap = cap };
     }
 
+    pub fn init(bytes: []const u8) sys.Error!@This() {
+        const frame = try create(bytes.len);
+        try frame.write(0, bytes);
+        return frame;
+    }
+
     pub fn clone(this: @This()) sys.Error!@This() {
         const cap = try sys.handleDuplicate(this.cap);
         return .{ .cap = cap };

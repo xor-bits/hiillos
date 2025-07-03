@@ -91,7 +91,8 @@ pub fn main() !void {
     _ = try abi.lpc.call(
         abi.PmProtocol.ExecElfRequest,
         .{
-            .path = comptime abi.fs.Path.new("initfs:///sbin/coreutils") catch unreachable,
+            .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install"),
+            .env_map = try caps.Frame.create(0x1000),
             .stdio = .{
                 .stdin = .{ .ring = try stdin.share() },
                 .stdout = .{ .ring = try stdout.share() },

@@ -13,6 +13,7 @@ pub const loader = @import("loader.zig");
 pub const lock = @import("lock.zig");
 pub const lpc = @import("lpc.zig");
 pub const mem = @import("mem.zig");
+pub const process = @import("process.zig");
 pub const ring = @import("ring.zig");
 pub const rt = @import("rt.zig");
 pub const sys = @import("sys.zig");
@@ -289,7 +290,11 @@ pub const PmProtocol = struct {
 
     /// exec an elf file and return the PID
     pub const ExecElfRequest = struct {
-        path: fs.Path,
+        /// cli argument map, null terminated strings concatenated
+        arg_map: caps.Frame,
+        /// cli environment map, null terminated strings concatenated
+        env_map: caps.Frame,
+        /// standard io 'file descriptors'
         stdio: AllStdio,
 
         pub const Response = Result(u32, sys.ErrorEnum);
