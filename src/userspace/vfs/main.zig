@@ -690,9 +690,9 @@ const DirNode = struct {
 
         const result = try self.entries.getOrPut(s);
         if (result.found_existing) {
+            log.err("filesystem returned duplicate directory entries: {s}", .{s});
             entry.destroy();
             abi.mem.slab_allocator.free(s);
-            log.err("filesystem returned duplicate directory entries: {s}", .{s});
             return;
         }
         result.value_ptr.* = entry;
