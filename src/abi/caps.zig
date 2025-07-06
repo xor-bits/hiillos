@@ -1,5 +1,7 @@
+const std = @import("std");
 const abi = @import("lib.zig");
 const sys = @import("sys.zig");
+const lock = @import("lock.zig");
 
 // some hardcoded capability handles
 
@@ -113,6 +115,9 @@ pub const Thread = extern struct {
 pub const Vmem = extern struct {
     cap: u32 = 0,
 
+    var global_self: std.atomic.Value(u32) = .init(0);
+    var global_self_init: lock.Once(lock.YieldMutex) = .new();
+
     pub const Type: abi.ObjectType = .vmem;
 
     pub fn create() sys.Error!@This() {
@@ -121,8 +126,16 @@ pub const Vmem = extern struct {
     }
 
     pub fn self() sys.Error!@This() {
-        const cap = try sys.vmemSelf();
-        return .{ .cap = cap };
+        if (!global_self_init.tryRun()) {
+            global_self_init.wait();
+            return .{ .cap = global_self.load(.acquire) };
+        }
+
+        const self_vmem_cap = try sys.vmemSelf();
+        global_self.store(self_vmem_cap, .release);
+        global_self_init.complete();
+
+        return .{ .cap = self_vmem_cap };
     }
 
     pub fn clone(this: @This()) sys.Error!@This() {
@@ -131,6 +144,8 @@ pub const Vmem = extern struct {
     }
 
     pub fn close(this: @This()) void {
+        if (this.cap == global_self.load(.monotonic)) return;
+
         sys.handleClose(this.cap);
     }
 
