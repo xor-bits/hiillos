@@ -14,7 +14,6 @@ const init = @import("init.zig");
 const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
-const spin = @import("spin.zig");
 
 //
 
@@ -56,7 +55,7 @@ pub const CpuLocalStorage = struct {
     epoch_locals: abi.epoch.Locals = .{},
 
     tlb_shootdown_queue: abi.util.Queue(caps.TlbShootdown, "next", "prev") = .{},
-    tlb_shootdown_queue_lock: spin.Mutex = .{},
+    tlb_shootdown_queue_lock: abi.lock.SpinMutex = .{},
     initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler

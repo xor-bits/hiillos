@@ -6,14 +6,13 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const lazy = @import("lazy.zig");
-const spin = @import("spin.zig");
 const util = @import("util.zig");
 
 const log = std.log.scoped(.hpet);
 
 //
 
-var hpet_once: spin.Once = .{};
+var hpet_once: abi.lock.Once(abi.lock.SpinMutex) = .{};
 
 pub fn init(hpet: *const Hpet) !void {
     if (!hpet_once.tryRun()) {

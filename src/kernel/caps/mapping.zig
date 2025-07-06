@@ -5,7 +5,6 @@ const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
-const spin = @import("../spin.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);

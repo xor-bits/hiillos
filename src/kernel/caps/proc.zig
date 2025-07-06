@@ -4,7 +4,6 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
-const spin = @import("../spin.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
@@ -17,7 +16,7 @@ pub const Process = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     vmem: *caps.Vmem,
-    lock: spin.Mutex = .newLocked(),
+    lock: abi.lock.SpinMutex = .newLocked(),
     caps: std.ArrayList(caps.CapabilitySlot), // TODO: unmanaged
 
     pub fn init(from_vmem: *caps.Vmem) !*@This() {

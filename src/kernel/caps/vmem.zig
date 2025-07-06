@@ -8,7 +8,6 @@ const caps = @import("../caps.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const spin = @import("../spin.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
@@ -20,7 +19,7 @@ pub const Vmem = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    lock: spin.Mutex = .new(),
+    lock: abi.lock.SpinMutex = .new(),
     cr3: u32,
     mappings: std.ArrayList(*caps.Mapping),
     // bitset of all cpus that have used this vmem

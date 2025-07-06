@@ -8,7 +8,6 @@ const fb = @import("fb.zig");
 const lazy = @import("lazy.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
-const spin = @import("spin.zig");
 const uart = @import("uart.zig");
 
 const conf = abi.conf;
@@ -145,7 +144,7 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     }
 }
 
-var log_lock: spin.Mutex = .{};
+var log_lock: abi.lock.SpinMutex = .{};
 
 const panic_printer = struct {
     pub const Error = error{};
@@ -261,7 +260,7 @@ const source_files: [sources.sources.len]SourceFile = b: {
 };
 
 var dwarf_info: ?anyerror!std.debug.Dwarf = null;
-var dwarf_info_lock: spin.Mutex = .{};
+var dwarf_info_lock: abi.lock.SpinMutex = .{};
 
 /// `dwarf_info_lock` needs to be held
 fn getSelfDwarf() !*std.debug.Dwarf {

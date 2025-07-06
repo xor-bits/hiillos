@@ -8,7 +8,6 @@ const caps = @import("../caps.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const spin = @import("../spin.zig");
 const util = @import("../util.zig");
 
 const conf = abi.conf;
@@ -28,7 +27,7 @@ pub const Frame = struct {
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,
-    lock: spin.Mutex = .new(),
+    lock: abi.lock.SpinMutex = .new(),
     pages: []u32,
     mappings: std.ArrayList(*const caps.Mapping),
 

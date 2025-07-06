@@ -6,7 +6,6 @@ const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const main = @import("main.zig");
-const spin = @import("spin.zig");
 const util = @import("util.zig");
 
 const conf = abi.conf;
@@ -19,7 +18,7 @@ const Error = abi.sys.Error;
 
 var active_threads: std.atomic.Value(usize) = .init(1);
 var queues: [4]Queue = .{Queue{}} ** 4;
-var queue_locks: [4]spin.Mutex = .{spin.Mutex{}} ** 4;
+var queue_locks: [4]abi.lock.SpinMutex = .{abi.lock.SpinMutex{}} ** 4;
 var waiters: [256]Waiter = .{Waiter.init(null)} ** 256;
 
 const Queue = abi.util.Queue(caps.Thread, "next", "prev");

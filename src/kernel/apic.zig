@@ -10,7 +10,6 @@ const hpet = @import("hpet.zig");
 const lazy = @import("lazy.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
-const spin = @import("spin.zig");
 
 const log = std.log.scoped(.apic);
 const conf = abi.conf;
@@ -47,17 +46,17 @@ const APIC_TIMER_DIV: u32 = 0b0010; // div by 8
 
 /// all I/O APICs
 var ioapics = std.ArrayList(IoApicInfo).init(pmem.page_allocator);
-var ioapic_lock: spin.Mutex = .{};
+var ioapic_lock: abi.lock.SpinMutex = .{};
 /// all Local APIC IDs that I/O APICs can use as interrupt destinations
 var ioapic_lapics = std.ArrayList(IoApicLapic).init(pmem.page_allocator);
 
-var ioapic_lapic_lock: spin.Mutex = .{};
+var ioapic_lapic_lock: abi.lock.SpinMutex = .{};
 
 //
 
 // pub const Handler = std.atomic.Value(?*caps.Notify);
 pub const Handler = struct {
-    lock: spin.Mutex = .{},
+    lock: abi.lock.SpinMutex = .{},
     notify: ?*caps.Notify = null,
 
     pub fn load(self: *@This()) ?*caps.Notify {
@@ -696,7 +695,7 @@ pub const LocalXApicRegs = extern struct {
 
 //
 
-var pic_once: spin.Once = .{};
+var pic_once: abi.lock.Once(abi.lock.SpinMutex) = .{};
 
 fn disablePic() void {
     if (!pic_once.tryRun()) {

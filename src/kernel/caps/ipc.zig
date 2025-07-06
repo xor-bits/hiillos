@@ -7,7 +7,6 @@ const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const spin = @import("../spin.zig");
 const util = @import("../util.zig");
 
 const conf = abi.conf;
@@ -25,7 +24,7 @@ pub const Receiver = struct {
     receiver: std.atomic.Value(?*caps.Thread) = .init(null),
 
     /// a linked list of waiting callers
-    queue_lock: spin.Mutex = .newLocked(),
+    queue_lock: abi.lock.SpinMutex = .newLocked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {
@@ -300,7 +299,7 @@ pub const Notify = struct {
     notified: std.atomic.Value(bool) = .init(false),
 
     // waiter queue
-    queue_lock: spin.Mutex = .newLocked(),
+    queue_lock: abi.lock.SpinMutex = .newLocked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {

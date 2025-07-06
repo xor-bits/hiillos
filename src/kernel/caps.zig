@@ -5,7 +5,6 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
-const spin = @import("spin.zig");
 
 const caps_ipc = @import("caps/ipc.zig");
 const caps_thread = @import("caps/thread.zig");

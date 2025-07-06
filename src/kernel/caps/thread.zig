@@ -6,7 +6,6 @@ const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const spin = @import("../spin.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
@@ -21,7 +20,7 @@ pub const Thread = struct {
 
     proc: *caps.Process,
     // lock for modifying / executing the thread
-    lock: spin.Mutex = .newLocked(),
+    lock: abi.lock.SpinMutex = .newLocked(),
     /// all context data
     trap: arch.TrapRegs = .{},
     /// scheduler priority
