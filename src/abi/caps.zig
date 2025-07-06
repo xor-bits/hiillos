@@ -111,7 +111,7 @@ pub const Thread = extern struct {
     }
 
     pub fn wait(this: @This()) sys.Error!usize {
-        return try try sys.threadWait(this.cap);
+        return try sys.threadWait(this.cap);
     }
 };
 
@@ -328,6 +328,60 @@ pub const Frame = extern struct {
             return;
         }
         return try sys.frameWrite(this.cap, offset_byte, src);
+    }
+
+    pub const Stream = struct {
+        frame: Frame, // borrowed frame
+        read: usize = 0,
+        write: usize = 0,
+
+        pub const Reader = struct {
+            stream: *Stream,
+
+            pub const Error = sys.Error;
+
+            pub fn read(self: @This(), buf: []u8) Error!usize {
+                try self.stream.frame.read(self.stream.read, buf);
+                self.stream.read += buf.len;
+                return buf.len;
+            }
+
+            pub fn flush(_: @This()) Error!void {}
+        };
+
+        pub fn reader(this: *@This()) Reader {
+            return .{ .frame = this };
+        }
+
+        pub const Writer = struct {
+            stream: *Stream,
+
+            pub const Error = sys.Error;
+
+            pub fn write(self: @This(), bytes: []const u8) Error!usize {
+                try self.stream.frame.write(self.stream.write, bytes);
+                self.stream.write += bytes.len;
+                return bytes.len;
+            }
+
+            pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
+                _ = try self.write(bytes);
+            }
+
+            pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
+                for (0..n) |_| try self.writeAll(bytes);
+            }
+
+            pub fn flush(_: @This()) Error!void {}
+        };
+
+        pub fn writer(this: *@This()) Writer {
+            return .{ .stream = this };
+        }
+    };
+
+    pub fn stream(this: @This()) Stream {
+        return .{ .frame = this };
     }
 
     pub fn dummyAccess(this: @This(), offset_byte: usize, mode: sys.FaultCause) sys.Error!void {

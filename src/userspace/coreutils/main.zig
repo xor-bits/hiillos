@@ -6,17 +6,25 @@ const std = @import("std");
 const log = std.log.scoped(.coreutils);
 const Error = abi.sys.Error;
 
-const Command = enum {
+pub const Command = enum {
     coreutils,
+    ls,
     sh,
 };
 
 const commands = .{
     .coreutils = @import("coreutils.zig"),
+    .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
 };
 
 pub var stdio: abi.PmProtocol.AllStdio = undefined;
+
+pub const Ctx = struct {
+    args: *abi.process.ArgIterator,
+    stdin: *const abi.ring.Ring(u8),
+    stdout_writer: abi.ring.Ring(u8).Writer,
+};
 
 //
 
@@ -55,8 +63,14 @@ pub fn main() !void {
 
     switch (cmd) {
         inline else => |c| {
+            std.log.info("coreutils {}", .{c});
+
             try @field(commands, @tagName(c))
-                .main(&args, &stdin, stdout_writer);
+                .main(Ctx{
+                .args = &args,
+                .stdin = &stdin,
+                .stdout_writer = stdout_writer,
+            });
         },
     }
 

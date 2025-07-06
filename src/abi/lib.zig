@@ -321,6 +321,12 @@ pub const PmProtocol = struct {
         }
     };
 
+    pub const Process = struct {
+        process: caps.Process,
+        main_thread: caps.Thread,
+        pid: u32,
+    };
+
     /// exec an elf file and return the PID
     pub const ExecElfRequest = struct {
         /// cli argument map, null terminated strings concatenated
@@ -330,7 +336,7 @@ pub const PmProtocol = struct {
         /// standard io 'file descriptors'
         stdio: AllStdio,
 
-        pub const Response = Result(u32, sys.ErrorEnum);
+        pub const Response = Result(Process, sys.ErrorEnum);
         pub const Union = Request;
     };
 
@@ -346,6 +352,8 @@ pub const PmProtocol = struct {
 };
 
 pub const VfsProtocol = struct {
+    pub const DirEnt = struct {};
+
     pub const DirEnts = struct {
         data: caps.Frame,
         count: usize,

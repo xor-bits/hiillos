@@ -5,53 +5,65 @@ const caps = abi.caps;
 
 //
 
-pub fn main(
-    args: *abi.process.ArgIterator,
-    stdin: *const abi.ring.Ring(u8),
-    stdout_writer: abi.ring.Ring(u8).Writer,
-) !void {
-    _ = stdin;
+const Subcommand = enum {
+    install,
+};
 
-    const subcmd_name = args.next() orelse {
-        try help(stdout_writer);
+//
+
+pub fn main(ctx: @import("main.zig").Ctx) !void {
+    const subcmd_name = ctx.args.next() orelse {
+        try help(ctx.stdout_writer);
         return;
     };
     const subcmd = std.meta.stringToEnum(Subcommand, subcmd_name) orelse {
-        try help(stdout_writer);
+        try help(ctx.stdout_writer);
         return;
     };
 
     switch (subcmd) {
         .install => {
-            const result = try abi.lpc.call(abi.VfsProtocol.SymlinkRequest, .{
-                .oldpath = try abi.fs.Path.new("initfs:///sbin/coreutils"),
-                .newpath = try abi.fs.Path.new("initfs:///sbin/sh"),
-            }, .{
-                .cap = 4,
-            });
-            try result.asErrorUnion();
+            try install();
 
-            try std.fmt.format(stdout_writer,
+            try std.fmt.format(ctx.stdout_writer,
                 \\coreutils installed
             , .{});
             std.log.info("coreutils installed", .{});
 
-            if (args.next()) |opt_arg| if (std.mem.eql(u8, "--sh", opt_arg)) {
-                _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
-                    .arg_map = try caps.Frame.init("initfs:///sbin/sh"),
-                    .env_map = try caps.Frame.create(0x1000),
-                    .stdio = try @import("main.zig").stdio.clone(),
-                }, .{
-                    .cap = 1,
-                });
-            };
+            const opt_arg = ctx.args.next() orelse return;
+            if (!std.mem.eql(u8, "--sh", opt_arg)) return;
+
+            _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
+                .arg_map = try caps.Frame.init("initfs:///sbin/sh"),
+                .env_map = try caps.Frame.create(0x1000),
+                .stdio = try @import("main.zig").stdio.clone(),
+            }, .{
+                .cap = 1,
+            });
         },
     }
 }
 
-const Subcommand = enum {
-    install,
-};
+fn install() !void {
+    const variants = @typeInfo(
+        @import("main.zig").Command,
+    ).@"enum".fields;
+
+    inline for (variants) |cmd| {
+        if (comptime std.mem.eql(u8, cmd.name, "coreutils")) continue;
+        try installAs(cmd.name);
+    }
+}
+
+fn installAs(comptime name: []const u8) !void {
+    const result = try abi.lpc.call(abi.VfsProtocol.SymlinkRequest, .{
+        .oldpath = try abi.fs.Path.new("initfs:///sbin/coreutils"),
+        .newpath = try abi.fs.Path.new("initfs:///sbin/" ++ name),
+    }, .{
+        .cap = 4,
+    });
+    try result.asErrorUnion();
+}
 
 fn help(stdout_writer: abi.ring.Ring(u8).Writer) !void {
     try std.fmt.format(stdout_writer,

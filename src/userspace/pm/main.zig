@@ -96,14 +96,14 @@ pub fn main() !void {
     // just runs normal processes according to the init configuration
     // launches stuff like the window manager and virtual TTYs
     log.info("exec init", .{});
-    const init_pid = try system.exec(
+    const init_proc = try system.exec(
         &init_elf,
         0,
         .{},
         try caps.Frame.create(0x1000),
         try caps.Frame.create(0x1000),
     );
-    std.debug.assert(init_pid == 1);
+    std.debug.assert(init_proc.pid == 1);
 
     log.debug("pm ready", .{});
     try abi.lpc.daemon(system);
@@ -139,7 +139,7 @@ pub const System = struct {
         stdio: abi.PmProtocol.AllStdio,
         args: caps.Frame,
         env: caps.Frame,
-    ) !u32 {
+    ) !abi.PmProtocol.Process {
         const pid = try system.allocPid();
         std.debug.assert(pid != 0);
         errdefer system.freePid(pid) catch |err| {
@@ -191,7 +191,13 @@ pub const System = struct {
             .self_stdio = stdio,
         };
 
-        return pid;
+        vmem.close();
+
+        return .{
+            .process = proc,
+            .main_thread = thread,
+            .pid = pid,
+        };
     }
 
     pub fn allocPid(system: *@This()) !u32 {
@@ -284,14 +290,15 @@ fn execElf(
 
     // TODO: get file stats for setuid, exec rights, etc.
 
-    const pid = try daemon.ctx.exec(
+    const proc = try daemon.ctx.exec(
         &elf,
         uid,
         stdio,
         handler.req.arg_map,
         handler.req.env_map,
     );
-    handler.reply.send(.{ .ok = pid });
+
+    handler.reply.send(.{ .ok = proc });
 }
 
 fn getStdio(

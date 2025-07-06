@@ -93,12 +93,7 @@ fn openFile(
     const uri = try handler.req.path.getMap();
     defer uri.deinit();
 
-    log.debug("openFile({s})", .{uri.p});
     const path = try partsFromUri(uri.p);
-    log.debug("scheme = {s}", .{path.scheme});
-    log.debug("path = {s}", .{path.path});
-    log.debug("parent_path = {s}", .{path.parent_path});
-    log.debug("entry_name = {s}", .{path.entry_name});
 
     // TODO: create dirs and create file using ctx.open_opts
     // TODO: restrict access using the ctx.uid
@@ -128,7 +123,66 @@ fn openDir(
     _: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
 ) !void {
-    handler.reply.send(.{ .err = .unimplemented });
+    errdefer handler.reply.send(.{ .err = .internal });
+
+    const uri = try handler.req.path.getMap();
+    defer uri.deinit();
+
+    const path = try partsFromUri(uri.p);
+
+    const namespace = try getDir(
+        global_root.clone(),
+        path.scheme,
+        .use_existing,
+    );
+
+    const parent_dir = try getDir(
+        namespace,
+        path.parent_path,
+        handler.req.open_opts.dir_policy,
+    );
+
+    const dir = try getDir(
+        parent_dir,
+        path.entry_name,
+        handler.req.open_opts.file_policy,
+    );
+    defer dir.destroy();
+
+    dir.cache_lock.lock();
+    defer dir.cache_lock.unlock();
+    try dir.lazyLoadLocked();
+
+    var frame_size: usize = 0;
+
+    var it = dir.entries.iterator();
+    while (it.next()) |entry| {
+        frame_size += @sizeOf(abi.fs.DirEntRawNoName) + entry.key_ptr.len + 1;
+    }
+
+    const frame = try caps.Frame.create(frame_size);
+    errdefer frame.close();
+    frame_size = 0;
+
+    var frame_stream = frame.stream();
+    var frame_buffered_stream = std.io.bufferedWriter(frame_stream.writer());
+    var frame_writer = frame_buffered_stream.writer();
+    it = dir.entries.iterator();
+    while (it.next()) |entry| {
+        const header = abi.fs.DirEntRawNoName{
+            .entry_size = @intCast(@sizeOf(abi.fs.DirEntRawNoName) + entry.key_ptr.len + 1),
+            .type = entry.value_ptr.entryType(),
+        };
+        try frame_writer.writeAll(std.mem.asBytes(&header));
+        try frame_writer.writeAll(entry.key_ptr.*);
+        try frame_writer.writeAll(&.{0});
+    }
+    try frame_buffered_stream.flush();
+
+    handler.reply.send(.{ .ok = .{
+        .data = frame,
+        .count = dir.entries.count(),
+    } });
 }
 
 fn symlink(
@@ -197,6 +251,8 @@ fn partsFromUri(uri: []const u8) Error!struct {
     parent_path: []const u8,
     entry_name: []const u8,
 } {
+    // log.debug("openFile({s})", .{uri.p});
+
     var it = std.mem.splitSequence(u8, uri, "://");
     const scheme = it.next() orelse
         return Error.NotFound;
@@ -205,6 +261,11 @@ fn partsFromUri(uri: []const u8) Error!struct {
     const parent_path = std.fs.path.dirname(path) orelse
         return Error.NotFound;
     const entry_name = std.fs.path.basename(path);
+
+    // log.debug("scheme = {s}", .{scheme});
+    // log.debug("path = {s}", .{path});
+    // log.debug("parent_path = {s}", .{parent_path});
+    // log.debug("entry_name = {s}", .{entry_name});
 
     return .{
         .scheme = scheme,
@@ -410,6 +471,13 @@ const DirEntry = union(enum) {
     // be used to tell if it is a file or a dir
     file: *FileNode,
     dir: *DirNode,
+
+    fn entryType(self: @This()) abi.fs.EntType {
+        return switch (self) {
+            .file => .file,
+            .dir => .dir,
+        };
+    }
 
     fn clone(self: @This()) @This() {
         switch (self) {

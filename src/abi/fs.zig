@@ -227,3 +227,89 @@ pub const AccessiblePath = struct {
             unreachable;
     }
 };
+
+pub const EntType = enum(u8) {
+    unknown,
+    named_pipe,
+    character_device,
+    dir,
+    block_device,
+    file,
+    symlink,
+    socket,
+};
+
+pub const DirEnt = struct {
+    type: EntType,
+    name: []const u8,
+};
+
+pub const DirEntRaw = extern struct {
+    entry_size: u16,
+    type: EntType,
+    _: u8 = 0,
+    name: u8, // field address is the address of first byte of name https://github.com/ziglang/zig/issues/173
+};
+
+pub const DirEntRawNoName = extern struct {
+    entry_size: u16,
+    type: EntType,
+    _: u8 = 0,
+};
+
+pub const Dir = struct {
+    pub fn iterator(frame: caps.Frame, count: usize) !Iterator {
+        const vmem = try caps.Vmem.self();
+        errdefer vmem.close();
+
+        // FIXME: make the frame copy-on-write
+
+        const frame_size = try frame.getSize();
+        const addr = try vmem.map(
+            frame,
+            0,
+            0,
+            0,
+            .{},
+            .{},
+        );
+
+        return .{
+            .vmem = vmem,
+            .entries = @as([*]const u8, @ptrFromInt(addr))[0..frame_size],
+            .count = count,
+            .idx = 0,
+        };
+    }
+
+    pub const Iterator = struct {
+        vmem: caps.Vmem,
+        entries: []const u8,
+        count: usize,
+        idx: usize,
+
+        pub fn deinit(self: @This()) void {
+            self.vmem.unmap(
+                @intFromPtr(self.entries.ptr),
+                self.entries.len,
+            ) catch unreachable;
+            self.vmem.close();
+        }
+
+        pub fn next(self: *@This()) ?DirEnt {
+            if (self.count == 0)
+                return null;
+            self.count -= 1;
+
+            const idx = self.idx;
+            if (self.entries.len < idx + @sizeOf(DirEntRaw))
+                return null;
+
+            const entry = @as(*align(1) const DirEntRaw, @ptrCast(&self.entries[idx]));
+            const name: []const u8 = std.mem.sliceTo(self.entries[idx + @offsetOf(DirEntRaw, "name") ..], 0);
+            self.idx += entry.entry_size;
+
+            return .{ .type = entry.type, .name = name };
+        }
+    };
+};
