@@ -53,7 +53,7 @@ pub fn Daemon(comptime Ctx: type) type {
             var sys_msg: ?sys.Message = null;
             while (true) {
                 self.runOnce(&sys_msg) catch |err| {
-                    log.err("daemon handler error: {}", .{err});
+                    log.err("daemon handler wrapper error: {}", .{err});
                 };
             }
         }
@@ -86,9 +86,12 @@ pub fn Daemon(comptime Ctx: type) type {
                     // log.debug("input {}", .{v});
 
                     var reply: Reply(Resp) = .{};
-                    const res: void = try handler(self, .{ .req = v, .reply = &reply });
-                    _ = res;
                     errdefer if (reply.resp) |r| r.deinit();
+
+                    const res: void = handler(self, .{ .req = v, .reply = &reply }) catch |err| {
+                        log.err("daemon handler error: {}", .{err});
+                    };
+                    _ = res;
 
                     _sys_msg.* = if (reply.resp) |resp|
                         try self.ctx.recv.replyRecv(try resp.asSysMessage())
