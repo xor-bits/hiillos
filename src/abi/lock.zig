@@ -65,7 +65,7 @@ pub const CapMutex = struct {
     }
 };
 
-pub const YieldMutex = struct {
+pub const YieldMutex = extern struct {
     inner: SpinMutex = .{},
 
     const Self = @This();
@@ -108,7 +108,7 @@ pub const YieldMutex = struct {
     }
 };
 
-pub const SpinMutex = struct {
+pub const SpinMutex = extern struct {
     lock_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
 
     const Self = @This();
