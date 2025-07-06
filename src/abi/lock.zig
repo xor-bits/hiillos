@@ -33,12 +33,21 @@ pub const CapMutex = struct {
         return self.inner.tryLock();
     }
 
-    pub fn lock(self: *Self) void {
-        if (self.tryLock()) {
-            return;
-        } else {
-            @branchHint(.cold);
+    pub fn lockAttempts(self: *Self, attempts: usize) bool {
+        std.debug.assert(attempts != 0);
+
+        if (self.tryLock()) return;
+
+        for (0..attempts - 1) |_| {
+            self.sleepers.store(true, .seq_cst);
+            self.notify.wait();
+            if (self.tryLock()) return true;
         }
+        return false;
+    }
+
+    pub fn lock(self: *Self) void {
+        if (self.tryLock()) return;
 
         var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
         while (true) {
@@ -82,6 +91,18 @@ pub const YieldMutex = extern struct {
         return self.inner.tryLock();
     }
 
+    pub fn lockAttempts(self: *Self, attempts: usize) bool {
+        std.debug.assert(attempts != 0);
+
+        if (self.tryLock()) return true;
+
+        for (0..attempts - 1) |_| {
+            sys.selfYield();
+            if (self.tryLock()) return true;
+        }
+        return false;
+    }
+
     pub fn lock(self: *Self) void {
         if (self.tryLock()) return;
 
@@ -121,6 +142,27 @@ pub const SpinMutex = extern struct {
         return .{ .lock_state = std.atomic.Value(u8).init(1) };
     }
 
+    pub fn tryLock(self: *Self) bool {
+        if (null == self.lock_state.cmpxchgStrong(0, 1, .acquire, .monotonic)) {
+            @branchHint(.likely);
+            return true;
+        } else {
+            @branchHint(.cold);
+            return false;
+        }
+    }
+
+    pub fn lockAttempts(self: *Self, attempts: usize) bool {
+        std.debug.assert(attempts != 0);
+
+        if (self.tryLock()) return true;
+
+        for (0..attempts - 1) |_| {
+            if (self.tryLock()) return true;
+        }
+        return false;
+    }
+
     pub fn lock(self: *Self) void {
         var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
         while (null != self.lock_state.cmpxchgWeak(0, 1, .acquire, .monotonic)) {
@@ -133,16 +175,6 @@ pub const SpinMutex = extern struct {
                 }
                 std.atomic.spinLoopHint();
             }
-        }
-    }
-
-    pub fn tryLock(self: *Self) bool {
-        if (null == self.lock_state.cmpxchgStrong(0, 1, .acquire, .monotonic)) {
-            @branchHint(.likely);
-            return true;
-        } else {
-            @branchHint(.cold);
-            return false;
         }
     }
 

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const abi = @import("lib.zig");
 const caps = @import("caps.zig");
+const lock = @import("lock.zig");
 const util = @import("util.zig");
 
 //
@@ -42,10 +43,6 @@ pub const SharedRing = struct {
 };
 
 /// single reader and single writer fixed size ring buffer
-///
-/// multiple concurrent readers or multiple concurrent writers cause data corruption within the Frame
-///
-/// reading and writing at the same time is allowed
 pub fn Ring(comptime T: type) type {
     return struct {
         notify: caps.Notify,
@@ -156,6 +153,9 @@ pub fn Ring(comptime T: type) type {
             const m = self.marker();
             const s = self.storage();
 
+            m.lockWrite();
+            defer m.unlockWrite();
+
             const slot = try m.acquire(1, self.capacity) orelse
                 return error.Full;
 
@@ -185,6 +185,9 @@ pub fn Ring(comptime T: type) type {
             const m = self.marker();
             const s = self.storage();
 
+            m.lockRead();
+            defer m.unlockRead();
+
             const slot = try m.consume(1, self.capacity) orelse
                 return null;
 
@@ -213,6 +216,9 @@ pub fn Ring(comptime T: type) type {
         pub fn write(self: *const Self, buf: []const T) RingError!void {
             const m = self.marker();
             const s = self.storage();
+
+            m.lockWrite();
+            defer m.unlockWrite();
 
             const slot = try m.acquire(buf.len, self.capacity) orelse
                 return error.Full;
@@ -244,6 +250,9 @@ pub fn Ring(comptime T: type) type {
         pub fn read(self: *const Self, buf: []T) RingError![]T {
             const m = self.marker();
             const s = self.storage();
+
+            m.lockRead();
+            defer m.unlockRead();
 
             const slot = try m.consumeUpTo(buf.len, self.capacity) orelse
                 return &.{};
@@ -345,8 +354,14 @@ pub const Slot = struct {
 };
 
 pub const Marker = extern struct {
+    // well behaved apps should use the locks,
+    // but nothing bad should happen if the other end misbehaves
+    read_lock: CachePadded(lock.YieldMutex) = .{ .val = .new() },
+    write_lock: CachePadded(lock.YieldMutex) = .{ .val = .new() },
+
     read_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },
     write_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },
+
     read_waiter: CachePadded(std.atomic.Value(bool)) = .{ .val = .{ .raw = false } },
     write_waiter: CachePadded(std.atomic.Value(bool)) = .{ .val = .{ .raw = false } },
 
@@ -394,6 +409,38 @@ pub const Marker = extern struct {
             .first = read,
             .len = avail,
         };
+    }
+
+    pub fn lockWrite(self: *Self) void {
+        self.write_lock.val.lock();
+    }
+
+    pub fn tryLockWrite(self: *Self) bool {
+        return self.write_lock.val.tryLock();
+    }
+
+    pub fn lockWriteAttempts(self: *Self, attempts: usize) bool {
+        return self.write_lock.val.lockAttempts(attempts);
+    }
+
+    pub fn unlockWrite(self: *Self) void {
+        self.write_lock.val.unlock();
+    }
+
+    pub fn lockRead(self: *Self) void {
+        self.read_lock.val.lock();
+    }
+
+    pub fn tryLockRead(self: *Self) bool {
+        return self.read_lock.val.tryLock();
+    }
+
+    pub fn lockReadAttempts(self: *Self, attempts: usize) bool {
+        return self.read_lock.val.lockAttempts(attempts);
+    }
+
+    pub fn unlockRead(self: *Self) void {
+        self.read_lock.val.unlock();
     }
 
     pub fn acquire(self: *Self, n: usize, capacity: usize) RingError!?Slot {
