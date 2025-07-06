@@ -8,7 +8,7 @@ const caps = abi.caps;
 pub fn main(
     args: *abi.process.ArgIterator,
     stdin: *const abi.ring.Ring(u8),
-    stdout_writer: abi.ring.RingWriter,
+    stdout_writer: abi.ring.Ring(u8).Writer,
 ) !void {
     _ = stdin;
 
@@ -53,7 +53,7 @@ const Subcommand = enum {
     install,
 };
 
-fn help(stdout_writer: abi.ring.RingWriter) !void {
+fn help(stdout_writer: abi.ring.Ring(u8).Writer) !void {
     try std.fmt.format(stdout_writer,
         \\Hiillos Coreutils v0.0.2
         \\usage: coreutils [install]

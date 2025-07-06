@@ -6,7 +6,7 @@ const abi = @import("abi");
 pub fn main(
     args: *abi.process.ArgIterator,
     stdin: *const abi.ring.Ring(u8),
-    stdout_writer: abi.ring.RingWriter,
+    stdout_writer: abi.ring.Ring(u8).Writer,
 ) !void {
     _ = args;
     try std.fmt.format(stdout_writer, "\n> ", .{});

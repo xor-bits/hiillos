@@ -41,40 +41,6 @@ pub const SharedRing = struct {
     }
 };
 
-pub const RingReader = struct {
-    ring: *const Ring(u8),
-
-    pub const Error = RingError;
-
-    pub fn read(self: @This(), buf: []u8) Error!usize {
-        const got = try self.ring.readWait(buf);
-        return got.len;
-    }
-
-    pub fn flush(_: @This()) Error!void {}
-};
-
-pub const RingWriter = struct {
-    ring: *const Ring(u8),
-
-    pub const Error = RingError;
-
-    pub fn write(self: @This(), bytes: []const u8) Error!usize {
-        try self.writeAll(bytes);
-        return bytes.len;
-    }
-
-    pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
-        try self.ring.writeWait(bytes);
-    }
-
-    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| try self.writeAll(bytes);
-    }
-
-    pub fn flush(_: @This()) Error!void {}
-};
-
 /// single reader and single writer fixed size ring buffer
 ///
 /// multiple concurrent readers or multiple concurrent writers cause data corruption within the Frame
@@ -307,14 +273,46 @@ pub fn Ring(comptime T: type) type {
             }
         }
 
-        pub fn reader(self: *const Self) RingReader {
-            if (T != u8) @compileError("T must be u8 for RingReader");
-            return RingReader{ .ring = self };
+        pub const Reader = struct {
+            ring: *const Self,
+
+            pub const Error = RingError;
+
+            pub fn read(self: @This(), buf: []T) Error!usize {
+                const got = try self.ring.readWait(buf);
+                return got.len;
+            }
+
+            pub fn flush(_: @This()) Error!void {}
+        };
+
+        pub fn reader(self: *const Self) Reader {
+            return Reader{ .ring = self };
         }
 
-        pub fn writer(self: *const Self) RingWriter {
-            if (T != u8) @compileError("T must be u8 for RingWriter");
-            return RingWriter{ .ring = self };
+        pub const Writer = struct {
+            ring: *const Self,
+
+            pub const Error = RingError;
+
+            pub fn write(self: @This(), bytes: []const T) Error!usize {
+                try self.writeAll(bytes);
+                return bytes.len;
+            }
+
+            pub fn writeAll(self: @This(), bytes: []const T) Error!void {
+                try self.ring.writeWait(bytes);
+            }
+
+            pub fn writeBytesNTimes(self: @This(), bytes: []const T, n: usize) Error!void {
+                for (0..n) |_| try self.writeAll(bytes);
+            }
+
+            pub fn flush(_: @This()) Error!void {}
+        };
+
+        pub fn writer(self: *const Self) Writer {
+            return Writer{ .ring = self };
         }
     };
 }
