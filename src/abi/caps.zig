@@ -358,6 +358,10 @@ pub const Frame = extern struct {
 
             pub const Error = sys.Error;
 
+            pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
+                try std.fmt.format(self, fmt, args);
+            }
+
             pub fn write(self: @This(), bytes: []const u8) Error!usize {
                 try self.stream.frame.write(self.stream.write, bytes);
                 self.stream.write += bytes.len;

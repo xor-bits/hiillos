@@ -304,6 +304,10 @@ pub fn Ring(comptime T: type) type {
 
             pub const Error = RingError;
 
+            pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
+                try std.fmt.format(self, fmt, args);
+            }
+
             pub fn write(self: @This(), bytes: []const T) Error!usize {
                 try self.writeAll(bytes);
                 return bytes.len;
