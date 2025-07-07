@@ -16,11 +16,18 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         // try stdout.writeWait(&.{ ch, ch });
 
         const ch = try ctx.stdin.popWait();
-        try ctx.stdout_writer.writeAll(&.{ch});
 
-        if (ch == 8) { // backspace
+        if (std.ascii.isPrint(ch) or ch == '\n') {
+            try ctx.stdout_writer.writeAll(&.{ch});
+        }
+
+        if (ch == 8 and command_len != 0) { // backspace
             command_len -= 1;
             command[command_len] = ' ';
+            try ctx.stdout_writer.print("{} {}", .{
+                abi.escape.cursorLeft(1),
+                abi.escape.cursorLeft(1),
+            });
             continue;
         }
 

@@ -100,11 +100,29 @@ pub fn main() !void {
         .cap = import_pm.handle,
     });
 
-    var buf: [0x1000]u8 = undefined;
-    while (true) {
-        const recv = try stdout.readWait(&buf);
-        tty1.writeBytes(recv);
-        tty1.flush();
+    var stdout_reader = abi.escape.parser(
+        std.io.bufferedReader(stdout.reader()),
+    );
+
+    while (try stdout_reader.next()) |_token| {
+        const token: abi.escape.Control = _token;
+        // std.log.debug("token '{token}' ({})", .{
+        //     token,
+        //     std.meta.activeTag(token),
+        // });
+        switch (token) {
+            .ch => |byte| {
+                tty1.writeByte(byte);
+                tty1.flush();
+            },
+            .fg_colour => {},
+            .bg_colour => {},
+            .reset => {},
+            .cursor_up => tty1.cursor.y -|= 1,
+            .cursor_down => tty1.cursor.y +|= 1,
+            .cursor_right => tty1.cursor.x +|= 1,
+            .cursor_left => tty1.cursor.x -|= 1,
+        }
     }
 }
 
@@ -148,8 +166,6 @@ pub const Tty = struct {
 
     /// cpu accessible pixel buffer
     framebuffer: abi.util.Image([*]volatile u8),
-
-    skipping_escape: bool = false,
 
     pub fn new(fb_addr: usize, fb_info: *const abi.FramebufferInfoFrame) !@This() {
         var self: @This() = .{
@@ -207,23 +223,13 @@ pub const Tty = struct {
     }
 
     pub fn writeByte(self: *@This(), byte: u8) void {
-        if (self.skipping_escape and byte != 'm') {
-            return;
-        } else if (self.skipping_escape) {
-            self.skipping_escape = false;
-            return;
-        }
-
         switch (byte) {
-            '\x1B' => {
-                self.skipping_escape = true;
-                return;
+            '\r' => {
+                self.cursor.x = 0;
             },
             '\n' => {
-                self.cursor.x = self.size.width;
-            },
-            ' ' => {
-                self.cursor.x += 1;
+                self.cursor.x = 0;
+                self.cursor.y += 1;
             },
             '\t' => {
                 self.cursor.x = std.mem.alignForward(u32, self.cursor.x + 1, 4);
