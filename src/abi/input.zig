@@ -344,6 +344,7 @@ pub const KeyCode = enum(u8) {
             .key0 => '0',
             .oem_minus => '-',
             .oem_plus => '=',
+            .backspace => 8,
 
             .numpad_div => '/',
             .numpad_mul => '*',
