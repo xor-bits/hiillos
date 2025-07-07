@@ -67,6 +67,8 @@ pub const Id = enum(usize) {
     thread_stop,
     /// modify `Thread` priority, the priority can only be as high as the highest priority in the current process
     thread_set_prio,
+    /// wait for the exit code from the given `Thread`
+    thread_wait,
 
     /// create a new `Receiver` object that is the receiver end of a new IPC queue
     receiver_create,
@@ -121,6 +123,7 @@ pub const Id = enum(usize) {
     /// close a handle to some object, might or might not delete the object
     handle_close,
 
+    // FIXME: casing
     /// give up the CPU for other tasks
     selfYield,
     /// stop the active thread
@@ -425,6 +428,17 @@ pub const PackedMessage = extern struct {
     arg4: usize = 0,
 };
 
+pub const ThreadStatus = enum {
+    /// thread is not running, nor waiting
+    stopped,
+    /// thread is actively running on some CPU
+    running,
+    /// thread is ready to run, but is being starved
+    ready,
+    /// thread is blocked
+    waiting,
+};
+
 comptime {
     std.debug.assert(@sizeOf(Message) == @sizeOf([6]usize));
 }
@@ -669,6 +683,12 @@ pub fn threadSetPrio(thread: u32, prio: u2) Error!void {
     }, .{});
 }
 
+pub fn threadWait(proc: u32) Error!usize {
+    var exit_code: usize = undefined;
+    _ = try syscall(.thread_wait, .{proc}, .{&exit_code});
+    return exit_code;
+}
+
 pub fn receiverCreate() Error!u32 {
     return @intCast(try syscall(.receiver_create, .{}, .{}));
 }
@@ -808,14 +828,17 @@ pub fn selfYield() void {
     _ = syscall(.selfYield, .{}, .{}) catch unreachable;
 }
 
-pub fn selfStop() noreturn {
-    _ = syscall(.selfStop, .{}, .{}) catch {};
-    asm volatile ("mov 0, %rax"); // read from nullptr to kill the process for sure
+pub fn selfStop(code: usize) noreturn {
+    _ = syscall(.selfStop, .{code}, .{}) catch {};
     unreachable;
 }
 
 pub fn selfDump() void {
     _ = syscall(.selfDump, .{}, .{}) catch unreachable;
+}
+
+pub fn selfExit(code: usize) noreturn {
+    _ = syscall(.self_exit, .{code}, .{}) catch unreachable;
 }
 
 pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };

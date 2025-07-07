@@ -109,6 +109,10 @@ pub const Thread = extern struct {
     pub fn setPrio(this: @This(), prio: u2) sys.Error!void {
         try sys.threadSetPrio(this.cap, prio);
     }
+
+    pub fn wait(this: @This()) sys.Error!usize {
+        return try try sys.threadWait(this.cap);
+    }
 };
 
 /// capability to the virtual memory structure

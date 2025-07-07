@@ -22,5 +22,5 @@ pub fn installRuntime() void {
 
 fn _start() callconv(.SysV) noreturn {
     thread.callFn(root.main, .{});
-    sys.selfStop();
+    sys.selfStop(0);
 }

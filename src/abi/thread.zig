@@ -36,7 +36,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
         fn entryFn(raw_arg: usize) callconv(.SysV) noreturn {
             const self: *volatile @This() = @ptrFromInt(raw_arg);
             callFn(function, self.*.args);
-            sys.selfStop();
+            sys.selfStop(0);
         }
     };
 

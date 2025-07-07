@@ -26,21 +26,21 @@ pub const Thread = struct {
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
-    status: enum { stopped, running, ready, waiting } = .stopped,
+    status: abi.sys.ThreadStatus = .stopped,
+    exit_code: usize = 0,
     /// scheduler linked list
     next: ?*Thread = null,
     /// scheduler linked list
     prev: ?*Thread = null,
     /// IPC reply target
     reply: ?*Thread = null,
-
     // TODO: IPC buffer Frame where the userspace can write data freely
     // and on send, the kernel copies it (with CoW) to the destination IPC buffer
     // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
-
     /// extra ipc registers
     /// controlled by Receiver and Sender
     extra_regs: std.MultiArrayList(CapOrVal) = .{},
+    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
 
     pub const CapOrVal = union(enum) {
         cap: caps.CapabilitySlot,
@@ -99,6 +99,37 @@ pub const Thread = struct {
 
         self.refcnt.inc();
         return self;
+    }
+
+    pub fn exit(self: *@This(), exit_code: usize) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        self.status = .stopped;
+        self.exit_code = exit_code;
+        while (self.exit_waiters.popFront()) |waiter| {
+            waiter.lock.lock();
+            defer waiter.lock.unlock();
+            waiter.trap.arg0 = exit_code;
+            proc.ready(waiter);
+        }
+    }
+
+    pub fn waitExit(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) void {
+        self.lock.lock();
+
+        if (self.status == .stopped) {
+            self.lock.unlock();
+            trap.arg0 = self.exit_code;
+            return;
+        }
+
+        thread.status = .waiting;
+        thread.trap = trap.*;
+        self.exit_waiters.pushBack(thread);
+        self.lock.unlock();
+
+        proc.switchNow(trap);
     }
 
     pub fn getExtra(self: *@This(), idx: u7) CapOrVal {

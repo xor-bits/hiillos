@@ -658,6 +658,13 @@ fn handle_syscall(
             target_thread.priority = @truncate(trap.arg1);
             trap.syscall_id = abi.sys.encode(0);
         },
+        .thread_wait => {
+            const target_thread = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
+            defer target_thread.deinit();
+
+            trap.syscall_id = abi.sys.encode(0);
+            target_thread.waitExit(thread, trap);
+        },
 
         .receiver_create => {
             const recv = try caps.Receiver.init();
@@ -830,7 +837,7 @@ fn handle_syscall(
             proc.yield(trap);
         },
         .selfStop => {
-            proc.stop(thread);
+            thread.exit(trap.arg0);
             proc.switchNow(trap);
         },
         .selfDump => {
