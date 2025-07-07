@@ -18,6 +18,12 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         const ch = try ctx.stdin.popWait();
         try ctx.stdout_writer.writeAll(&.{ch});
 
+        if (ch == 8) { // backspace
+            command_len -= 1;
+            command[command_len] = ' ';
+            continue;
+        }
+
         if (ch != '\n' and command_len < command.len) {
             command[command_len] = ch;
             command_len += 1;
