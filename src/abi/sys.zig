@@ -845,10 +845,6 @@ pub fn selfDump() void {
     _ = syscall(.selfDump, .{}, .{}) catch unreachable;
 }
 
-pub fn selfExit(code: usize) noreturn {
-    _ = syscall(.self_exit, .{code}, .{}) catch unreachable;
-}
-
 pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };
 
 var mock_extra_regs: [128]ExtraReg = [1]ExtraReg{.{}} ** 128;

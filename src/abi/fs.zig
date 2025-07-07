@@ -172,7 +172,7 @@ pub const Path = union(enum(u8)) {
 
     pub fn deinit(self: @This()) void {
         switch (self) {
-            .long => |v| v.frame.deinit(),
+            .long => |v| v.frame.close(),
             else => {},
         }
     }

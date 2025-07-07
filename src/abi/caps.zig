@@ -350,7 +350,7 @@ pub const Frame = extern struct {
         };
 
         pub fn reader(this: *@This()) Reader {
-            return .{ .frame = this };
+            return .{ .stream = this };
         }
 
         pub const Writer = struct {

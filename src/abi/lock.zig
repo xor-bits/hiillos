@@ -36,7 +36,7 @@ pub const CapMutex = struct {
     pub fn lockAttempts(self: *Self, attempts: usize) bool {
         std.debug.assert(attempts != 0);
 
-        if (self.tryLock()) return;
+        if (self.tryLock()) return true;
 
         for (0..attempts - 1) |_| {
             self.sleepers.store(true, .seq_cst);

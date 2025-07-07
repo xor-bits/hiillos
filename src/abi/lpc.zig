@@ -566,9 +566,8 @@ test {
             a: u8,
             b: u32,
         } = .{ .a = 0 },
-        h: sys.Error!u32 = 0,
-        i: sys.Error = sys.Error.UnknownError,
-        j: [10]u128 = [1]u128{0} ** 10,
+        h: sys.ErrorEnum = .bad_handle,
+        i: [10]u128 = [1]u128{0} ** 10,
     };
 
     try std.testing.fuzz({}, struct {
@@ -584,15 +583,9 @@ test {
             } else {
                 input_val.g = .{ .b = @bitCast(std.mem.asBytes(&input_val.g)[0..@sizeOf(u32)].*) };
             }
-            if (input.len >= 2 and input[1] >= 0x80) {
-                input_val.h = sys.intToError(input[1]);
-            } else {
-                input_val.h = 545;
-            }
-            input_val.i = sys.intToError(if (input.len >= 3) input[2] else 4);
 
             const msg = serialize(input_val) catch return;
-            const output_val = deserialize(T, msg) catch return orelse return;
+            const output_val = deserialize(T, msg) catch return;
 
             try std.testing.expect(input_val.a == output_val.a);
             try std.testing.expect(input_val.b == output_val.b);
@@ -609,21 +602,8 @@ test {
                 .a => |v| try std.testing.expect(v == output_val.g.a),
                 .b => |v| try std.testing.expect(v == output_val.g.b),
             }
-            if (input_val.h) |ok1| {
-                if (output_val.h) |ok2| {
-                    try std.testing.expect(ok1 == ok2);
-                } else |_| {
-                    return error.TestUnexpectedResult;
-                }
-            } else |err1| {
-                if (output_val.h) |_| {
-                    return error.TestUnexpectedResult;
-                } else |err2| {
-                    try std.testing.expect(err1 == err2);
-                }
-            }
-            try std.testing.expect(input_val.i == output_val.i);
-            try std.testing.expect(std.mem.eql(u128, &input_val.j, &output_val.j));
+            try std.testing.expect(input_val.h == output_val.h);
+            try std.testing.expect(std.mem.eql(u128, &input_val.i, &output_val.i));
         }
     }.testOne, .{});
 }
