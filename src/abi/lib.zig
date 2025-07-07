@@ -90,7 +90,7 @@ pub fn Result(comptime Ok: type, comptime Err: type) type {
             if (v) |ok| {
                 return .{ .ok = ok };
             } else |err| {
-                return .{ .err = @enumFromInt(sys.errorToInt(err)) };
+                return .{ .err = sys.errorToEnum(err) };
             }
         }
 
@@ -99,7 +99,7 @@ pub fn Result(comptime Ok: type, comptime Err: type) type {
 
             switch (self) {
                 .ok => |v| return v,
-                .err => |v| return sys.intToError(@intFromEnum(v)),
+                .err => |v| return sys.enumToError(v),
             }
         }
     };

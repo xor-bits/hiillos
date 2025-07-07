@@ -334,6 +334,14 @@ pub fn intToError(i: usize) Error {
     }
 }
 
+pub fn errorToEnum(err: Error) ErrorEnum {
+    return @enumFromInt(errorToInt(err));
+}
+
+pub fn enumToError(err: ErrorEnum) Error {
+    return intToError(@intFromEnum(err));
+}
+
 pub fn Result(comptime Ok: type) type {
     return abi.Result(Ok, ErrorEnum);
 }

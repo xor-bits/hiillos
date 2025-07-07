@@ -86,16 +86,21 @@ fn openFile(
     _: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenFileRequest),
 ) !void {
-    errdefer handler.reply.send(.{ .err = .internal });
+    if (openFileInner(handler)) |ok| {
+        handler.reply.send(.{ .ok = ok });
+    } else |err| {
+        handler.reply.send(.{ .err = abi.sys.errorToEnum(err) });
+    }
+}
 
-    // TODO: error handling with `handler.reply.unwrapResult`
-
+fn openFileInner(
+    handler: abi.lpc.Handler(abi.VfsProtocol.OpenFileRequest),
+) !caps.Frame {
     const uri = try handler.req.path.getMap();
     defer uri.deinit();
 
     const path = try partsFromUri(uri.p);
 
-    // TODO: create dirs and create file using ctx.open_opts
     // TODO: restrict access using the ctx.uid
 
     const namespace = try getDir(
@@ -116,15 +121,23 @@ fn openFile(
     );
     defer file.destroy();
 
-    handler.reply.send(.{ .ok = try file.getFrame() });
+    return try file.getFrame();
 }
 
 fn openDir(
     _: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
 ) !void {
-    errdefer handler.reply.send(.{ .err = .internal });
+    if (openDirInner(handler)) |ok| {
+        handler.reply.send(.{ .ok = ok });
+    } else |err| {
+        handler.reply.send(.{ .err = abi.sys.errorToEnum(err) });
+    }
+}
 
+fn openDirInner(
+    handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
+) !abi.VfsProtocol.DirEnts {
     const uri = try handler.req.path.getMap();
     defer uri.deinit();
 
@@ -179,20 +192,26 @@ fn openDir(
     }
     try frame_buffered_stream.flush();
 
-    handler.reply.send(.{ .ok = .{
+    return .{
         .data = frame,
         .count = dir.entries.count(),
-    } });
+    };
 }
 
 fn symlink(
     _: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.SymlinkRequest),
 ) !void {
-    errdefer handler.reply.send(.{ .err = .internal });
+    if (symlinkInner(handler)) |ok| {
+        handler.reply.send(.{ .ok = ok });
+    } else |err| {
+        handler.reply.send(.{ .err = abi.sys.errorToEnum(err) });
+    }
+}
 
-    // TODO: error handling with `handler.reply.unwrapResult`
-
+fn symlinkInner(
+    handler: abi.lpc.Handler(abi.VfsProtocol.SymlinkRequest),
+) !void {
     const old_uri = try handler.req.oldpath.getMap();
     defer old_uri.deinit();
     const old_path = try partsFromUri(old_uri.p);
@@ -226,8 +245,6 @@ fn symlink(
     defer new_parent_dir.destroy();
 
     try new_parent_dir.add(new_path.entry_name, old_entry);
-
-    handler.reply.send(.{ .ok = {} });
 }
 
 fn newSender(
@@ -239,7 +256,14 @@ fn newSender(
         return;
     }
 
-    const sender = try caps.Sender.create(daemon.ctx.recv, handler.req.uid);
+    const sender = caps.Sender.create(
+        daemon.ctx.recv,
+        handler.req.uid,
+    ) catch |err| {
+        log.err("failed to create a sender: {}", .{err});
+        handler.reply.send(.{ .err = .internal });
+        return;
+    };
     handler.reply.send(.{ .ok = sender });
 }
 
