@@ -137,9 +137,11 @@ pub fn kb_reader(stdin: abi.ring.Ring(u8)) !void {
         );
         try res;
 
-        if (state == .release) continue;
+        const is_shift = code == .left_shift or code == .left_shift;
+        if (state == .press and is_shift) shift = true;
+        if (state == .release and is_shift) shift = false;
 
-        if (code == .left_shift or code == .left_shift) shift = !shift;
+        if (state == .release) continue;
 
         if (if (shift) code.toCharShift() else code.toChar()) |ch| {
             try stdin.push(ch);
