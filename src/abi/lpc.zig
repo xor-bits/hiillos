@@ -137,7 +137,7 @@ pub fn Reply(comptime T: type) type {
             self.resp = serializeInner(response);
         }
 
-        pub fn detach(self: @This()) sys.Error!DetachedReply(T) {
+        pub fn detach(self: *@This()) sys.Error!DetachedReply(T) {
             self.detached = true;
             return .{ .detached = try caps.Reply.create() };
         }
