@@ -39,6 +39,15 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         const cmd = command[0..command_len];
         command_len = 0;
 
+        if (cmd.len == 0) {
+            try std.fmt.format(
+                ctx.stdout_writer,
+                "\n> ",
+                .{},
+            );
+            continue;
+        }
+
         const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
             .arg_map = try createArgMap(cmd),
             .env_map = try caps.Frame.create(0x1000),
