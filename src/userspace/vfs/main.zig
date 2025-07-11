@@ -103,20 +103,13 @@ fn openFileInner(
 
     // TODO: restrict access using the ctx.uid
 
-    const namespace = try getDir(
-        global_root.clone(),
-        path.scheme,
-        .use_existing,
-    );
+    const namespace = try global_root.clone()
+        .getDir(path.scheme, .use_existing);
 
-    const parent_dir = try getDir(
+    const file = try getFile(
         namespace,
-        path.parent_path,
+        path.path,
         handler.req.open_opts.dir_policy,
-    );
-
-    const file = try parent_dir.getFile(
-        path.entry_name,
         handler.req.open_opts.file_policy,
     );
     defer file.destroy();
@@ -143,21 +136,13 @@ fn openDirInner(
 
     const path = try partsFromUri(uri.p);
 
-    const namespace = try getDir(
-        global_root.clone(),
-        path.scheme,
-        .use_existing,
-    );
-
-    const parent_dir = try getDir(
-        namespace,
-        path.parent_path,
-        handler.req.open_opts.dir_policy,
-    );
+    const namespace = try global_root.clone()
+        .getDir(path.scheme, .use_existing);
 
     const dir = try getDir(
-        parent_dir,
-        path.entry_name,
+        namespace,
+        path.path,
+        handler.req.open_opts.dir_policy,
         handler.req.open_opts.file_policy,
     );
     defer dir.destroy();
@@ -173,7 +158,7 @@ fn openDirInner(
         frame_size += @sizeOf(abi.fs.DirEntRawNoName) + entry.key_ptr.len + 1;
     }
 
-    const frame = try caps.Frame.create(frame_size);
+    const frame = try caps.Frame.create(@max(frame_size, 0x1000));
     errdefer frame.close();
     frame_size = 0;
 
@@ -216,35 +201,34 @@ fn symlinkInner(
     defer old_uri.deinit();
     const old_path = try partsFromUri(old_uri.p);
 
-    const old_namespace = try getDir(
-        global_root.clone(),
-        old_path.scheme,
-        .use_existing,
-    );
-    const old_parent_dir = try getDir(
-        old_namespace,
-        old_path.parent_path,
-        .use_existing,
-    );
-    const old_entry = try old_parent_dir.get(old_path.entry_name, .use_existing);
-
     const new_uri = try handler.req.newpath.getMap();
     defer new_uri.deinit();
     const new_path = try partsFromUri(new_uri.p);
 
-    const new_namespace = try getDir(
-        global_root.clone(),
-        new_path.scheme,
+    const new_path_parent = std.fs.path.dirname(new_path.path) orelse
+        return Error.NotFound;
+    const new_path_entry = std.fs.path.basename(new_path.path);
+
+    const old_namespace = try global_root.clone()
+        .getDir(old_path.scheme, .use_existing);
+    const old_entry = try get(
+        old_namespace,
+        old_path.path,
+        .use_existing,
         .use_existing,
     );
+
+    const new_namespace = try global_root.clone()
+        .getDir(old_path.scheme, .use_existing);
     const new_parent_dir = try getDir(
         new_namespace,
-        new_path.parent_path,
+        new_path_parent,
+        .use_existing,
         .use_existing,
     );
     defer new_parent_dir.destroy();
 
-    try new_parent_dir.add(new_path.entry_name, old_entry);
+    try new_parent_dir.add(new_path_entry, old_entry);
 }
 
 fn newSender(
@@ -272,30 +256,19 @@ fn newSender(
 fn partsFromUri(uri: []const u8) Error!struct {
     scheme: []const u8,
     path: []const u8,
-    parent_path: []const u8,
-    entry_name: []const u8,
 } {
-    // log.debug("openFile({s})", .{uri.p});
+    log.debug("partsFromUri({s})", .{uri});
 
     var it = std.mem.splitSequence(u8, uri, "://");
     const scheme = it.next() orelse
         return Error.NotFound;
     const path = it.rest();
-
-    const parent_path = std.fs.path.dirname(path) orelse
-        return Error.NotFound;
-    const entry_name = std.fs.path.basename(path);
-
-    // log.debug("scheme = {s}", .{scheme});
-    // log.debug("path = {s}", .{path});
-    // log.debug("parent_path = {s}", .{parent_path});
-    // log.debug("entry_name = {s}", .{entry_name});
+    log.debug(" - scheme = {s}", .{scheme});
+    log.debug(" - path = {s}", .{path});
 
     return .{
         .scheme = scheme,
         .path = path,
-        .parent_path = parent_path,
-        .entry_name = entry_name,
     };
 }
 
@@ -361,20 +334,72 @@ fn putAny(dir: *DirNode, basename: []const u8, new: DirEntry) !void {
     get_or_put.value_ptr.* = new;
 }
 
+// will take ownership of `namespace` and returns an owned `DirEntry`
+fn get(
+    namespace: *DirNode,
+    path: []const u8,
+    missing_dir_policy: abi.fs.OpenOptions.MissingPolicy,
+    missing_entry_policy: abi.fs.OpenOptions.MissingPolicy,
+) !DirEntry {
+    const parent_path = std.fs.path.dirname(path);
+    const entry_name = std.fs.path.basename(path);
+    log.debug(" - parent_path = {s}", .{parent_path orelse "<null>"});
+    log.debug(" - entry_name = {s}", .{entry_name});
+
+    var current = namespace;
+    if (parent_path) |_parent_path| {
+        var it = abi.fs.path.absolutePartIterator(_parent_path);
+        while (it.next()) |part| {
+            current = try current.getDir(
+                part.name,
+                missing_dir_policy,
+            );
+        }
+    }
+
+    if (entry_name.len == 0) {
+        return .{ .dir = current };
+    }
+
+    return current.get(entry_name, missing_entry_policy);
+}
+
 // will take ownership of `namespace` and returns an owned `*DirNode`
 fn getDir(
     namespace: *DirNode,
-    relative_path: []const u8,
-    missing_policy: abi.fs.OpenOptions.MissingPolicy,
+    path: []const u8,
+    missing_dir_policy: abi.fs.OpenOptions.MissingPolicy,
+    missing_entry_policy: abi.fs.OpenOptions.MissingPolicy,
 ) !*DirNode {
-    var current = namespace;
+    const node = try get(
+        namespace,
+        path,
+        missing_dir_policy,
+        missing_entry_policy,
+    );
+    errdefer node.destroy();
 
-    var it = abi.fs.path.absolutePartIterator(relative_path);
-    while (it.next()) |part| {
-        current = try current.getDir(part.name, missing_policy);
-    }
+    if (node != .dir) return Error.NotFound;
+    return node.dir;
+}
 
-    return current;
+// will take ownership of `namespace` and returns an owned `*FileNode`
+fn getFile(
+    namespace: *DirNode,
+    path: []const u8,
+    missing_dir_policy: abi.fs.OpenOptions.MissingPolicy,
+    missing_entry_policy: abi.fs.OpenOptions.MissingPolicy,
+) !*FileNode {
+    const node = try get(
+        namespace,
+        path,
+        missing_dir_policy,
+        missing_entry_policy,
+    );
+    errdefer node.destroy();
+
+    if (node != .file) return Error.NotFound;
+    return node.file;
 }
 
 fn printTreeRec(dir: *DirNode) !void {
