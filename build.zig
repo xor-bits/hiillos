@@ -261,6 +261,7 @@ fn createInitfsTarZst(
         "ps2",
         "tty",
         "vfs",
+        "wm",
     };
 
     // create virtual initfs.tar.zst root

@@ -39,6 +39,11 @@ pub export var import_pci = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
+pub export var import_tty = abi.loader.Resource.new(.{
+    .name = "hiillos.tty.ipc",
+    .ty = .sender,
+});
+
 //
 
 pub fn main() !void {
@@ -180,6 +185,8 @@ pub const System = struct {
         std.debug.assert(id == caps.COMMON_ARG_MAP.cap);
         id = try proc.giveHandle(env);
         std.debug.assert(id == caps.COMMON_ENV_MAP.cap);
+        id = try proc.giveHandle(try (caps.Sender{ .cap = import_tty.handle }).clone());
+        std.debug.assert(id == caps.COMMON_TTY.cap);
 
         try thread.start();
 

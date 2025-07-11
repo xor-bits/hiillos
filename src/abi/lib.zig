@@ -396,6 +396,24 @@ pub const VfsProtocol = struct {
     });
 };
 
+pub const TtyProtocol = struct {
+    pub const SeatResponse = struct {
+        fb: caps.Frame,
+        fb_info: caps.Frame,
+        // input: ring.SharedRing,
+        input: caps.Sender,
+    };
+
+    pub const SeatRequest = struct {
+        pub const Response = Result(SeatResponse, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        SeatRequest,
+    });
+};
+
 // pub const FdProtocol = util.Protocol(struct {
 //     // TODO: pager backed Frames
 //     /// create a (possibly shared) handle to contents of a file

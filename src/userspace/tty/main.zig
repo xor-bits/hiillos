@@ -41,8 +41,17 @@ pub export var import_pm = abi.loader.Resource.new(.{
 
 //
 
+var ttys = [1]?Tty{null};
+var seat_lock: abi.lock.CapMutex = undefined;
+
+//
+
 pub fn main() !void {
     log.info("hello from tty", .{});
+
+    seat_lock = try .new();
+
+    try abi.thread.spawn(seatListener, .{});
 
     const vmem = try caps.Vmem.self();
     defer vmem.close();
@@ -71,9 +80,10 @@ pub fn main() !void {
     const fb = @as([*]volatile u32, @ptrFromInt(fb_addr))[0 .. fb_info.pitch * fb_info.height];
     abi.util.fillVolatile(u32, fb, 0);
 
-    var tty1 = try Tty.new(fb_addr, fb_info);
-    tty1.writeBytes("hello from tty1\n");
-    tty1.flush();
+    ttys[0] = try Tty.new(fb_addr, fb_info);
+    const tty = &ttys[0].?;
+    tty.writeBytes("hello from tty1\n");
+    tty.flush();
 
     const stdin = try abi.ring.Ring(u8).new(0x8000);
     defer stdin.deinit();
@@ -112,16 +122,19 @@ pub fn main() !void {
         // });
         switch (token) {
             .ch => |byte| {
-                tty1.writeByte(byte);
-                tty1.flush();
+                seat_lock.lock();
+                defer seat_lock.unlock();
+
+                tty.writeByte(byte);
+                tty.flush();
             },
             .fg_colour => {},
             .bg_colour => {},
             .reset => {},
-            .cursor_up => tty1.cursor.y -|= 1,
-            .cursor_down => tty1.cursor.y +|= 1,
-            .cursor_right => tty1.cursor.x +|= 1,
-            .cursor_left => tty1.cursor.x -|= 1,
+            .cursor_up => tty.cursor.y -|= 1,
+            .cursor_down => tty.cursor.y +|= 1,
+            .cursor_right => tty.cursor.x +|= 1,
+            .cursor_left => tty.cursor.x -|= 1,
         }
     }
 }
@@ -141,6 +154,9 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
             .mouse => continue,
         };
 
+        seat_lock.lock();
+        defer seat_lock.unlock();
+
         const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
         if (kb_ev.state == .press and is_shift) shift = true;
         if (kb_ev.state == .release and is_shift) shift = false;
@@ -152,6 +168,42 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
         }
     }
 }
+
+pub fn seatListener() !void {
+    abi.lpc.daemon(SeatServer{
+        .recv = .{ .cap = export_tty.handle },
+    });
+}
+
+fn seatRequest(
+    _: *abi.lpc.Daemon(SeatServer),
+    handler: abi.lpc.Handler(abi.TtyProtocol.SeatRequest),
+) !void {
+    if (!seat_lock.tryLock()) return handler.reply.send(.{
+        .err = .already_mapped,
+    });
+    // leak the lock
+
+    errdefer handler.reply.send(.{ .err = .internal });
+    const fb = try (caps.Frame{ .cap = import_fb.handle }).clone();
+    const fb_info = try (caps.Frame{ .cap = import_fb_info.handle }).clone();
+    const ps2 = try (caps.Sender{ .cap = import_ps2.handle }).clone();
+
+    handler.reply.send(.{ .ok = .{
+        .fb = fb,
+        .fb_info = fb_info,
+        .input = ps2,
+    } });
+}
+
+const SeatServer = struct {
+    recv: caps.Receiver,
+
+    pub const routes = .{
+        seatRequest,
+    };
+    pub const Request = abi.TtyProtocol.Request;
+};
 
 pub const Tty = struct {
     /// currently visible text data
