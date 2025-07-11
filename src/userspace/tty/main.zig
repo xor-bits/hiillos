@@ -86,7 +86,7 @@ pub fn main() !void {
     @memset(stdout.storage(), 0);
     @memset(stderr.storage(), 0);
 
-    try abi.thread.spawn(kb_reader, .{stdin});
+    try abi.thread.spawn(kbReader, .{stdin});
 
     _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
         .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install\x00--sh"),
@@ -126,24 +126,28 @@ pub fn main() !void {
     }
 }
 
-pub fn kb_reader(stdin: abi.ring.Ring(u8)) !void {
-    const ps2 = abi.Ps2Protocol.Client().init(.{ .cap = import_ps2.handle });
-
+pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
     var shift = false;
     while (true) {
-        const res, const code: abi.input.KeyCode, const state: abi.input.KeyState = try ps2.call(
-            .nextKey,
-            {},
+        const ev_result = try abi.lpc.call(
+            abi.Ps2Protocol.Next,
+            .{},
+            .{ .cap = import_ps2.handle },
         );
-        try res;
+        const ev = try ev_result.asErrorUnion();
 
-        const is_shift = code == .left_shift or code == .left_shift;
-        if (state == .press and is_shift) shift = true;
-        if (state == .release and is_shift) shift = false;
+        const kb_ev = switch (ev) {
+            .keyboard => |_kb_ev| _kb_ev,
+            .mouse => continue,
+        };
 
-        if (state == .release) continue;
+        const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
+        if (kb_ev.state == .press and is_shift) shift = true;
+        if (kb_ev.state == .release and is_shift) shift = false;
 
-        if (if (shift) code.toCharShift() else code.toChar()) |ch| {
+        if (kb_ev.state == .release) continue;
+
+        if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
             try stdin.push(ch);
         }
     }

@@ -24,17 +24,13 @@ const color: u32 = 0xFF8000;
 // const color: u32 = 0xFFFFFF;
 // const color: u32 = 0x000000;
 
-const pm = abi.PmProtocol.Client().init(caps.Sender{ .cap = 1 });
-const hpet = abi.HpetProtocol.Client().init(caps.Sender{ .cap = 2 });
-const ps2 = abi.Ps2Protocol.Client().init(caps.Sender{ .cap = 3 });
-const vfs = abi.VfsProtocol.Client().init(caps.Sender{ .cap = 4 });
-const fb_frame = caps.Frame{ .cap = 5 };
-const fb_info_frame = caps.Frame{ .cap = 6 };
-
 //
 
 pub fn spinnerMain() !void {
     const vmem = try caps.Vmem.self();
+
+    const fb_frame = caps.Frame{ .cap = 0 };
+    const fb_info_frame = caps.Frame{ .cap = 0 };
 
     // {
     //     const thread = try caps.Thread.self();
@@ -77,13 +73,21 @@ fn tickKey() !void {
     var local_dir: i32 = 1;
 
     while (true) {
-        const res, _, const state: abi.input.KeyState = try ps2.call(
-            .nextKey,
-            {},
+        const ev_result = try abi.lpc.call(
+            abi.Ps2Protocol.Next,
+            .{},
+            abi.caps.COMMON_PS2,
         );
-        try res;
+        const ev = try ev_result.asErrorUnion();
 
-        if (state == .release) continue;
+        switch (ev) {
+            .keyboard => |kb_ev| {
+                if (kb_ev.state == .release) continue;
+            },
+            .mouse => {
+                continue;
+            },
+        }
 
         local_dir = -local_dir;
         dir.store(local_dir, .monotonic);
@@ -130,7 +134,7 @@ fn framebufferSplash(
     const mid_x = width / 2;
     const mid_y = height / 2;
 
-    const _nanos = try hpet.call(.timestamp, {});
+    const _nanos = try abi.caps.COMMON_HPET.call(.timestamp, {});
     var nanos: u128 = _nanos.@"0";
     var phase: i128 = 0;
     while (true) {
@@ -143,7 +147,7 @@ fn framebufferSplash(
 
         phase += dir.load(.monotonic) * frametime_ns;
         nanos += frametime_ns;
-        _ = hpet.call(.sleepDeadline, .{nanos}) catch break;
+        _ = abi.caps.COMMON_HPET.call(.sleepDeadline, .{nanos}) catch break;
     }
 }
 

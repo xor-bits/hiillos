@@ -1,3 +1,8 @@
+pub const Event = union(enum) {
+    mouse: MouseEvent,
+    keyboard: KeyEvent,
+};
+
 pub const KeyState = enum(u8) {
     press,
     release,

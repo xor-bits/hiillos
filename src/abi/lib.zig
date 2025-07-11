@@ -418,10 +418,16 @@ pub const HpetProtocol = util.Protocol(struct {
     sleepDeadline: fn (nanos: u128) void,
 });
 
-pub const Ps2Protocol = util.Protocol(struct {
-    /// wait for the next keyboard input
-    nextKey: fn () struct { sys.Error!void, input.KeyCode, input.KeyState },
-});
+pub const Ps2Protocol = struct {
+    pub const Next = struct {
+        pub const Response = Result(input.Event, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        Next,
+    });
+};
 
 pub const FramebufferInfoFrame = extern struct {
     width: usize = 0,

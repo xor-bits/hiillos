@@ -161,11 +161,11 @@ pub const System = struct {
 
         var id: u32 = 0;
         id = try proc.giveHandle(try caps.Sender.create(system.recv, pid));
-        std.debug.assert(id == 1);
+        std.debug.assert(id == caps.COMMON_PM.cap);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_hpet.handle }).clone());
-        std.debug.assert(id == 2);
+        std.debug.assert(id == caps.COMMON_HPET.tx.cap);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_ps2.handle }).clone());
-        std.debug.assert(id == 3);
+        std.debug.assert(id == caps.COMMON_PS2.cap);
 
         const file_resp = try abi.lpc.call(
             abi.VfsProtocol.NewSenderRequest,
@@ -175,11 +175,11 @@ pub const System = struct {
         const vfs_ipc = try file_resp.asErrorUnion();
 
         id = try proc.giveHandle(vfs_ipc);
-        std.debug.assert(id == 4);
+        std.debug.assert(id == caps.COMMON_VFS.cap);
         id = try proc.giveHandle(args);
-        std.debug.assert(id == 5);
+        std.debug.assert(id == caps.COMMON_ARG_MAP.cap);
         id = try proc.giveHandle(env);
-        std.debug.assert(id == 6);
+        std.debug.assert(id == caps.COMMON_ENV_MAP.cap);
 
         try thread.start();
 

@@ -293,19 +293,17 @@ pub const Mouse = struct {
         if (abi.conf.LOG_KEYS)
             log.info("mouse ev: {}", .{ev});
 
-        // main.waiting_lock.lock();
-        // defer main.waiting_lock.unlock();
+        main.waiting_lock.lock();
+        defer main.waiting_lock.unlock();
 
-        // for (main.waiting.items) |reply| {
-        //     abi.Ps2Protocol.replyTo(reply, .nextKey, .{
-        //         {},
-        //         ev.code,
-        //         ev.state,
-        //     }) catch |err| {
-        //         log.warn("ps2 failed to reply: {}", .{err});
-        //     };
-        // }
-        // main.waiting.clearRetainingCapacity();
+        for (main.waiting.items) |*reply| {
+            reply.send(
+                .{ .ok = .{ .mouse = ev } },
+            ) catch |err| {
+                log.warn("ps2 failed to reply: {}", .{err});
+            };
+        }
+        main.waiting.clearRetainingCapacity();
         // log.info("key event {}", .{ev});
     }
 };

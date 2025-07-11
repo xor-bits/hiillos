@@ -164,12 +164,10 @@ pub const Keyboard = struct {
                 main.waiting_lock.lock();
                 defer main.waiting_lock.unlock();
 
-                for (main.waiting.items) |reply| {
-                    abi.Ps2Protocol.replyTo(reply, .nextKey, .{
-                        {},
-                        ev.code,
-                        ev.state,
-                    }) catch |err| {
+                for (main.waiting.items) |*reply| {
+                    reply.send(
+                        .{ .ok = .{ .keyboard = ev } },
+                    ) catch |err| {
                         log.warn("ps2 failed to reply: {}", .{err});
                     };
                 }

@@ -17,7 +17,7 @@ const KeyCode = abi.input.KeyCode;
 const KeyState = abi.input.KeyState;
 
 pub var waiting_lock: abi.lock.YieldMutex = .{};
-pub var waiting: std.ArrayList(caps.Reply) = .init(abi.mem.slab_allocator);
+pub var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .init(abi.mem.slab_allocator);
 
 var controller: Controller = undefined;
 
@@ -68,49 +68,36 @@ pub fn main() !void {
     try abi.thread.spawn(mouse.run, .{&controller});
 
     log.info("ps2 init done, server listening", .{});
-    var server = abi.Ps2Protocol.Server(
-        .{
-            .scope = if (abi.conf.LOG_SERVERS) .ps2 else null,
-        },
-        .{
-            .nextKey = nextKeyHandler,
-        },
-    ).init({}, caps.Receiver{ .cap = export_ps2.handle });
-
-    var msg: abi.sys.Message = undefined;
-    while (true) {
-        msg = try server.rx.recv();
-        try server.process(&msg);
-    }
+    abi.lpc.daemon(System{
+        .recv = caps.Receiver{ .cap = export_ps2.handle },
+    });
 }
 
-fn nextKeyHandler(_: void, _: u32, _: void) struct { Error!void, KeyCode, KeyState } {
+fn next(
+    _: *abi.lpc.Daemon(System),
+    handler: abi.lpc.Handler(abi.Ps2Protocol.Next),
+) !void {
     waiting_lock.lock();
     defer waiting_lock.unlock();
 
     // FIXME: keyboard inputs can be missed
     // TODO: create IPC pipes for each input listener
 
-    const reply = caps.Reply.create() catch |err| {
-        log.err("failed to create a reply cap: {}", .{err});
-        return .{ {}, .escape, .press };
-    };
-
+    var reply = try handler.reply.detach();
     waiting.append(reply) catch |err| {
         log.err("failed to add a reply cap: {}", .{err});
-        abi.Ps2Protocol.replyTo(reply, .nextKey, .{
-            Error.Internal,
-            .escape,
-            .press,
-        }) catch |err2| {
-            log.err("failed to send error: {}", .{err2});
-        };
-        return .{ {}, .escape, .press };
+        try reply.send(.{ .err = .internal });
     };
-
-    // the reply doesnt happen from here
-    return .{ {}, .escape, .press };
 }
+
+const System = struct {
+    recv: caps.Receiver,
+
+    pub const routes = .{
+        next,
+    };
+    pub const Request = abi.Ps2Protocol.Request;
+};
 
 //
 
