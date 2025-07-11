@@ -12,16 +12,14 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
     var command_len: usize = 0;
 
     while (true) {
-        // const ch = try stdin.popWait();
-        // try stdout.writeWait(&.{ ch, ch });
-
         const ch = try ctx.stdin.popWait();
 
         if (std.ascii.isPrint(ch) or ch == '\n') {
             try ctx.stdout_writer.writeAll(&.{ch});
         }
 
-        if (ch == 8 and command_len != 0) { // backspace
+        if (ch == 8) { // backspace
+            if (command_len == 0) continue;
             command_len -= 1;
             command[command_len] = ' ';
             try ctx.stdout_writer.print("{} {}", .{
