@@ -10,12 +10,14 @@ pub const Command = enum {
     coreutils,
     ls,
     sh,
+    sleep,
 };
 
 const commands = .{
     .coreutils = @import("coreutils.zig"),
     .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
+    .sleep = @import("sleep.zig"),
 };
 
 pub var stdio: abi.PmProtocol.AllStdio = undefined;
