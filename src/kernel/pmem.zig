@@ -6,10 +6,10 @@ const limine = @import("limine");
 const main = @import("main.zig");
 const arch = @import("arch.zig");
 const addr = @import("addr.zig");
-const util = @import("util.zig");
 
 const log = std.log.scoped(.pmem);
 const conf = abi.conf;
+const volat = abi.util.volat;
 
 //
 
@@ -92,14 +92,14 @@ pub fn printBits(comptime print: bool) usize {
 
         if (print)
             log.info("free {}B chunks: {}", .{
-                util.NumberPrefix(usize, .binary).new(level.key.sizeBytes()),
+                abi.util.NumberPrefix(usize, .binary).new(level.key.sizeBytes()),
                 unused,
             });
     }
 
     if (print)
         log.info("total free: {}B", .{
-            util.NumberPrefix(usize, .binary).new(total_unused),
+            abi.util.NumberPrefix(usize, .binary).new(total_unused),
         });
 
     return total_unused;

@@ -6,7 +6,6 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const lazy = @import("lazy.zig");
-const util = @import("util.zig");
 
 const log = std.log.scoped(.hpet);
 

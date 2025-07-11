@@ -8,10 +8,8 @@ const caps = @import("caps.zig");
 const lazy = @import("lazy.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
-const util = @import("util.zig");
 
 const font = abi.font;
-const volat = abi.util.volat;
 
 //
 

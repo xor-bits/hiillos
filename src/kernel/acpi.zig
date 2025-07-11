@@ -7,10 +7,8 @@ const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const hpet = @import("hpet.zig");
-const util = @import("util.zig");
 
 const log = std.log.scoped(.acpi);
-const volat = util.volat;
 
 //
 

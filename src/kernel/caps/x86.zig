@@ -6,7 +6,6 @@ const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
-const util = @import("../util.zig");
 
 //
 

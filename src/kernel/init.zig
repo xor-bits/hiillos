@@ -11,11 +11,9 @@ const fb = @import("fb.zig");
 const hpet = @import("hpet.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
-const util = @import("util.zig");
 
 const log = std.log.scoped(.init);
 const Error = abi.sys.Error;
-const volat = util.volat;
 
 //
 

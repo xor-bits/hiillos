@@ -8,7 +8,6 @@ const caps = @import("../caps.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const util = @import("../util.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);

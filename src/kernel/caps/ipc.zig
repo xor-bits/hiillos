@@ -7,7 +7,6 @@ const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
-const util = @import("../util.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
