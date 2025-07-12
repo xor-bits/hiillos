@@ -16,14 +16,14 @@ const conf = abi.conf;
 
 //
 
-pub const IRQ_TIMER: u8 = 43;
-pub const IRQ_IPI_PREEMPT: u8 = 44;
-pub const IRQ_IPI_PANIC: u8 = 45;
-pub const IRQ_IPI_TLB_SHOOTDOWN: u8 = 46;
+pub const IRQ_TIMER: u8 = 251;
+pub const IRQ_IPI_PREEMPT: u8 = 252;
+pub const IRQ_IPI_TLB_SHOOTDOWN: u8 = 253;
+pub const IRQ_IPI_PANIC: u8 = 254;
 pub const IRQ_SPURIOUS: u8 = 255;
 
-pub const IRQ_AVAIL_LOW: u8 = 47;
-pub const IRQ_AVAIL_HIGH: u8 = 254;
+pub const IRQ_AVAIL_LOW: u8 = 44;
+pub const IRQ_AVAIL_HIGH: u8 = 250;
 pub const IRQ_AVAIL_COUNT = IRQ_AVAIL_HIGH - IRQ_AVAIL_LOW + 1;
 
 pub const APIC_SW_ENABLE: u32 = 1 << 8;
