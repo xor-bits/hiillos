@@ -77,7 +77,9 @@ const Server = struct {
         openFile,
         openDir,
         symlink,
+        link,
         newSender,
+        connect,
     };
     pub const Request = abi.VfsProtocol.Request;
 };
@@ -219,7 +221,7 @@ fn symlinkInner(
     );
 
     const new_namespace = try global_root.clone()
-        .getDir(old_path.scheme, .use_existing);
+        .getDir(new_path.scheme, .use_existing);
     const new_parent_dir = try getDir(
         new_namespace,
         new_path_parent,
@@ -229,6 +231,79 @@ fn symlinkInner(
     defer new_parent_dir.destroy();
 
     try new_parent_dir.add(new_path_entry, old_entry);
+}
+
+fn link(
+    _: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.LinkRequest),
+) !void {
+    if (linkInner(handler)) |ok| {
+        handler.reply.send(.{ .ok = ok });
+    } else |err| {
+        handler.reply.send(.{ .err = abi.sys.errorToEnum(err) });
+    }
+}
+
+fn linkInner(
+    handler: abi.lpc.Handler(abi.VfsProtocol.LinkRequest),
+) !void {
+    errdefer handler.req.socket.close();
+
+    const uri = try handler.req.path.getMap();
+    defer uri.deinit();
+    const path = try partsFromUri(uri.p);
+
+    const path_parent = std.fs.path.dirname(path.path) orelse
+        return Error.NotFound;
+    const path_entry = std.fs.path.basename(path.path);
+
+    const namespace = try global_root.clone()
+        .getDir(path.scheme, .use_existing);
+    const parent_dir = try getDir(
+        namespace,
+        path_parent,
+        .use_existing,
+        .use_existing,
+    );
+    defer parent_dir.destroy();
+
+    const socket_node = try SocketNode.create(parent_dir, handler.req.socket);
+    try parent_dir.add(path_entry, .{ .socket = socket_node });
+}
+
+fn connect(
+    _: *abi.lpc.Daemon(Server),
+    handler: abi.lpc.Handler(abi.VfsProtocol.ConnectRequest),
+) !void {
+    if (connectInner(handler)) |ok| {
+        handler.reply.send(.{ .ok = ok });
+    } else |err| {
+        handler.reply.send(.{ .err = abi.sys.errorToEnum(err) });
+    }
+}
+
+fn connectInner(
+    handler: abi.lpc.Handler(abi.VfsProtocol.ConnectRequest),
+) !caps.Handle {
+    const uri = try handler.req.path.getMap();
+    defer uri.deinit();
+
+    const path = try partsFromUri(uri.p);
+
+    // TODO: restrict access using the ctx.uid
+
+    const namespace = try global_root.clone()
+        .getDir(path.scheme, .use_existing);
+
+    const socket = try getSocket(
+        namespace,
+        path.path,
+        .use_existing,
+        .use_existing,
+    );
+    defer socket.destroy();
+
+    return try socket.getHandle();
 }
 
 fn newSender(
@@ -402,6 +477,25 @@ fn getFile(
     return node.file;
 }
 
+// will take ownership of `namespace` and returns an owned `*SocketNode`
+fn getSocket(
+    namespace: *DirNode,
+    path: []const u8,
+    missing_dir_policy: abi.fs.OpenOptions.MissingPolicy,
+    missing_entry_policy: abi.fs.OpenOptions.MissingPolicy,
+) !*SocketNode {
+    const node = try get(
+        namespace,
+        path,
+        missing_dir_policy,
+        missing_entry_policy,
+    );
+    errdefer node.destroy();
+
+    if (node != .socket) return Error.NotFound;
+    return node.socket;
+}
+
 fn printTreeRec(dir: *DirNode) !void {
     log.info("\n{}", .{
         PrintTreeRec{ .dir = dir, .depth = 0 },
@@ -445,6 +539,51 @@ const PrintTreeRec = struct {
 };
 
 //
+
+const SocketNode = struct {
+    refcnt: abi.epoch.RefCnt = .{},
+
+    parent: *DirNode,
+
+    cap: caps.Handle,
+
+    /// takes ownership of `parent`
+    pub fn create(parent: *DirNode, cap: caps.Handle) !*@This() {
+        socket_node_allocator_lock.lock();
+        defer socket_node_allocator_lock.unlock();
+
+        const node = try socket_node_allocator.create();
+        node.* = .{
+            .parent = parent,
+            .cap = cap,
+        };
+        return node;
+    }
+
+    /// does not take ownership of `self` but returns an owned one
+    pub fn clone(self: *@This()) *@This() {
+        self.refcnt.inc();
+        return self;
+    }
+
+    /// takes ownership of `self` and might or might not delete the data
+    pub fn destroy(self: *@This()) void {
+        if (!self.refcnt.dec()) return;
+
+        self.parent.destroy();
+
+        self.cap.close();
+
+        socket_node_allocator_lock.lock();
+        defer socket_node_allocator_lock.unlock();
+        socket_node_allocator.destroy(self);
+    }
+
+    /// does not take ownership of `self`, returns an owned Handle
+    pub fn getHandle(self: *@This()) Error!caps.Handle {
+        return try self.cap.clone();
+    }
+};
 
 const FileNode = struct {
     refcnt: abi.epoch.RefCnt = .{},
@@ -518,11 +657,13 @@ const DirEntry = union(enum) {
     // TODO: could be packed into a single pointer,
     // and its lower bit (because of alignment) can
     // be used to tell if it is a file or a dir
+    socket: *SocketNode,
     file: *FileNode,
     dir: *DirNode,
 
     fn entryType(self: @This()) abi.fs.EntType {
         return switch (self) {
+            .socket => .socket,
             .file => .file,
             .dir => .dir,
         };
@@ -537,8 +678,7 @@ const DirEntry = union(enum) {
 
     fn destroy(self: @This()) void {
         switch (self) {
-            .dir => |dir| dir.destroy(),
-            .file => |file| file.destroy(),
+            inline else => |v| v.destroy(),
         }
     }
 };
@@ -622,6 +762,19 @@ const DirNode = struct {
 
         if (next != .file) return Error.NotFound;
         return next.file;
+    }
+
+    /// takes ownership of `self` and returns an owned `*SocketNode`
+    pub fn getSocket(
+        self: *@This(),
+        part: []const u8,
+        missing_policy: abi.fs.OpenOptions.MissingPolicy,
+    ) Error!*SocketNode {
+        const next = try self.get(part, missing_policy);
+        errdefer next.destroy();
+
+        if (next != .socket) return Error.NotFound;
+        return next.socket;
     }
 
     /// takes ownership of `self` and returns an owned `DirEntry`
@@ -832,6 +985,8 @@ const DirNode = struct {
     // }
 };
 
+var socket_node_allocator: std.heap.MemoryPool(SocketNode) = std.heap.MemoryPool(SocketNode).init(abi.mem.server_page_allocator);
+var socket_node_allocator_lock: abi.lock.YieldMutex = .{};
 var file_node_allocator: std.heap.MemoryPool(FileNode) = std.heap.MemoryPool(FileNode).init(abi.mem.server_page_allocator);
 var file_node_allocator_lock: abi.lock.YieldMutex = .{};
 var dir_node_allocator: std.heap.MemoryPool(DirNode) = std.heap.MemoryPool(DirNode).init(abi.mem.server_page_allocator);

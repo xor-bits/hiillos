@@ -384,6 +384,21 @@ pub const VfsProtocol = struct {
         pub const Union = Request;
     };
 
+    pub const LinkRequest = struct {
+        path: fs.Path,
+        socket: caps.Handle,
+
+        pub const Response = Result(void, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const ConnectRequest = struct {
+        path: fs.Path,
+
+        pub const Response = Result(caps.Handle, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
     pub const NewSenderRequest = struct {
         uid: u32,
 
@@ -392,7 +407,8 @@ pub const VfsProtocol = struct {
     };
 
     pub const Request = lpc.Request(&.{
-        OpenFileRequest, OpenDirRequest, SymlinkRequest, NewSenderRequest,
+        OpenFileRequest, OpenDirRequest, SymlinkRequest,
+        LinkRequest,     ConnectRequest, NewSenderRequest,
     });
 };
 
