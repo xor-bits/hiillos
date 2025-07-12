@@ -10,15 +10,19 @@ pub const KeyState = enum(u8) {
 };
 
 pub const MouseEvent = union(enum) {
-    motion: struct {
-        delta_x: i16,
-        delta_y: i16,
-        delta_z: i16,
-    },
-    button: struct {
-        button: Button,
-        state: KeyState,
-    },
+    motion: MouseMotionEvent,
+    button: MouseButtonEvent,
+};
+
+pub const MouseMotionEvent = struct {
+    delta_x: i16,
+    delta_y: i16,
+    delta_z: i16,
+};
+
+pub const MouseButtonEvent = struct {
+    button: Button,
+    state: KeyState,
 };
 
 pub const Button = enum(u8) {

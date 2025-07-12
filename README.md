@@ -103,6 +103,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
     - [x] method call tracker
 
 - [x] user-space
+  - [ ] posix abstraction layer, like `open` instead of the manual ipc call
   - [ ] stack traces with line info
 
 - [x] root + initfsd process
