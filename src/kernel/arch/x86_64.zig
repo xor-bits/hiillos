@@ -1118,6 +1118,14 @@ pub const Idt = extern struct {
                 apic.eoi();
             }
         }).asInt();
+        entries[apic.IRQ_IPI_EOI] = Entry.generateTrap(struct {
+            fn handler(_: *TrapRegs) void {
+                if (conf.LOG_INTERRUPTS) log.debug("APIC IPI EOI interrupt", .{});
+
+                apic.eoi();
+                cpuLocal().lapic.ackIpi();
+            }
+        }).asInt();
         entries[apic.IRQ_IPI_PREEMPT] = Entry.generateTrap(struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI interrupt", .{});
@@ -1165,12 +1173,11 @@ pub const Idt = extern struct {
                     if (conf.LOG_INTERRUPTS) log.debug("user-space {} interrupt", .{i});
 
                     // log.info("extra interrupt i=0x{x}", .{i + IRQ_AVAIL_LOW});
-                    defer apic.eoi();
 
-                    const notify = cpuLocal().interrupt_handlers[i].load() orelse return;
-                    defer notify.deinit();
+                    cpuLocal().lapic.inFlight(i + apic.IRQ_AVAIL_LOW);
+                    // apic.eoi();
 
-                    _ = notify.notify();
+                    // no EOI as it is handled by userspace ACKs sent to caps.X86Irq
                 }
             }).asInt();
         }

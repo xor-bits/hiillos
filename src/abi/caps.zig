@@ -610,4 +610,8 @@ pub const X86Irq = extern struct {
         const cap = try sys.x86IrqSubscribe(self.cap);
         return .{ .cap = cap };
     }
+
+    pub fn ack(self: @This()) sys.Error!void {
+        try sys.x86IrqAck(self.cap);
+    }
 };

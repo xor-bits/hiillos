@@ -13,17 +13,19 @@ const pmem = @import("pmem.zig");
 
 const log = std.log.scoped(.apic);
 const conf = abi.conf;
+const Error = abi.sys.Error;
 
 //
 
-pub const IRQ_TIMER: u8 = 251;
+pub const IRQ_TIMER: u8 = 250;
+pub const IRQ_IPI_EOI: u8 = 251;
 pub const IRQ_IPI_PREEMPT: u8 = 252;
 pub const IRQ_IPI_TLB_SHOOTDOWN: u8 = 253;
 pub const IRQ_IPI_PANIC: u8 = 254;
 pub const IRQ_SPURIOUS: u8 = 255;
 
-pub const IRQ_AVAIL_LOW: u8 = 44;
-pub const IRQ_AVAIL_HIGH: u8 = 250;
+pub const IRQ_AVAIL_LOW: u8 = 42;
+pub const IRQ_AVAIL_HIGH: u8 = 249;
 pub const IRQ_AVAIL_COUNT = IRQ_AVAIL_HIGH - IRQ_AVAIL_LOW + 1;
 
 pub const APIC_SW_ENABLE: u32 = 1 << 8;
@@ -54,34 +56,153 @@ var ioapic_lapic_lock: abi.lock.SpinMutex = .{};
 
 //
 
-// pub const Handler = std.atomic.Value(?*caps.Notify);
-pub const Handler = struct {
-    lock: abi.lock.SpinMutex = .{},
-    notify: ?*caps.Notify = null,
+pub const Locals = struct {
+    /// local apic regs of the cpu
+    regs: ApicRegs = .{ .none = {} },
 
-    pub fn load(self: *@This()) ?*caps.Notify {
+    interrupt_handlers: [IRQ_AVAIL_COUNT]Handler =
+        [1]Handler{.{}} ** IRQ_AVAIL_COUNT,
+
+    // bitfield of this lapic's in-flight interrupts
+    // in HW, EOIs are sent in order, highest priority interrupt is EOI'd first
+    // but in hiillos, any interrupt can be ACK'd at any point, so this stack makes
+    // EOI's "ordered" (example, 2 in-flight interrupts: The low priority interrupt
+    // receives an ACK, but doesnt send an EOI. Then the high priority interrupt
+    // receives an ACK and sends 2 EOIs: one for itself and one for the lower priority
+    // interrupt that was already ACK'd)
+    lock: abi.lock.SpinMutex = .new(),
+    in_flight_interrupts: u256 = 0,
+    acknowledged_interrupts: u256 = 0,
+
+    pub fn inFlight(self: *@This(), vector: u8) void {
+        // log.debug("inFlight({})", .{vector});
+        const irq_cap = self.interrupt_handlers[vector - IRQ_AVAIL_LOW].load() orelse {
+            log.warn("userspace interrupt {} without a handler", .{vector});
+            eoi(); // not handled by user-space (yet) -> just EOI
+            return;
+        };
+        defer irq_cap.deinit();
+
+        self.lock.lock();
+        self.in_flight_interrupts |= @as(u256, 1) << vector;
+        self.lock.unlock();
+
+        _ = irq_cap.notify.notify();
+    }
+
+    /// returns false if the interrupt was not in-flight
+    pub fn ack(self: *@This(), vector: u8) bool {
+        // log.debug("ack({})", .{vector});
         self.lock.lock();
         defer self.lock.unlock();
 
-        const notify = self.notify orelse return null;
-        if (notify.refcnt.isUnique()) {
-            @branchHint(.cold);
+        const bit = @as(u256, 1) << vector;
 
-            // this handler is the only one holding the Notify cap
-            // so notifying it does nothing and its unobtainable
-            // => free it
-            notify.deinit();
-
-            self.notify = null;
-            return null;
+        if (self.in_flight_interrupts & bit == 0) {
+            // cant ack because it isnt in-flight
+            return false;
         }
 
-        notify.refcnt.inc();
-        return notify;
+        self.acknowledged_interrupts |= bit;
+
+        const highest_in_flight = @as(u256, 1) << @intCast(@ctz(self.in_flight_interrupts));
+
+        if (self.acknowledged_interrupts & highest_in_flight == 0) {
+            // some lower priority interrupt got ACK'd -> no EOIs
+            return true;
+        }
+
+        const locals: *main.CpuLocalStorage = @alignCast(@fieldParentPtr("lapic", self));
+        if (arch.cpuLocal().lapic_id != locals.lapic_id) {
+            @branchHint(.cold);
+            interProcessorInterrupt(locals.lapic_id, IRQ_IPI_EOI);
+        } else {
+            self.sendEois();
+        }
+
+        return true;
+    }
+
+    pub fn ackIpi(self: *@This()) void {
+        // log.debug("ackIpi()", .{});
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        self.sendEois();
+    }
+
+    fn sendEois(self: *@This()) void {
+        // log.debug("sendEois()", .{});
+
+        // some bit manipulation magic to get the number of
+        // EOIs to send + unset their in_flight and ack bits
+
+        // ex:       in_flight: 00101101
+        //                 ack: 00100001
+        //                diff: 00001100
+        //        highest_diff: 00001000
+        // ordered_eoi_bitmask: 11111000
+        //                eois: 00100000
+        //              popcnt: 1
+        //
+
+        if (self.acknowledged_interrupts == 0) {
+            return;
+        }
+
+        const eois = commonHighestBits(
+            self.in_flight_interrupts,
+            self.acknowledged_interrupts,
+        );
+
+        self.in_flight_interrupts ^= eois;
+        self.acknowledged_interrupts ^= eois;
+
+        const popcnt = @popCount(eois);
+
+        for (0..popcnt) |_| {
+            eoi();
+        }
     }
 };
 
-pub const ApicRegs = union(enum) {
+fn commonHighestBits(a: u256, b: u256) u256 {
+    const diff = a ^ b;
+    if (diff == 0) return a;
+
+    const highest_diff = @as(u256, 1) << @intCast(@ctz(diff));
+    const high_bitmask = ~(highest_diff - 1);
+    return a & b & high_bitmask;
+}
+
+// pub const Handler = std.atomic.Value(?*caps.Notify);
+const Handler = struct {
+    lock: abi.lock.SpinMutex = .{},
+    irq: ?*caps.X86Irq = null,
+
+    pub fn load(self: *@This()) ?*caps.X86Irq {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const irq = self.irq orelse return null;
+        if (irq.refcnt.isUnique()) {
+            @branchHint(.cold);
+
+            // this handler is the only one holding the X86Irq cap
+            // so notifying it does nothing and its unobtainable
+            // => free it
+            irq.deinit();
+
+            self.irq = null;
+            return null;
+        }
+
+        irq.refcnt.inc();
+        return irq;
+    }
+};
+
+const ApicRegs = union(enum) {
     xapic: *LocalXApicRegs,
     x2apic: *LocalX2ApicRegs,
     none: void,
@@ -89,7 +210,7 @@ pub const ApicRegs = union(enum) {
 
 const IoApicLapic = struct {
     lapic_id: u4,
-    handlers: *[IRQ_AVAIL_COUNT]Handler,
+    locals: *main.CpuLocalStorage,
 };
 
 //
@@ -146,10 +267,10 @@ pub fn init(madt: *const acpi.Madt) !void {
     const cpu_features = arch.CpuFeatures.read();
     if (cpu_features.x2apic) {
         log.info("x2APIC mode", .{});
-        locals.apic_regs = .{ .x2apic = @ptrFromInt(arch.IA32_X2APIC) };
+        locals.lapic.regs = .{ .x2apic = @ptrFromInt(arch.IA32_X2APIC) };
     } else if (cpu_features.apic) {
         log.info("legacy xAPIC mode", .{});
-        locals.apic_regs = .{ .xapic = addr.Phys.fromInt(lapic_addr).toHhdm().toPtr(*LocalXApicRegs) };
+        locals.lapic.regs = .{ .xapic = addr.Phys.fromInt(lapic_addr).toHhdm().toPtr(*LocalXApicRegs) };
     } else {
         log.err("CPU doesn't support x2APIC nor xAPIC", .{});
         arch.hcf();
@@ -158,7 +279,7 @@ pub fn init(madt: *const acpi.Madt) !void {
 
 pub fn enable() !void {
     const locals = arch.cpuLocal();
-    switch (locals.apic_regs) {
+    switch (locals.lapic.regs) {
         .xapic => |regs| try enableAny(locals, regs, .enabled_xapic),
         .x2apic => |regs| try enableAny(locals, regs, .enabled_x2apic),
         .none => unreachable,
@@ -168,7 +289,7 @@ pub fn enable() !void {
 fn enableAny(
     locals: *main.CpuLocalStorage,
     regs: anytype,
-    comptime mode: @TypeOf(@as(ApicBaseMsr, undefined).lapic_mode),
+    comptime mode: @FieldType(ApicBaseMsr, "lapic_mode"),
 ) !void {
     // enable APIC
     var base = ApicBaseMsr.read();
@@ -182,7 +303,7 @@ fn enableAny(
         defer ioapic_lapic_lock.unlock();
         try ioapic_lapics.append(.{
             .lapic_id = @truncate(lapic_id),
-            .handlers = &arch.cpuLocal().interrupt_handlers,
+            .locals = arch.cpuLocal(),
         });
     }
 
@@ -236,17 +357,39 @@ fn measureApicTimerSpeed(locals: *main.CpuLocalStorage, regs: anytype) u32 {
 // TODO: the mode could be comptime here,
 // the ISR would be selected dynamically
 pub fn eoi() void {
+    // log.debug("sending EOI", .{});
+
     const locals = arch.cpuLocal();
     // log.info("{?*}", .{locals.current_thread});
-    switch (locals.apic_regs) {
-        .xapic => |regs| regs.eoi.write(0),
-        .x2apic => |regs| regs.eoi.write(0),
+    switch (locals.lapic.regs) {
+        .xapic => |regs| {
+            // printInService(regs);
+            regs.eoi.write(0);
+            // printInService(regs);
+        },
+        .x2apic => |regs| {
+            // printInService(regs);
+            regs.eoi.write(0);
+            // printInService(regs);
+        },
         .none => unreachable,
     }
 }
 
+fn printInService(regs: anytype) void {
+    var interrupts: u256 = 0;
+    for (0..regs.in_service.len) |i| {
+        interrupts |= @as(u256, regs.in_service[i].read()) << (@as(u8, @intCast(i)) * 32);
+    }
+    for (0..256) |i| {
+        if (interrupts & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
+            log.debug("in service: {}", .{i});
+        }
+    }
+}
+
 pub fn interProcessorInterrupt(target_lapic_id: u32, vector: u8) void {
-    switch (arch.cpuLocal().apic_regs) {
+    switch (arch.cpuLocal().lapic.regs) {
         .xapic => |regs| {
             if (target_lapic_id > std.math.maxInt(u8)) {
                 log.err("tried to IPI a processor ({}) that doesn't exist", .{target_lapic_id});
@@ -287,10 +430,13 @@ pub fn interProcessorInterrupt(target_lapic_id: u32, vector: u8) void {
 
 /// source IRQ would be the source like keyboard at 1
 /// destination IRQ would be the IDT handler index
-pub fn registerExternalInterrupt(
-    source_irq: u8,
-) !?*caps.Notify {
-    // log.info("registering interrupt {}", .{source_irq});
+pub fn registerExternalInterrupt(irq: *caps.X86Irq) Error!struct {
+    vector: u8,
+    locals: *Locals,
+} {
+    defer irq.deinit();
+
+    // log.info("registering interrupt {}", .{irq.irq});
 
     ioapic_lapic_lock.lock();
     defer ioapic_lapic_lock.unlock();
@@ -299,13 +445,14 @@ pub fn registerExternalInterrupt(
 
     // FIXME: read the overrides
 
-    const lapic_id, const notify, const i = try findUsableHandler() orelse return null;
-    errdefer notify.deinit();
-    const ioapic, const low_index = findUsableRedirectEntry(source_irq) orelse return null;
+    const ioapic, const low_index = findUsableRedirectEntry(irq.irq) orelse
+        return Error.TooManyIrqs;
+    const lapic_id, const i, const locals = findUsableHandler(irq.clone()) orelse
+        return Error.TooManyIrqs;
     const high_index = low_index + 1;
 
     // log.info("lapic_id={} i={}", .{
-    //     source_irq, i,
+    //     lapic_id, i,
     // });
 
     var low = ioapicRead(ioapic, low_index);
@@ -325,43 +472,29 @@ pub fn registerExternalInterrupt(
     ioapicWrite(ioapic, high_index, high);
     ioapicWrite(ioapic, low_index, low);
 
-    return notify;
+    // log.info("success vec={} loc={*}", .{ i, locals });
+
+    return .{
+        .vector = i + IRQ_AVAIL_LOW,
+        .locals = locals,
+    };
 }
 
 /// `ioapic_lapic_lock` has to be held
-fn findUsableHandler() !?struct { u4, *caps.Notify, u8 } {
+fn findUsableHandler(irq: *caps.X86Irq) ?struct { u4, u8, *Locals } {
     for (ioapic_lapics.items) |lapic| {
-        for (lapic.handlers[0..], 0..) |*handler, i| {
+        for (lapic.locals.lapic.interrupt_handlers[0..], 0..) |*handler, i| {
             handler.lock.lock();
             defer handler.lock.unlock();
 
-            if (handler.notify != null) continue;
+            if (handler.irq != null) continue;
+            handler.irq = irq;
 
-            const notify = try caps.Notify.init();
-            handler.notify = notify;
-            notify.refcnt.inc();
-
-            return .{ lapic.lapic_id, notify, @truncate(i) };
+            return .{ lapic.lapic_id, @truncate(i), &lapic.locals.lapic };
         }
     }
 
-    for (ioapic_lapics.items) |lapic| {
-        for (lapic.handlers[0..], 0..) |*handler, i| {
-            handler.lock.lock();
-            defer handler.lock.unlock();
-
-            const notify = handler.notify orelse b: {
-                const notify = try caps.Notify.init();
-                handler.notify = notify;
-                break :b notify;
-            };
-
-            notify.refcnt.inc();
-
-            return .{ lapic.lapic_id, notify, @truncate(i) };
-        }
-    }
-
+    irq.deinit();
     return null;
 }
 

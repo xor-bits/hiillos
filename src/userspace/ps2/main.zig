@@ -109,9 +109,11 @@ pub const Controller = struct {
     is_dual: bool = false,
 
     /// irq 1
-    primary_irq: caps.Notify,
+    primary_irq: caps.X86Irq,
+    primary_notify: caps.Notify,
     /// irq 12
-    secondary_irq: caps.Notify,
+    secondary_irq: caps.X86Irq,
+    secondary_notify: caps.Notify,
 
     lock: abi.lock.CapMutex,
 
@@ -121,21 +123,23 @@ pub const Controller = struct {
         const status = caps.X86IoPort{ .cap = import_ps2_status_port.handle };
         errdefer status.close();
 
-        const primary_irq_inner = caps.X86Irq{ .cap = import_ps2_primary_irq.handle };
-        defer primary_irq_inner.close();
-        const primary_irq = try primary_irq_inner.subscribe();
+        const primary_irq = caps.X86Irq{ .cap = import_ps2_primary_irq.handle };
         errdefer primary_irq.close();
+        const primary_notify = try primary_irq.subscribe();
+        errdefer primary_notify.close();
 
-        const secondary_irq_inner = caps.X86Irq{ .cap = import_ps2_secondary_irq.handle };
-        defer secondary_irq_inner.close();
-        const secondary_irq = try secondary_irq_inner.subscribe();
+        const secondary_irq = caps.X86Irq{ .cap = import_ps2_secondary_irq.handle };
         errdefer secondary_irq.close();
+        const secondary_notify = try secondary_irq.subscribe();
+        errdefer secondary_notify.close();
 
         var self = @This(){
             .data = data,
             .status = status,
             .primary_irq = primary_irq,
+            .primary_notify = primary_notify,
             .secondary_irq = secondary_irq,
+            .secondary_notify = secondary_notify,
             .lock = try abi.lock.CapMutex.new(),
         };
         errdefer self.lock.deinit();
@@ -186,16 +190,6 @@ pub const Controller = struct {
             }
         }
 
-        log.debug("enable keyboard and mouse", .{});
-        try self.writeCmd(0xae);
-        if (self.is_dual)
-            try self.writeCmd(0xa8);
-
-        try self.flush();
-
-        try keyboard.Keyboard.disableOutput(&self);
-        try mouse.Mouse.disableOutput(&self);
-
         log.debug("enable interrupts", .{});
         try self.writeCmd(0x20);
         config = @bitCast(try self.readPoll());
@@ -205,15 +199,27 @@ pub const Controller = struct {
         try self.writeCmd(0x60);
         try self.writeData(@bitCast(config));
 
-        try self.flush();
-        try keyboard.Keyboard.reset(&self);
-        try self.flush();
-        try mouse.Mouse.reset(&self);
+        log.debug("enable keyboard and mouse", .{});
+        try self.writeCmd(0xae);
+        if (self.is_dual)
+            try self.writeCmd(0xa8);
 
+        log.debug("disable output", .{});
         try self.flush();
         try keyboard.Keyboard.disableOutput(&self);
         try mouse.Mouse.disableOutput(&self);
 
+        log.debug("reset keyboard and mouse", .{});
+        try self.flush();
+        try keyboard.Keyboard.reset(&self);
+        try mouse.Mouse.reset(&self);
+
+        log.debug("disable output", .{});
+        try self.flush();
+        try keyboard.Keyboard.disableOutput(&self);
+        try mouse.Mouse.disableOutput(&self);
+
+        try self.flush();
         return self;
     }
 
@@ -271,18 +277,37 @@ pub const Controller = struct {
 
     /// read a byte from the output by waiting for keyboard interrupts
     pub fn readWaitKeyboard(self: *@This()) !u8 {
-        while (true) {
-            if (try self.read()) |byte| return byte;
-            try self.waitKeyboard();
-        }
+        self.waitKeyboard();
+        const byte = try self.read() orelse {
+            log.warn("keyboard byte dropped", .{});
+            return error.KeyboardByteDropped;
+        };
+        try self.ackKeyboard();
+        return byte;
+
+        // if (try self.read()) |byte| return byte;
+
+        // while (true) {
+        //     self.waitKeyboard();
+        //     const byte = try self.read() orelse {
+        //         log.warn("keyboard byte dropped", .{});
+        //         continue;
+        //     };
+        //     try self.ackKeyboard();
+        //     return byte;
+        // }
     }
 
     /// read a byte from the output by waiting for mouse interrupts
     pub fn readWaitMouse(self: *@This()) !u8 {
-        while (true) {
-            if (try self.read()) |byte| return byte;
-            try self.waitMouse();
-        }
+        self.waitMouse();
+        const byte = try self.read() orelse {
+            log.warn("mouse byte dropped", .{});
+            return error.MouseByteDropped;
+        };
+        try self.ackMouse();
+
+        return byte;
     }
 
     /// read a byte from the output by polling (with a yield)
@@ -304,15 +329,25 @@ pub const Controller = struct {
     }
 
     /// wait for keyboard interrupts
-    pub fn waitKeyboard(self: *@This()) !void {
+    pub fn waitKeyboard(self: *@This()) void {
         log.debug("waiting for keyboard interrupts", .{});
-        _ = self.primary_irq.wait();
+        _ = self.primary_notify.wait();
+    }
+
+    /// ACK the keyboard interrupt
+    pub fn ackKeyboard(self: *@This()) !void {
+        try self.primary_irq.ack();
     }
 
     /// wait for mouse interrupts
-    pub fn waitMouse(self: *@This()) !void {
+    pub fn waitMouse(self: *@This()) void {
         log.debug("waiting for mouse interrupts", .{});
-        _ = self.secondary_irq.wait();
+        _ = self.secondary_notify.wait();
+    }
+
+    /// ACK the mouse interrupt
+    pub fn ackMouse(self: *@This()) !void {
+        try self.secondary_irq.ack();
     }
 
     pub const DeviceType = enum {

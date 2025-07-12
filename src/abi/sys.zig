@@ -115,6 +115,8 @@ pub const Id = enum(usize) {
     x86_irq_create,
     /// acquire a handle to some `Notify` object that gets notified every time this IRQ is generated
     x86_irq_subscribe,
+    /// queue an EOI to the interrupt controller
+    x86_irq_ack,
 
     /// identify which object type some capability is
     handle_identify,
@@ -254,6 +256,7 @@ pub const Error = error{
     NoReplyTarget,
     NotifyAlreadySubscribed,
     IrqAlreadySubscribed,
+    IrqNotReady,
     TooManyIrqs,
     OutOfBounds,
     NotFound,
@@ -291,6 +294,7 @@ pub const ErrorEnum = enum(u8) {
     no_reply_target,
     notify_already_subscribed,
     irq_already_subscribed,
+    irq_not_ready,
     too_many_irqs,
     out_of_bounds,
     not_found,
@@ -814,6 +818,10 @@ pub fn x86IrqCreate(x86_irq_allocator: u32, irq: u8) Error!u32 {
 
 pub fn x86IrqSubscribe(x86_irq: u32) Error!u32 {
     return @intCast(try syscall(.x86_irq_subscribe, .{x86_irq}, .{}));
+}
+
+pub fn x86IrqAck(x86_irq: u32) Error!void {
+    _ = try syscall(.x86_irq_ack, .{x86_irq}, .{});
 }
 
 pub fn handleIdentify(cap: u32) abi.ObjectType {

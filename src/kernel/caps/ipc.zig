@@ -329,6 +329,14 @@ pub const Notify = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
+    pub fn clone(self: *@This()) *@This() {
+        if (conf.LOG_OBJ_CALLS)
+            log.info("Notify.clone", .{});
+
+        self.refcnt.inc();
+        return self;
+    }
+
     /// returns true if the current thread went to sleep
     pub fn wait(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) void {
         // early test if its active

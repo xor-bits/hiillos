@@ -91,10 +91,10 @@ pub fn main() !void {
 
             if (!irqs[irq_idx]) {
                 const irq = try caps.X86Irq.create(irq_allocator, @truncate(irq_idx));
-                defer irq.close();
-
+                errdefer irq.close();
                 const notify = try irq.subscribe();
-                try abi.thread.spawn(hpetThreadMain, .{notify});
+                errdefer notify.close();
+                try abi.thread.spawn(hpetThreadMain, .{ irq, notify });
             }
             irqs[irq_idx] = true;
 
@@ -163,12 +163,17 @@ fn sleepDeadlineHandler(ctx: *Context, _: u32, req: struct { u128 }) struct { vo
     return .{{}};
 }
 
-fn hpetThreadMain(notify: caps.Notify) !void {
+fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
+    log.debug("HPET timer thread", .{});
+
     const regs = hpet_regs.?;
     while (true) {
-        const main_counter = regs.readMainCounter();
+        _ = notify.wait();
+        try irq.ack();
 
-        // log.debug("HPET INTERRUPT", .{});
+        log.debug("HPET INTERRUPT", .{});
+
+        const main_counter = regs.readMainCounter();
 
         for (timers[0..timer_count], 0..) |*timer, i| {
             timer.lock.lock();
@@ -202,8 +207,6 @@ fn hpetThreadMain(notify: caps.Notify) !void {
                 }
             }
         }
-
-        _ = notify.wait();
     }
 }
 

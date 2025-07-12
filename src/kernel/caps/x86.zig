@@ -720,7 +720,13 @@ pub const X86Irq = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
+    notify: *caps.Notify,
+
     irq: u8,
+    handler: ?struct {
+        vector: u8,
+        locals: *apic.Locals,
+    } = null,
 
     // only borrows the X86IrqAllocator
     pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {
@@ -730,9 +736,16 @@ pub const X86Irq = struct {
             caps.incCount(.x86_irq);
 
         try allocIrq(&irq_bitmap, irq);
+        errdefer freeIrq(&irq_bitmap, irq) catch unreachable;
+
+        const notify = try caps.Notify.init();
+        errdefer notify.deinit();
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{ .irq = irq };
+        obj.* = .{
+            .irq = irq,
+            .notify = notify,
+        };
 
         return obj;
     }
@@ -744,6 +757,8 @@ pub const X86Irq = struct {
             log.info("X86Irq.deinit", .{});
         if (conf.LOG_OBJ_STATS)
             caps.decCount(.x86_irq);
+
+        self.notify.deinit();
 
         freeIrq(&irq_bitmap, self.irq) catch
             unreachable;
@@ -763,9 +778,30 @@ pub const X86Irq = struct {
         if (conf.LOG_OBJ_CALLS)
             log.info("X86Irq.subscribe", .{});
 
-        return try apic.registerExternalInterrupt(self.irq) orelse {
-            return Error.TooManyIrqs;
+        if (self.handler == null) {
+            const result = try apic.registerExternalInterrupt(self.clone());
+            self.handler = .{ .vector = result.vector, .locals = result.locals };
+
+            log.debug("X86Irq registered vec={} irq={}", .{
+                result.vector,
+                self.irq,
+            });
+        }
+
+        return self.notify.clone();
+    }
+
+    pub fn ack(self: *@This()) Error!void {
+        if (conf.LOG_OBJ_CALLS)
+            log.info("X86Irq.ack", .{});
+
+        const handler = self.handler orelse {
+            return Error.IrqNotReady;
         };
+
+        if (!handler.locals.ack(handler.vector)) {
+            return Error.IrqNotReady;
+        }
     }
 };
 

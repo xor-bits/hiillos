@@ -44,15 +44,11 @@ pub const CpuLocalStorage = struct {
     current_vmem: ?*caps.Vmem = null,
     /// used to track the current thread
     current_thread: ?*caps.Thread = null,
+    /// cpu id, highest cpu id is always `cpu_count - 1`
     id: u32,
+    /// cached local apic id of the cpu
     lapic_id: u32,
-    apic_regs: apic.ApicRegs = .{ .none = {} },
-
-    // FIXME: remove notify caps from here
-    interrupt_handlers: [apic.IRQ_AVAIL_COUNT]apic.Handler =
-        .{apic.Handler{}} ** apic.IRQ_AVAIL_COUNT,
-
-    epoch_locals: abi.epoch.Locals = .{},
+    lapic: apic.Locals = .{},
 
     tlb_shootdown_queue: abi.util.Queue(caps.TlbShootdown, "next", "prev") = .{},
     tlb_shootdown_queue_lock: abi.lock.SpinMutex = .{},
@@ -811,6 +807,13 @@ fn handle_syscall(
 
             const handle = try thread.proc.pushCapability(caps.Capability.init(notify));
             trap.syscall_id = abi.sys.encode(handle);
+        },
+        .x86_irq_ack => {
+            const irq = try thread.proc.getObject(caps.X86Irq, @truncate(trap.arg0));
+            defer irq.deinit();
+
+            try irq.ack();
+            trap.syscall_id = abi.sys.encode(0);
         },
 
         .handle_identify => {
