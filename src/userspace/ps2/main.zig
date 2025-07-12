@@ -314,6 +314,34 @@ pub const Controller = struct {
         log.debug("waiting for mouse interrupts", .{});
         _ = self.secondary_irq.wait();
     }
+
+    pub const DeviceType = enum {
+        standard_ps2_mouse,
+        scroll_wheel_mouse,
+        five_button_mouse,
+        keyboard,
+        unknown,
+    };
+
+    pub fn identify(
+        self: *@This(),
+        comptime readFn: anytype,
+    ) !DeviceType {
+        return switch (try readFn(self)) {
+            0x00 => .standard_ps2_mouse,
+            0x03 => .scroll_wheel_mouse,
+            0x04 => .five_button_mouse,
+            0xab => switch (try readFn(self)) {
+                0x83, 0xc1, 0x84, 0x85, 0x86, 0x90, 0x91, 0x92 => .keyboard,
+                else => .unknown,
+            },
+            0xac => switch (try readFn(self)) {
+                0xa1 => .keyboard,
+                else => .unknown,
+            },
+            else => .unknown,
+        };
+    }
 };
 
 const ControllerConfig = packed struct {

@@ -87,9 +87,9 @@ pub const Mouse = struct {
         try setSampleRate(controller, 80);
         const mouse_id = try identify(controller);
 
-        if (mouse_id == 0) {
+        if (mouse_id == .standard_ps2_mouse) {
             return false;
-        } else if (mouse_id == 3) {
+        } else if (mouse_id == .scroll_wheel_mouse) {
             return true;
         } else {
             log.err("invalid mouse id: {}", .{mouse_id});
@@ -105,9 +105,9 @@ pub const Mouse = struct {
         try setSampleRate(controller, 80);
         const mouse_id = try identify(controller);
 
-        if (mouse_id == 3) {
+        if (mouse_id == .scroll_wheel_mouse) {
             return false;
-        } else if (mouse_id == 4) {
+        } else if (mouse_id == .five_button_mouse) {
             return true;
         } else {
             log.err("invalid mouse id: {}", .{mouse_id});
@@ -168,13 +168,13 @@ pub const Mouse = struct {
         try controller.flush();
     }
 
-    pub fn identify(controller: *main.Controller) !u8 {
+    pub fn identify(controller: *main.Controller) !main.Controller.DeviceType {
         log.debug("identifying mouse", .{});
         for (0..3) |_| {
             try controller.writeMouse(0xf2);
             if (try check(try controller.readWaitMouse()) == .resend) continue;
 
-            const device_id = try controller.readWaitMouse();
+            const device_id = try controller.identify(main.Controller.readWaitMouse);
             log.info("mouse type: {}", .{device_id});
             return device_id;
         } else {

@@ -116,13 +116,13 @@ pub const Keyboard = struct {
         try controller.flush();
     }
 
-    pub fn identify(controller: *main.Controller) !u8 {
+    pub fn identify(controller: *main.Controller) !main.Controller.DeviceType {
         log.debug("identifying keyboard", .{});
         for (0..3) |_| {
             try controller.writeKeyboard(0xf2);
             if (try check(try controller.readWaitKeyboard()) == .resend) continue;
 
-            const device_id = try controller.readWaitKeyboard();
+            const device_id = try controller.identify(main.Controller.readWaitKeyboard);
             log.info("keyboard type: {}", .{device_id});
             return device_id;
         } else {
