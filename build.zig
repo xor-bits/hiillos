@@ -259,6 +259,7 @@ fn createInitfsTarZst(
         "pci",
         "pm",
         "ps2",
+        "term",
         "tty",
         "vfs",
         "wm",

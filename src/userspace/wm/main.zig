@@ -31,14 +31,21 @@ pub fn main() !void {
     defer seat.fb_info.close();
     defer seat.input.close();
 
-    // const wm_socket_rx = try caps.Receiver.create();
-    // const wm_socket_tx = try caps.Sender.create(wm_socket_rx, 0);
+    const wm_socket_rx = try caps.Receiver.create();
+    const wm_socket_tx = try caps.Sender.create(wm_socket_rx, 0);
 
-    // const res = try abi.lpc.call(abi.VfsProtocol.LinkRequest, .{
-    //     .path = try abi.fs.Path.new("fs:///wm.sock"),
-    //     .socket = caps.Handle{ .cap = wm_socket_tx.cap },
-    // }, abi.caps.COMMON_VFS);
-    // try res.asErrorUnion();
+    const res = try abi.lpc.call(abi.VfsProtocol.LinkRequest, .{
+        .path = try abi.fs.Path.new("fs:///wm.sock"),
+        .socket = caps.Handle{ .cap = wm_socket_tx.cap },
+    }, abi.caps.COMMON_VFS);
+    try res.asErrorUnion();
+
+    const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
+        .arg_map = try caps.Frame.init("initfs:///sbin/term"),
+        .env_map = try caps.Frame.init("WM_SOCKET=fs:///wm.sock"),
+        .stdio = .{},
+    }, abi.caps.COMMON_PM);
+    _ = try initial_app.asErrorUnion();
 
     var fb_info: abi.FramebufferInfoFrame = undefined;
     try seat.fb_info.read(0, std.mem.asBytes(&fb_info));
@@ -84,24 +91,221 @@ pub fn main() !void {
         .pixel_array = @ptrFromInt(fb_backbuf_addr),
     };
 
-    var system: System = .{
+    system_lock = try .newLocked();
+    system = .{
         .fb_backbuf = fb_backbuf,
         .fb = fb,
         .fb_info = fb_info,
     };
-    system.draw();
+    system_lock.unlock();
 
+    try abi.thread.spawn(connectionThreadMain, .{wm_socket_rx});
+    try abi.thread.spawn(inputThreadMain, .{seat.input});
+    try compositorThreadMain();
+}
+
+fn compositorThreadMain() !void {
+    const frametime_ns: u32 = 16_666_667;
+    const _nanos = try abi.caps.COMMON_HPET.call(.timestamp, {});
+    var nanos: u128 = _nanos.@"0";
+    while (true) {
+        system_lock.lock();
+        system.draw();
+        system_lock.unlock();
+
+        nanos += frametime_ns;
+        _ = abi.caps.COMMON_HPET.call(.sleepDeadline, .{nanos}) catch break;
+    }
+}
+
+fn inputThreadMain(input: caps.Sender) !void {
     while (true) {
         const ev_result = try abi.lpc.call(
             abi.Ps2Protocol.Next,
             .{},
-            seat.input,
+            input,
         );
         const ev = try ev_result.asErrorUnion();
 
+        system_lock.lock();
         system.event(ev);
+        system_lock.unlock();
     }
 }
+
+fn connectionThreadMain(rx: caps.Receiver) !void {
+    abi.lpc.daemon(ConnectionContext{
+        .recv = rx,
+    });
+}
+
+fn connectRequest(
+    _: *abi.lpc.Daemon(ConnectionContext),
+    handler: abi.lpc.Handler(abi.WmProtocol.ConnectRequest),
+) !void {
+    errdefer handler.reply.send(.{ .err = .internal });
+
+    const rx = try caps.Receiver.create();
+    const tx = try caps.Sender.create(rx, 0);
+
+    try abi.thread.spawn(clientConnectionThreadMain, .{rx});
+
+    handler.reply.send(.{ .ok = tx });
+}
+
+const ConnectionContext = struct {
+    recv: caps.Receiver,
+
+    pub const routes = .{
+        connectRequest,
+    };
+    pub const Request = abi.WmProtocol.Request;
+};
+
+fn clientConnectionThreadMain(rx: caps.Receiver) !void {
+    abi.lpc.daemon(DisplayContext{
+        .recv = rx,
+        .conn = .{},
+    });
+}
+
+fn createWindowRequest(
+    daemon: *abi.lpc.Daemon(DisplayContext),
+    handler: abi.lpc.Handler(abi.WmDisplayProtocol.CreateWindowRequest),
+) !void {
+    const shmem_info = shmemInfo(
+        handler.req.size.width,
+        handler.req.size.height,
+    ) catch {
+        handler.reply.send(.{ .err = .out_of_memory });
+        return;
+    };
+
+    const shmem = caps.Frame.create(shmem_info.bytes) catch {
+        handler.reply.send(.{ .err = .out_of_memory });
+        return;
+    };
+
+    const vmem = try caps.Vmem.self();
+    defer vmem.close();
+
+    const shmem_addr = try vmem.map(
+        shmem,
+        0,
+        0,
+        shmem_info.bytes,
+        .{},
+        .{},
+    );
+
+    const fb = abi.util.Image([*]volatile u8){
+        .width = handler.req.size.width,
+        .height = handler.req.size.height,
+        .pitch = shmem_info.pitch,
+        .bits_per_pixel = 32,
+        .pixel_array = @ptrFromInt(shmem_addr),
+    };
+
+    system_lock.lock();
+    defer system_lock.unlock();
+
+    const client_id = daemon.ctx.conn.next_client_window_id;
+    daemon.ctx.conn.next_client_window_id += 1;
+    const server_id = system.next_server_window_id;
+    system.next_server_window_id += 1;
+
+    system.windows.putNoClobber(server_id, Window{
+        .client_id = client_id,
+        .server_id = server_id,
+        .pos = .{
+            .x = 100,
+            .y = 100,
+        },
+        .size = handler.req.size,
+
+        .fb = fb,
+
+        // the window is closed before the connection, so the pointer stays valid
+        .conn = &daemon.ctx.conn,
+    }) catch {
+        shmem.close();
+        handler.reply.send(.{ .err = .out_of_memory });
+        return;
+    };
+
+    handler.reply.send(.{ .ok = .{
+        .fb = .{
+            .pitch = shmem_info.pitch,
+            .shmem = shmem,
+            .size = handler.req.size,
+        },
+        .window_id = client_id,
+    } });
+}
+
+fn shmemInfo(w: u32, h: u32) error{Overflow}!struct { pitch: u32, bytes: u32 } {
+    const pitch = try std.math.ceilPowerOfTwo(u32, w);
+    const bytes = try std.math.mul(
+        u32,
+        try std.math.mul(
+            u32,
+            pitch,
+            try std.math.ceilPowerOfTwo(u32, h),
+        ),
+        4,
+    );
+
+    return .{ .pitch = pitch, .bytes = bytes };
+}
+
+fn nextEventRequest(
+    daemon: *abi.lpc.Daemon(DisplayContext),
+    handler: abi.lpc.Handler(abi.WmDisplayProtocol.NextEventRequest),
+) !void {
+    system_lock.lock();
+    defer system_lock.unlock();
+
+    if (daemon.ctx.conn.event_buffer.readItem()) |event| {
+        handler.reply.send(.{ .ok = event });
+        return;
+    }
+
+    daemon.ctx.conn.reply = handler.reply.detach() catch {
+        handler.reply.send(.{ .err = .internal });
+        return;
+    };
+}
+
+const DisplayContext = struct {
+    recv: caps.Receiver,
+    conn: Connection,
+
+    pub const routes = .{
+        createWindowRequest,
+        nextEventRequest,
+    };
+    pub const Request = abi.WmDisplayProtocol.Request;
+};
+
+var system: System = undefined;
+var system_lock: abi.lock.CapMutex = undefined;
+
+const Connection = struct {
+    next_client_window_id: usize = 1,
+    event_buffer: std.fifo.LinearFifo(abi.WmDisplayProtocol.Event, .Dynamic) = .init(abi.mem.slab_allocator),
+    reply: ?abi.lpc.DetachedReply(abi.WmDisplayProtocol.NextEventRequest.Response) = null,
+};
+
+const Window = struct {
+    client_id: usize,
+    server_id: usize,
+    pos: abi.WmDisplayProtocol.Position,
+    size: abi.WmDisplayProtocol.Size,
+
+    fb: abi.util.Image([*]volatile u8),
+
+    conn: *Connection,
+};
 
 const System = struct {
     // recv: caps.Receiver,
@@ -111,12 +315,8 @@ const System = struct {
         y: u32 = 100,
     } = .{},
 
-    window: struct {
-        x: u32 = 100,
-        y: u32 = 100,
-        w: u32 = 300,
-        h: u32 = 500,
-    } = .{},
+    next_server_window_id: usize = 0,
+    windows: std.AutoHashMap(usize, Window) = .init(abi.mem.slab_allocator),
 
     // damage: struct {
     //     x_min: u32 = 0,
@@ -129,6 +329,7 @@ const System = struct {
     window_held: ?struct {
         x: u32,
         y: u32,
+        server_id: usize,
     } = null,
 
     fb_backbuf: abi.util.Image([*]u8),
@@ -157,18 +358,27 @@ const System = struct {
     }
 
     fn mouseButtonEvent(self: *@This(), ev: abi.input.MouseButtonEvent) void {
-        if (ev.button == .left and ev.state == .press and
-            self.alt_held and
-            self.cursor.x >= self.window.x and self.cursor.x <= self.window.x + self.window.w and
-            self.cursor.y >= self.window.y and self.cursor.y <= self.window.y + self.window.h)
-        {
-            self.window_held = .{
-                .x = self.cursor.x - self.window.x,
-                .y = self.cursor.y - self.window.y,
-            };
+        if (ev.button == .left and ev.state == .press and self.alt_held and self.window_held == null) {
+            self.grabWindow();
         }
         if (ev.button == .left and ev.state == .release and self.window_held != null) {
             self.window_held = null;
+        }
+    }
+
+    fn grabWindow(self: *@This()) void {
+        var it = self.windows.valueIterator();
+        while (it.next()) |window| {
+            if (self.cursor.x >= window.pos.x and self.cursor.x <= window.pos.x + window.size.width and
+                self.cursor.y >= window.pos.y and self.cursor.y <= window.pos.y + window.size.height)
+            {
+                self.window_held = .{
+                    .x = self.cursor.x - window.pos.x,
+                    .y = self.cursor.y - window.pos.y,
+                    .server_id = window.server_id,
+                };
+                return;
+            }
         }
     }
 
@@ -179,10 +389,11 @@ const System = struct {
         self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height - 10);
 
         if (self.window_held) |grab_pos| {
-            self.window.x = self.cursor.x - grab_pos.x;
-            self.window.y = self.cursor.y - grab_pos.y;
-            self.window.x = @min(@max(self.window.x, 0), self.fb_info.width - self.window.w);
-            self.window.y = @min(@max(self.window.y, 0), self.fb_info.height - self.window.h);
+            const window = self.windows.getPtr(grab_pos.server_id) orelse unreachable;
+            window.pos.x = self.cursor.x - grab_pos.x;
+            window.pos.y = self.cursor.y - grab_pos.y;
+            window.pos.x = @min(@max(window.pos.x, 0), self.fb_info.width - window.size.width);
+            window.pos.y = @min(@max(window.pos.y, 0), self.fb_info.height - window.size.height);
         }
 
         self.draw();
@@ -196,17 +407,20 @@ const System = struct {
 
         if (self.fb_info.width <= 10 or self.fb_info.height <= 10) return;
 
-        const window_img = self.fb_backbuf.subimage(
-            @intCast(self.window.x),
-            @intCast(self.window.y),
-            self.window.w,
-            self.window.h,
-        ) catch return;
-        window_img.fill(0);
+        var it = self.windows.valueIterator();
+        while (it.next()) |window| {
+            const window_img = self.fb_backbuf.subimage(
+                window.pos.x,
+                window.pos.y,
+                window.size.width,
+                window.size.height,
+            ) catch continue;
+            window.fb.copyTo(window_img) catch continue;
+        }
 
         const cursor_img = self.fb_backbuf.subimage(
-            @intCast(self.cursor.x),
-            @intCast(self.cursor.y),
+            self.cursor.x,
+            self.cursor.y,
             10,
             10,
         ) catch return;

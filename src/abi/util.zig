@@ -197,7 +197,7 @@ pub fn Image(storage: type) type {
                 const to_row = y * to.pitch;
                 const from_row_slice = from.pixel_array[from_row .. from_row + from_row_width];
                 const to_row_slice = to.pixel_array[to_row .. to_row + to_row_width];
-                abi.util.copyForwardsVolatile(u8, to_row_slice, from_row_slice);
+                @memcpy(to_row_slice, from_row_slice);
             }
         }
 

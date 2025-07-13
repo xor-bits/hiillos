@@ -430,6 +430,74 @@ pub const TtyProtocol = struct {
     });
 };
 
+pub const WmProtocol = struct {
+    pub const ConnectRequest = struct {
+        pub const Response = Result(caps.Sender, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        ConnectRequest,
+    });
+};
+
+pub const WmDisplayProtocol = struct {
+    pub const NewWindow = struct {
+        window_id: usize,
+        fb: NewFramebuffer,
+    };
+
+    pub const NewFramebuffer = struct {
+        shmem: caps.Frame,
+        pitch: u32,
+        size: Size,
+    };
+
+    pub const Position = struct {
+        x: u32,
+        y: u32,
+    };
+
+    pub const Size = struct {
+        width: u32,
+        height: u32,
+    };
+
+    pub const WindowEvent = struct {
+        window_id: usize,
+        event: union(enum) {
+            resize: NewFramebuffer,
+            close_requested: void,
+            focused: bool,
+            keyboard_input: input.KeyEvent,
+            cursor_moved: Position,
+            mouse_wheel: i16,
+            mouse_button: input.MouseButtonEvent,
+            redraw: void,
+        },
+    };
+
+    pub const Event = union(enum) {
+        window: WindowEvent,
+    };
+
+    pub const CreateWindowRequest = struct {
+        size: Size,
+
+        pub const Response = Result(NewWindow, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const NextEventRequest = struct {
+        pub const Response = Result(Event, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        CreateWindowRequest, NextEventRequest,
+    });
+};
+
 // pub const FdProtocol = util.Protocol(struct {
 //     // TODO: pager backed Frames
 //     /// create a (possibly shared) handle to contents of a file
