@@ -73,18 +73,20 @@ pub fn main() !void {
 }
 
 var waiting_lock: abi.lock.CapMutex = undefined;
-var waiting: ?abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response) = null;
+var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .init(abi.mem.slab_allocator);
 var event_queue: std.fifo.LinearFifo(abi.input.Event, .Dynamic) = .init(abi.mem.slab_allocator);
 
 pub fn pushEvent(ev: abi.input.Event) void {
     waiting_lock.lock();
     defer waiting_lock.unlock();
 
-    if (waiting) |*reply| {
-        reply.send(.{ .ok = ev }) catch |err| {
-            log.warn("failed to send input event reply: {}", .{err});
-        };
-        waiting = null;
+    if (waiting.items.len != 0) {
+        for (waiting.items) |*reply| {
+            reply.send(.{ .ok = ev }) catch |err| {
+                log.warn("failed to send input event reply: {}", .{err});
+            };
+        }
+        waiting.clearRetainingCapacity();
         return;
     }
 
@@ -93,21 +95,27 @@ pub fn pushEvent(ev: abi.input.Event) void {
     };
 }
 
-pub fn popEvent(reply: *abi.lpc.Reply(abi.Ps2Protocol.Next.Response)) !void {
+pub fn popEvent(reply: *abi.lpc.Reply(abi.Ps2Protocol.Next.Response)) void {
     waiting_lock.lock();
     defer waiting_lock.unlock();
-
-    if (waiting != null) {
-        reply.send(.{ .err = .permission_denied });
-        return;
-    }
 
     if (event_queue.readItem()) |ev| {
         reply.send(.{ .ok = ev });
         return;
     }
 
-    waiting = try reply.detach();
+    const new = waiting.addOne() catch |err| {
+        log.warn("input waiter dropped: {}", .{err});
+        reply.send(.{ .err = .out_of_memory });
+        return;
+    };
+
+    new.* = reply.detach() catch |err| {
+        log.warn("input waiter dropped: {}", .{err});
+        reply.send(.{ .err = .out_of_memory });
+        _ = waiting.pop();
+        return;
+    };
 }
 
 fn next(
@@ -115,7 +123,7 @@ fn next(
     handler: abi.lpc.Handler(abi.Ps2Protocol.Next),
 ) !void {
     // TODO: create IPC pipes for each input listener
-    try popEvent(handler.reply);
+    popEvent(handler.reply);
 }
 
 const System = struct {
