@@ -72,6 +72,10 @@ pub fn main() !void {
 
     const shmem = @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
     for (shmem, 0..) |*b, i| {
-        b.* = @truncate(i);
+        if (i % 4 == 3) {
+            b.* = 255; // max alpha
+        } else {
+            b.* = @truncate(i);
+        }
     }
 }

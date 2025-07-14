@@ -91,11 +91,21 @@ pub fn main() !void {
         .pixel_array = @ptrFromInt(fb_backbuf_addr),
     };
 
+    const cursor_fb = abi.util.Image([*]const u8){
+        .width = 16,
+        .height = 16,
+        .pitch = 64,
+        .bits_per_pixel = 32,
+        .pixel_array = std.mem.asBytes(&cursor_pixels),
+    };
+
     system_lock = try .newLocked();
     system = .{
         .fb_backbuf = fb_backbuf,
         .fb = fb,
         .fb_info = fb_info,
+
+        .cursor_fb = cursor_fb,
     };
     system_lock.unlock();
 
@@ -103,6 +113,21 @@ pub fn main() !void {
     try abi.thread.spawn(inputThreadMain, .{seat.input});
     try compositorThreadMain();
 }
+
+var cursor_pixels = b: {
+    var pixels: [16 * 16]u32 = [1]u32{0} ** (16 * 16);
+
+    for (0..16) |yo| {
+        for (0..16) |xo| {
+            if (xo < yo and (xo * xo) + (yo * yo) < 15 * 15) {
+                // RGBA
+                pixels[xo + yo * 16] = 0xff_ff_ff_ff;
+            }
+        }
+    }
+
+    break :b pixels;
+};
 
 fn compositorThreadMain() !void {
     const frametime_ns: u32 = 16_666_667;
@@ -336,6 +361,8 @@ const System = struct {
     fb: abi.util.Image([*]volatile u8),
     fb_info: abi.FramebufferInfoFrame,
 
+    cursor_fb: abi.util.Image([*]const u8),
+
     fn event(self: *@This(), ev: abi.input.Event) void {
         switch (ev) {
             .keyboard => |kb_ev| self.keyboardEvent(kb_ev),
@@ -385,15 +412,15 @@ const System = struct {
     fn mouseMotionEvent(self: *@This(), ev: abi.input.MouseMotionEvent) void {
         self.cursor.x = addSigned(self.cursor.x, ev.delta_x);
         self.cursor.y = addSigned(self.cursor.y, -ev.delta_y);
-        self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width - 10);
-        self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height - 10);
+        self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width -| 1);
+        self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height -| 1);
 
         if (self.window_held) |grab_pos| {
             const window = self.windows.getPtr(grab_pos.server_id) orelse unreachable;
-            window.pos.x = self.cursor.x - grab_pos.x;
-            window.pos.y = self.cursor.y - grab_pos.y;
-            window.pos.x = @min(@max(window.pos.x, 0), self.fb_info.width - window.size.width);
-            window.pos.y = @min(@max(window.pos.y, 0), self.fb_info.height - window.size.height);
+            window.pos.x = self.cursor.x -| grab_pos.x;
+            window.pos.y = self.cursor.y -| grab_pos.y;
+            window.pos.x = @min(@max(window.pos.x, 0), self.fb_info.width -| 1);
+            window.pos.y = @min(@max(window.pos.y, 0), self.fb_info.height -| 1);
         }
 
         self.draw();
@@ -403,28 +430,38 @@ const System = struct {
 
     fn draw(self: *@This()) void {
         defer self.fb_backbuf.copyTo(&self.fb) catch unreachable;
-        self.fb_backbuf.fill(0x1A1A27);
-
-        if (self.fb_info.width <= 10 or self.fb_info.height <= 10) return;
+        self.fb_backbuf.fill(0xFF1A1A27);
 
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
-            const window_img = self.fb_backbuf.subimage(
+            if (self.fb_backbuf.intersection(
+                0,
+                0,
+                window.fb,
                 window.pos.x,
                 window.pos.y,
-                window.size.width,
-                window.size.height,
-            ) catch continue;
-            window.fb.copyTo(window_img) catch continue;
+            )) |rects| {
+                rects[1].blitTo(rects[0]) catch {};
+            }
         }
 
-        const cursor_img = self.fb_backbuf.subimage(
+        if (self.fb_backbuf.intersection(
+            0,
+            0,
+            self.cursor_fb,
             self.cursor.x,
             self.cursor.y,
-            10,
-            10,
-        ) catch return;
-        cursor_img.fill(0xFFFFFF);
+        )) |rects| {
+            rects[1].blitTo(rects[0]) catch {};
+        }
+
+        // const cursor_img = self.fb_backbuf.subimage(
+        //     self.cursor.x,
+        //     self.cursor.y,
+        //     10,
+        //     10,
+        // ) catch return;
+        // cursor_img.fill(0xFFFFFF);
     }
 };
 

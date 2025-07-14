@@ -153,6 +153,49 @@ pub fn Image(storage: type) type {
             };
         }
 
+        pub fn intersection(
+            self: *const Self,
+            self_x: u32,
+            self_y: u32,
+            other: anytype,
+            other_x: u32,
+            other_y: u32,
+        ) ?struct { Self, @TypeOf(other) } {
+            const self_xmin: usize = self_x;
+            const self_xmax: usize = self_x + self.width;
+            const self_ymin: usize = self_y;
+            const self_ymax: usize = self_y + self.height;
+
+            const other_xmin: usize = other_x;
+            const other_xmax: usize = other_x + other.width;
+            const other_ymin: usize = other_y;
+            const other_ymax: usize = other_y + other.height;
+
+            const xmin: usize = @max(self_xmin, other_xmin);
+            const xmax: usize = @min(self_xmax, other_xmax);
+            const ymin: usize = @max(self_ymin, other_ymin);
+            const ymax: usize = @min(self_ymax, other_ymax);
+
+            if (xmin > xmax or ymin > ymax) return null;
+
+            const w: u32 = @intCast(xmax - xmin);
+            const h: u32 = @intCast(ymax - ymin);
+            const a = self.subimage(
+                @intCast(xmin - self_x),
+                @intCast(ymin - self_y),
+                w,
+                h,
+            ) catch unreachable;
+            const b = other.subimage(
+                @intCast(xmin - other_x),
+                @intCast(ymin - other_y),
+                w,
+                h,
+            ) catch unreachable;
+
+            return .{ a, b };
+        }
+
         pub fn fill(self: *const Self, col: u32) void {
             const pixel_size = self.bits_per_pixel / 8;
 
@@ -228,13 +271,83 @@ pub fn Image(storage: type) type {
                 }
             }
         }
+
+        pub fn blitTo(from: *const Self, to: anytype) error{SizeMismatch}!void {
+            if (from.width != to.width or from.height != to.height) {
+                return error.SizeMismatch;
+            }
+
+            const from_pixel_size = from.bits_per_pixel / 8;
+            const to_pixel_size = to.bits_per_pixel / 8;
+
+            for (0..to.height) |y| {
+                for (0..to.width) |x| {
+                    const from_idx = x * from_pixel_size + y * from.pitch;
+                    const from_pixel: *const volatile Pixel = @ptrCast(&from.pixel_array[from_idx]);
+
+                    const to_idx = x * to_pixel_size + y * to.pitch;
+                    const to_pixel: *volatile Pixel = @ptrCast(&to.pixel_array[to_idx]);
+
+                    // if (x == 0 and y == 0) {
+                    //     log.debug("from = {}, to = {}", .{ from_pixel.*, to_pixel.* });
+                    // }
+
+                    const alpha_blending = false;
+                    if (alpha_blending) {
+                        const f255 = @Vector(3, f32){ 255.0, 255.0, 255.0 };
+                        const f1 = @Vector(3, f32){ 1.0, 1.0, 1.0 };
+
+                        const from_rgb = @Vector(3, f32){
+                            @floatFromInt(from_pixel.red),
+                            @floatFromInt(from_pixel.green),
+                            @floatFromInt(from_pixel.blue),
+                        } / f255;
+                        const from_a = @as(f32, @floatFromInt(from_pixel.alpha)) / 255.0;
+                        const from_av = @Vector(3, f32){ from_a, from_a, from_a };
+                        const to_rgb = @Vector(3, f32){
+                            @floatFromInt(to_pixel.red),
+                            @floatFromInt(to_pixel.green),
+                            @floatFromInt(to_pixel.blue),
+                        } / f255;
+                        const to_a = @as(f32, @floatFromInt(to_pixel.alpha)) / 255.0;
+                        const to_av = @Vector(3, f32){ to_a, to_a, to_a };
+
+                        const final = (from_rgb * from_av + to_rgb * to_av * (f1 - from_av)) * f255;
+                        const final_a = (from_a + to_a * (1.0 - from_a)) * 255.0;
+
+                        to_pixel.* = .{
+                            .red = @intFromFloat(final[0]),
+                            .green = @intFromFloat(final[1]),
+                            .blue = @intFromFloat(final[2]),
+                            .alpha = @intFromFloat(final_a),
+                        };
+                    } else {
+                        const _to = to_pixel.*;
+                        const _from = from_pixel.*;
+                        const alpha: u1 = @intFromBool(_from.alpha != 0);
+
+                        to_pixel.* = .{
+                            .red = _from.red * alpha + _to.red * (1 - alpha),
+                            .green = _from.green * alpha + _to.green * (1 - alpha),
+                            .blue = _from.blue * alpha + _to.blue * (1 - alpha),
+                            .alpha = 255,
+                        };
+                    }
+
+                    // if (x == 0 and y == 0) {
+                    //     log.debug("final = {}", .{to_pixel.*});
+                    // }
+                }
+            }
+        }
     };
 }
 
-pub const Pixel = struct {
-    red: u8,
-    green: u8,
+pub const Pixel = extern struct {
     blue: u8,
+    green: u8,
+    red: u8,
+    alpha: u8 = 0xff,
 };
 
 //
