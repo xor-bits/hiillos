@@ -86,8 +86,6 @@ pub fn main() !void {
     }
 
     var term = try Terminal.new(shmem_addr, window.fb);
-    term.writeBytes("Hello world!");
-    term.flush();
 
     const sh_stdin = try abi.ring.Ring(u8).new(0x8000);
     defer sh_stdin.deinit();

@@ -476,7 +476,7 @@ const System = struct {
             self.forwardMouseWheel(ev.delta_z);
         }
         if (ev.delta_x != 0 or ev.delta_y != 0) {
-            log.info("cursor={}", .{self.cursor});
+            // log.info("cursor={}", .{self.cursor});
             self.forwardCursorMove();
         }
     }
