@@ -120,8 +120,7 @@ var cursor_pixels = b: {
     for (0..16) |yo| {
         for (0..16) |xo| {
             if (xo < yo and (xo * xo) + (yo * yo) < 15 * 15) {
-                // RGBA
-                pixels[xo + yo * 16] = 0xff_ff_ff_ff;
+                pixels[xo + yo * 16] = 0xff_ffffff;
             }
         }
     }
