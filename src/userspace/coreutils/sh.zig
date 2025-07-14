@@ -50,7 +50,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
 
         const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
             .arg_map = try createArgMap(cmd),
-            .env_map = try caps.Frame.create(0x1000),
+            .env_map = try caps.COMMON_ENV_MAP.clone(),
             .stdio = try @import("main.zig").stdio.clone(),
         }, .{
             .cap = 1,
