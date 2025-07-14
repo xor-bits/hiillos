@@ -149,13 +149,13 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
         );
         const ev = try ev_result.asErrorUnion();
 
+        seat_lock.lock();
+        defer seat_lock.unlock();
+
         const kb_ev = switch (ev) {
             .keyboard => |_kb_ev| _kb_ev,
             .mouse => continue,
         };
-
-        seat_lock.lock();
-        defer seat_lock.unlock();
 
         const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
         if (kb_ev.state == .press and is_shift) shift = true;

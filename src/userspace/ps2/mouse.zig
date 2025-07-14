@@ -293,17 +293,7 @@ pub const Mouse = struct {
         if (abi.conf.LOG_KEYS)
             log.info("mouse ev: {}", .{ev});
 
-        main.waiting_lock.lock();
-        defer main.waiting_lock.unlock();
-
-        for (main.waiting.items) |*reply| {
-            reply.send(
-                .{ .ok = .{ .mouse = ev } },
-            ) catch |err| {
-                log.warn("ps2 failed to reply: {}", .{err});
-            };
-        }
-        main.waiting.clearRetainingCapacity();
+        main.pushEvent(.{ .mouse = ev });
         // log.info("key event {}", .{ev});
     }
 };

@@ -161,17 +161,7 @@ pub const Keyboard = struct {
                 if (ev.code == .print_screen and abi.conf.KERNEL_PANIC_SYSCALL)
                     abi.sys.kernelPanic();
 
-                main.waiting_lock.lock();
-                defer main.waiting_lock.unlock();
-
-                for (main.waiting.items) |*reply| {
-                    reply.send(
-                        .{ .ok = .{ .keyboard = ev } },
-                    ) catch |err| {
-                        log.warn("ps2 failed to reply: {}", .{err});
-                    };
-                }
-                main.waiting.clearRetainingCapacity();
+                main.pushEvent(.{ .keyboard = ev });
                 // log.info("key event {}", .{ev});
             }
         }

@@ -16,9 +16,6 @@ const KeyEvent = abi.input.KeyEvent;
 const KeyCode = abi.input.KeyCode;
 const KeyState = abi.input.KeyState;
 
-pub var waiting_lock: abi.lock.YieldMutex = .{};
-pub var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .init(abi.mem.slab_allocator);
-
 var controller: Controller = undefined;
 
 //
@@ -60,6 +57,8 @@ pub export var import_ps2_status_port = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     log.info("hello from ps2", .{});
+    waiting_lock = try .newLocked();
+    waiting_lock.unlock();
     controller = try Controller.init();
 
     log.info("spawning keyboard thread", .{});
@@ -73,21 +72,50 @@ pub fn main() !void {
     });
 }
 
+var waiting_lock: abi.lock.CapMutex = undefined;
+var waiting: ?abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response) = null;
+var event_queue: std.fifo.LinearFifo(abi.input.Event, .Dynamic) = .init(abi.mem.slab_allocator);
+
+pub fn pushEvent(ev: abi.input.Event) void {
+    waiting_lock.lock();
+    defer waiting_lock.unlock();
+
+    if (waiting) |*reply| {
+        reply.send(.{ .ok = ev }) catch |err| {
+            log.warn("failed to send input event reply: {}", .{err});
+        };
+        waiting = null;
+        return;
+    }
+
+    event_queue.writeItem(ev) catch |err| {
+        log.warn("input event dropped: {}", .{err});
+    };
+}
+
+pub fn popEvent(reply: *abi.lpc.Reply(abi.Ps2Protocol.Next.Response)) !void {
+    waiting_lock.lock();
+    defer waiting_lock.unlock();
+
+    if (waiting != null) {
+        reply.send(.{ .err = .permission_denied });
+        return;
+    }
+
+    if (event_queue.readItem()) |ev| {
+        reply.send(.{ .ok = ev });
+        return;
+    }
+
+    waiting = try reply.detach();
+}
+
 fn next(
     _: *abi.lpc.Daemon(System),
     handler: abi.lpc.Handler(abi.Ps2Protocol.Next),
 ) !void {
-    waiting_lock.lock();
-    defer waiting_lock.unlock();
-
-    // FIXME: keyboard inputs can be missed
     // TODO: create IPC pipes for each input listener
-
-    var reply = try handler.reply.detach();
-    waiting.append(reply) catch |err| {
-        log.err("failed to add a reply cap: {}", .{err});
-        try reply.send(.{ .err = .internal });
-    };
+    try popEvent(handler.reply);
 }
 
 const System = struct {
