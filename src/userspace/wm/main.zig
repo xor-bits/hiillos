@@ -268,18 +268,18 @@ fn createWindowRequest(
 }
 
 fn shmemInfo(w: u32, h: u32) error{Overflow}!struct { pitch: u32, bytes: u32 } {
-    const pitch = try std.math.ceilPowerOfTwo(u32, w);
+    const real_width = try std.math.ceilPowerOfTwo(u32, w);
     const bytes = try std.math.mul(
         u32,
         try std.math.mul(
             u32,
-            pitch,
+            real_width,
             try std.math.ceilPowerOfTwo(u32, h),
         ),
         4,
     );
 
-    return .{ .pitch = pitch, .bytes = bytes };
+    return .{ .pitch = real_width * 4, .bytes = bytes };
 }
 
 fn nextEventRequest(
