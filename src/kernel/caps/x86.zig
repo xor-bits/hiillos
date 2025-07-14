@@ -542,7 +542,7 @@ fn nextLevel(comptime create: bool, current: *volatile [512]Entry, i: u9) Error!
 fn deallocLevel(current: *volatile [512]Entry, i: u9) void {
     const entry = volat(&current[i]).*;
     volat(&current[i]).* = .{};
-    pmem.deallocChunk(addr.Phys.fromParts(.{ .page = entry.page_index }), .@"4KiB");
+    pmem.deallocChunk(true, addr.Phys.fromParts(.{ .page = entry.page_index }), .@"4KiB");
 }
 
 fn nextLevelFromEntry(comptime create: bool, entry: *volatile Entry) Error!addr.Phys {

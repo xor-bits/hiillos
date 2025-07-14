@@ -175,7 +175,7 @@ pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
             const result = addr.Phys.fromInt((std.math.log2_int(u64, highest) + 64 * i) * size.sizeBytes());
             if (conf.IS_DEBUG) {
                 std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
-                std.crypto.secureZero(u64, result.toHhdm().toPtr([*]volatile u64)[0..512]);
+                std.crypto.secureZero(u64, result.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
             }
             return result;
         }
@@ -195,13 +195,16 @@ pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
     const result = addr.Phys.fromInt(parent_chunk.raw + size.sizeBytes());
     if (conf.IS_DEBUG) {
         std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
-        std.crypto.secureZero(u64, result.toHhdm().toPtr([*]volatile u64)[0..512]);
+        std.crypto.secureZero(u64, result.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
     }
     return result;
 }
 
-pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
+pub fn deallocChunk(comptime zero: bool, ptr: addr.Phys, size: abi.ChunkSize) void {
     std.debug.assert(ptr.toParts().page != 0);
+
+    if (zero)
+        std.crypto.secureZero(u64, ptr.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
 
     // if the buddy chunk is also free, allocate it and free the parent chunk
     // if the buddy chunk is not free, then just free the current chunk
@@ -243,7 +246,7 @@ pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
 
             if (null == bucket.cmpxchgWeak(now, now & ~(@as(usize, 1) << buddy_id), .release, .monotonic)) {
                 const parent_ptr = addr.Phys.fromInt(std.mem.alignBackward(usize, ptr.raw, next_size.sizeBytes()));
-                deallocChunk(parent_ptr, next_size);
+                deallocChunk(zero, parent_ptr, next_size);
                 return; // tail call optimization hopefully?
             }
 
@@ -348,7 +351,7 @@ pub fn init() !void {
                     continue;
                 }
 
-                deallocChunk(addr.Phys.fromParts(.{ .page = @truncate(page) }), .@"4KiB");
+                deallocChunk(false, addr.Phys.fromParts(.{ .page = @truncate(page) }), .@"4KiB");
             }
 
             _ = usable.fetchAdd(n_pages, .monotonic);
@@ -399,7 +402,7 @@ pub fn free(chunk: addr.Phys, size: usize) void {
         log.err("trying to free a chunk that could not have been allocated", .{});
         return;
     };
-    return deallocChunk(chunk, _size);
+    return deallocChunk(true, chunk, _size);
 }
 
 pub fn isInMemoryKind(paddr: addr.Phys, size: usize, exp: ?limine.MemoryMapEntryType) bool {
