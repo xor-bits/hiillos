@@ -54,8 +54,8 @@ pub fn main() !void {
 
     const window_result = try abi.lpc.call(abi.WmDisplayProtocol.CreateWindowRequest, .{
         .size = .{
-            .width = 900,
-            .height = 600,
+            .width = 600,
+            .height = 400,
         },
     }, wm_display);
     const window = try window_result.asErrorUnion();
@@ -72,10 +72,16 @@ pub fn main() !void {
 
     const shmem = @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
     for (shmem, 0..) |*b, i| {
+        // const x = (i % @as(usize, window.fb.pitch)) / 4;
+        // const y = i / @as(usize, window.fb.pitch);
         if (i % 4 == 3) {
             b.* = 255; // max alpha
+            // } else if (i % 4 == 2) {
+            //     b.* = @intFromFloat(@as(f32, @floatFromInt(x)) / 900.0 * 255.0);
+            // } else if (i % 4 == 1) {
+            //     b.* = @intFromFloat(@as(f32, @floatFromInt(y)) / 600.0 * 255.0);
         } else {
-            b.* = 0; // black colour
+            b.* = 0;
         }
     }
 
@@ -94,7 +100,10 @@ pub fn main() !void {
     @memset(sh_stdout.storage(), 0);
     @memset(sh_stderr.storage(), 0);
 
-    // try abi.thread.spawn(kbReader, .{stdin});
+    try abi.thread.spawn(eventThread, .{
+        sh_stdin,
+        try wm_display.clone(),
+    });
 
     _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
         .arg_map = try caps.Frame.init("initfs:///sbin/sh"),
@@ -129,6 +138,44 @@ pub fn main() !void {
             .cursor_right => term.cursor.x +|= 1,
             .cursor_left => term.cursor.x -|= 1,
         }
+    }
+}
+
+fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: caps.Sender) !void {
+    defer wm_display.close();
+
+    while (true) {
+        const ev_result = try abi.lpc.call(
+            abi.WmDisplayProtocol.NextEventRequest,
+            .{},
+            wm_display,
+        );
+        const ev = try ev_result.asErrorUnion();
+        try event(sh_stdin, ev);
+    }
+}
+
+fn event(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.Event) !void {
+    switch (ev) {
+        .window => |w_ev| try windowEvent(sh_stdin, w_ev),
+    }
+}
+
+var shift: bool = false;
+fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.WindowEvent) !void {
+    switch (ev.event) {
+        .keyboard_input => |kb_ev| {
+            const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
+            if (kb_ev.state == .press and is_shift) shift = true;
+            if (kb_ev.state == .release and is_shift) shift = false;
+
+            if (kb_ev.state == .release) return;
+
+            if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
+                try sh_stdin.push(ch);
+            }
+        },
+        else => {},
     }
 }
 

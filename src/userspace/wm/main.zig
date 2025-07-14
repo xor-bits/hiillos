@@ -2,6 +2,7 @@ const std = @import("std");
 const abi = @import("abi");
 
 const caps = abi.caps;
+const log = std.log.scoped(.wm);
 
 //
 
@@ -205,6 +206,8 @@ fn createWindowRequest(
         return;
     };
 
+    // std.log.debug("shmem_info={}, size={}", .{ shmem_info, handler.req.size });
+
     const shmem = caps.Frame.create(shmem_info.bytes) catch {
         handler.reply.send(.{ .err = .out_of_memory });
         return;
@@ -289,15 +292,7 @@ fn nextEventRequest(
     system_lock.lock();
     defer system_lock.unlock();
 
-    if (daemon.ctx.conn.event_buffer.readItem()) |event| {
-        handler.reply.send(.{ .ok = event });
-        return;
-    }
-
-    daemon.ctx.conn.reply = handler.reply.detach() catch {
-        handler.reply.send(.{ .err = .internal });
-        return;
-    };
+    try daemon.ctx.conn.popEvent(handler.reply);
 }
 
 const DisplayContext = struct {
@@ -316,8 +311,36 @@ var system_lock: abi.lock.CapMutex = undefined;
 
 const Connection = struct {
     next_client_window_id: usize = 1,
-    event_buffer: std.fifo.LinearFifo(abi.WmDisplayProtocol.Event, .Dynamic) = .init(abi.mem.slab_allocator),
+    event_queue: std.fifo.LinearFifo(abi.WmDisplayProtocol.Event, .Dynamic) = .init(abi.mem.slab_allocator),
     reply: ?abi.lpc.DetachedReply(abi.WmDisplayProtocol.NextEventRequest.Response) = null,
+
+    pub fn pushEvent(self: *@This(), ev: abi.WmDisplayProtocol.Event) void {
+        if (self.reply) |*reply| {
+            reply.send(.{ .ok = ev }) catch |err| {
+                log.warn("failed to send input event reply: {}", .{err});
+            };
+            self.reply = null;
+            return;
+        }
+
+        self.event_queue.writeItem(ev) catch |err| {
+            log.warn("input event dropped: {}", .{err});
+        };
+    }
+
+    pub fn popEvent(self: *@This(), reply: *abi.lpc.Reply(abi.WmDisplayProtocol.NextEventRequest.Response)) !void {
+        if (self.reply != null) {
+            reply.send(.{ .err = .thread_safety });
+            return;
+        }
+
+        if (self.event_queue.readItem()) |ev| {
+            reply.send(.{ .ok = ev });
+            return;
+        }
+
+        self.reply = try reply.detach();
+    }
 };
 
 const Window = struct {
@@ -329,6 +352,13 @@ const Window = struct {
     fb: abi.util.Image([*]volatile u8),
 
     conn: *Connection,
+
+    pub fn pushEvent(self: *const @This(), ev: abi.WmDisplayProtocol.WindowEvent.Inner) void {
+        self.conn.pushEvent(.{ .window = .{
+            .window_id = self.client_id,
+            .event = ev,
+        } });
+    }
 };
 
 const System = struct {
@@ -370,10 +400,15 @@ const System = struct {
     }
 
     fn keyboardEvent(self: *@This(), ev: abi.input.KeyEvent) void {
-        if (ev.code != .left_alt) return;
+        if (ev.code == .left_alt and ev.state == .press) {
+            self.alt_held = true;
+        }
+        if (ev.code == .left_alt and ev.state == .release) {
+            self.alt_held = false;
+        }
 
-        if (ev.state == .press) self.alt_held = true;
-        if (ev.state == .release) self.alt_held = false;
+        const window = self.findHoveredWindow() orelse return;
+        window.pushEvent(.{ .keyboard_input = ev });
     }
 
     fn mouseEvent(self: *@This(), ev: abi.input.MouseEvent) void {
@@ -386,26 +421,39 @@ const System = struct {
     fn mouseButtonEvent(self: *@This(), ev: abi.input.MouseButtonEvent) void {
         if (ev.button == .left and ev.state == .press and self.alt_held and self.window_held == null) {
             self.grabWindow();
+            return;
         }
         if (ev.button == .left and ev.state == .release and self.window_held != null) {
             self.window_held = null;
+            return;
         }
+
+        const window = self.findHoveredWindow() orelse return;
+        window.pushEvent(.{ .mouse_button = ev });
     }
 
     fn grabWindow(self: *@This()) void {
+        if (self.findHoveredWindow()) |window| {
+            self.window_held = .{
+                .x = self.cursor.x - window.pos.x,
+                .y = self.cursor.y - window.pos.y,
+                .server_id = window.server_id,
+            };
+        }
+    }
+
+    /// the returned pointer is valid as long as the `windows` hashmap is not modified
+    fn findHoveredWindow(self: *@This()) ?*Window {
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
             if (self.cursor.x >= window.pos.x and self.cursor.x <= window.pos.x + window.size.width and
                 self.cursor.y >= window.pos.y and self.cursor.y <= window.pos.y + window.size.height)
             {
-                self.window_held = .{
-                    .x = self.cursor.x - window.pos.x,
-                    .y = self.cursor.y - window.pos.y,
-                    .server_id = window.server_id,
-                };
-                return;
+                return window;
             }
         }
+
+        return null;
     }
 
     fn mouseMotionEvent(self: *@This(), ev: abi.input.MouseMotionEvent) void {
@@ -424,7 +472,36 @@ const System = struct {
 
         self.draw();
 
-        // std.log.info("cursor {}", .{self.cursor});
+        if (ev.delta_z != 0) {
+            self.forwardMouseWheel(ev.delta_z);
+        }
+        if (ev.delta_x != 0 or ev.delta_y != 0) {
+            log.info("cursor={}", .{self.cursor});
+            self.forwardCursorMove();
+        }
+    }
+
+    fn forwardMouseWheel(self: *@This(), delta_z: i16) void {
+        const window = self.findHoveredWindow() orelse return;
+        window.pushEvent(.{ .mouse_wheel = delta_z });
+    }
+
+    fn forwardCursorMove(self: *@This()) void {
+        const window = self.findHoveredWindow() orelse return;
+
+        if (self.cursor.x < window.pos.x or self.cursor.y < window.pos.y)
+            return;
+
+        const window_relative_cursor: abi.WmDisplayProtocol.Position = .{
+            .x = self.cursor.x - window.pos.x,
+            .y = self.cursor.y - window.pos.y,
+        };
+
+        if (window_relative_cursor.x >= window.size.width or
+            window_relative_cursor.y >= window.size.height)
+            return;
+
+        window.pushEvent(.{ .cursor_moved = window_relative_cursor });
     }
 
     fn draw(self: *@This()) void {
@@ -440,6 +517,11 @@ const System = struct {
                 window.pos.x,
                 window.pos.y,
             )) |rects| {
+                // std.log.info(
+                //     \\window intersection:
+                //     \\ - pos: {}
+                //     \\ - size: {}x{}
+                // , .{ window.pos, rects[0].width, rects[0].height });
                 rects[1].blitTo(rects[0]) catch {};
             }
         }

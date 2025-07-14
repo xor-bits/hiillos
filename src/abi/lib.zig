@@ -465,7 +465,9 @@ pub const WmDisplayProtocol = struct {
 
     pub const WindowEvent = struct {
         window_id: usize,
-        event: union(enum) {
+        event: Inner,
+
+        pub const Inner = union(enum) {
             resize: NewFramebuffer,
             close_requested: void,
             focused: bool,
@@ -474,7 +476,7 @@ pub const WmDisplayProtocol = struct {
             mouse_wheel: i16,
             mouse_button: input.MouseButtonEvent,
             redraw: void,
-        },
+        };
     };
 
     pub const Event = union(enum) {
