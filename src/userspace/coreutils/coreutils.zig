@@ -27,6 +27,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
 
             try std.fmt.format(ctx.stdout_writer,
                 \\coreutils installed
+                \\
             , .{});
             std.log.info("coreutils installed", .{});
 

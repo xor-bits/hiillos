@@ -6,7 +6,7 @@ const caps = abi.caps;
 //
 
 pub fn main(ctx: @import("main.zig").Ctx) !void {
-    try std.fmt.format(ctx.stdout_writer, "\n> ", .{});
+    try std.fmt.format(ctx.stdout_writer, "> ", .{});
 
     var command: [0x100]u8 = undefined;
     var command_len: usize = 0;
