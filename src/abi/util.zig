@@ -362,12 +362,13 @@ pub fn Queue(
         tail: ?*T = null,
 
         pub fn pushBack(self: *@This(), new: *T) void {
+            @field(new, next_field) = null;
+
             if (self.tail) |tail| {
                 @field(new, prev_field) = tail;
                 @field(tail, next_field) = new;
             } else {
                 @field(new, prev_field) = null;
-                @field(new, next_field) = null;
                 self.head = new;
             }
 
@@ -375,12 +376,13 @@ pub fn Queue(
         }
 
         pub fn pushFront(self: *@This(), new: *T) void {
+            @field(new, prev_field) = null;
+
             if (self.head) |head| {
                 @field(new, next_field) = head;
                 @field(head, prev_field) = new;
             } else {
                 @field(new, next_field) = null;
-                @field(new, prev_field) = null;
                 self.tail = new;
             }
 
@@ -389,13 +391,15 @@ pub fn Queue(
 
         pub fn popBack(self: *@This()) ?*T {
             const head = self.head orelse return null;
-            const tail = self.tail orelse return null;
+            const tail = self.tail orelse unreachable;
 
             if (head == tail) {
                 self.head = null;
                 self.tail = null;
             } else {
-                self.tail = @field(tail, prev_field).?; // assert that its not null
+                const second_last = @field(tail, prev_field).?; // assert that its not null
+                @field(second_last, next_field) = null;
+                self.tail = second_last;
             }
 
             return tail;
@@ -403,16 +407,28 @@ pub fn Queue(
 
         pub fn popFront(self: *@This()) ?*T {
             const head = self.head orelse return null;
-            const tail = self.tail orelse return null;
+            const tail = self.tail orelse unreachable;
 
             if (head == tail) {
                 self.head = null;
                 self.tail = null;
             } else {
-                self.head = @field(head, next_field).?; // assert that its not null
+                const second = @field(head, next_field).?; // assert that its not null
+                @field(second, prev_field) = null;
+                self.head = second;
             }
 
             return head;
+        }
+
+        pub fn len(self: *const @This()) usize {
+            var counter: usize = 0;
+            var cur = self.head;
+            while (cur) |next| {
+                counter += 1;
+                cur = @field(next, next_field);
+            }
+            return counter;
         }
     };
 }
