@@ -155,26 +155,26 @@ pub fn Image(storage: type) type {
 
         pub fn intersection(
             self: *const Self,
-            self_x: u32,
-            self_y: u32,
+            self_x: i32,
+            self_y: i32,
             other: anytype,
-            other_x: u32,
-            other_y: u32,
+            other_x: i32,
+            other_y: i32,
         ) ?struct { Self, @TypeOf(other) } {
-            const self_xmin: usize = self_x;
-            const self_xmax: usize = self_x + self.width;
-            const self_ymin: usize = self_y;
-            const self_ymax: usize = self_y + self.height;
+            const self_xmin: isize = @as(isize, self_x);
+            const self_xmax: isize = @as(isize, self_x) + self.width;
+            const self_ymin: isize = @as(isize, self_y);
+            const self_ymax: isize = @as(isize, self_y) + self.height;
 
-            const other_xmin: usize = other_x;
-            const other_xmax: usize = other_x + other.width;
-            const other_ymin: usize = other_y;
-            const other_ymax: usize = other_y + other.height;
+            const other_xmin: isize = @as(isize, other_x);
+            const other_xmax: isize = @as(isize, other_x) + other.width;
+            const other_ymin: isize = @as(isize, other_y);
+            const other_ymax: isize = @as(isize, other_y) + other.height;
 
-            const xmin: usize = @max(self_xmin, other_xmin);
-            const xmax: usize = @min(self_xmax, other_xmax);
-            const ymin: usize = @max(self_ymin, other_ymin);
-            const ymax: usize = @min(self_ymax, other_ymax);
+            const xmin: isize = @max(self_xmin, other_xmin);
+            const xmax: isize = @min(self_xmax, other_xmax);
+            const ymin: isize = @max(self_ymin, other_ymin);
+            const ymax: isize = @min(self_ymax, other_ymax);
 
             if (xmin > xmax or ymin > ymax) return null;
 

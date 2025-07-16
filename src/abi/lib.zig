@@ -431,8 +431,8 @@ pub const WmDisplayProtocol = struct {
     };
 
     pub const Position = struct {
-        x: u32,
-        y: u32,
+        x: i32,
+        y: i32,
     };
 
     pub const Size = struct {

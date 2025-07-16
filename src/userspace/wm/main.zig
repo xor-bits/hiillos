@@ -368,10 +368,10 @@ const Window = struct {
 const System = struct {
     // recv: caps.Receiver,
 
-    cursor: struct {
-        x: u32 = 100,
-        y: u32 = 100,
-    } = .{},
+    cursor: abi.WmDisplayProtocol.Position = .{
+        .x = 100,
+        .y = 100,
+    },
 
     next_server_window_id: usize = 0,
     windows: std.AutoHashMap(usize, Window) = .init(abi.mem.slab_allocator),
@@ -385,8 +385,7 @@ const System = struct {
 
     alt_held: bool = false,
     window_held: ?struct {
-        x: u32,
-        y: u32,
+        offs: abi.WmDisplayProtocol.Position,
         server_id: usize,
     } = null,
 
@@ -443,8 +442,10 @@ const System = struct {
     fn grabWindow(self: *@This()) void {
         if (self.findHoveredWindow()) |window| {
             self.window_held = .{
-                .x = self.cursor.x - window.pos.x,
-                .y = self.cursor.y - window.pos.y,
+                .offs = .{
+                    .x = self.cursor.x - window.pos.x,
+                    .y = self.cursor.y - window.pos.y,
+                },
                 .server_id = window.server_id,
             };
         }
@@ -454,8 +455,10 @@ const System = struct {
     fn findHoveredWindow(self: *@This()) ?*Window {
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
-            if (self.cursor.x >= window.pos.x and self.cursor.x <= window.pos.x + window.size.width and
-                self.cursor.y >= window.pos.y and self.cursor.y <= window.pos.y + window.size.height)
+            if (self.cursor.x >= window.pos.x and
+                self.cursor.y >= window.pos.y and
+                @as(isize, self.cursor.x) <= @as(isize, window.pos.x) + window.size.width and
+                @as(isize, self.cursor.y) <= @as(isize, window.pos.y) + window.size.height)
             {
                 return window;
             }
@@ -465,17 +468,15 @@ const System = struct {
     }
 
     fn mouseMotionEvent(self: *@This(), ev: abi.input.MouseMotionEvent) void {
-        self.cursor.x = addSigned(self.cursor.x, ev.delta_x);
-        self.cursor.y = addSigned(self.cursor.y, -ev.delta_y);
+        self.cursor.x +|= ev.delta_x;
+        self.cursor.y +|= -ev.delta_y;
         self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width -| 1);
         self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height -| 1);
 
         if (self.window_held) |grab_pos| {
             const window = self.windows.getPtr(grab_pos.server_id) orelse unreachable;
-            window.pos.x = self.cursor.x -| grab_pos.x;
-            window.pos.y = self.cursor.y -| grab_pos.y;
-            window.pos.x = @min(@max(window.pos.x, 0), self.fb_info.width -| 1);
-            window.pos.y = @min(@max(window.pos.y, 0), self.fb_info.height -| 1);
+            window.pos.x = self.cursor.x -| grab_pos.offs.x;
+            window.pos.y = self.cursor.y -| grab_pos.offs.y;
         }
 
         self.draw();
