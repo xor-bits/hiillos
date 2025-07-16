@@ -519,6 +519,17 @@ const System = struct {
 
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
+            if (self.fb_backbuf.imageAabbIntersect(
+                0,
+                0,
+                window.size.width + 2,
+                window.size.height + 2,
+                window.pos.x -| 1,
+                window.pos.y -| 1,
+            )) |rect| {
+                rect.fillHollow(0xff_353535, 1);
+            }
+
             if (self.fb_backbuf.intersection(
                 0,
                 0,

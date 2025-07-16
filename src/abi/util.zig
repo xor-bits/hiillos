@@ -161,39 +161,60 @@ pub fn Image(storage: type) type {
             other_x: i32,
             other_y: i32,
         ) ?struct { Self, @TypeOf(other) } {
-            const self_xmin: isize = @as(isize, self_x);
-            const self_xmax: isize = @as(isize, self_x) + self.width;
-            const self_ymin: isize = @as(isize, self_y);
-            const self_ymax: isize = @as(isize, self_y) + self.height;
+            const sub_aabb = aabbIntersect(
+                self.width,
+                self.height,
+                self_x,
+                self_y,
+                other.width,
+                other.height,
+                other_x,
+                other_y,
+            ) orelse return null;
 
-            const other_xmin: isize = @as(isize, other_x);
-            const other_xmax: isize = @as(isize, other_x) + other.width;
-            const other_ymin: isize = @as(isize, other_y);
-            const other_ymax: isize = @as(isize, other_y) + other.height;
-
-            const xmin: isize = @max(self_xmin, other_xmin);
-            const xmax: isize = @min(self_xmax, other_xmax);
-            const ymin: isize = @max(self_ymin, other_ymin);
-            const ymax: isize = @min(self_ymax, other_ymax);
-
-            if (xmin > xmax or ymin > ymax) return null;
-
-            const w: u32 = @intCast(xmax - xmin);
-            const h: u32 = @intCast(ymax - ymin);
             const a = self.subimage(
-                @intCast(xmin - self_x),
-                @intCast(ymin - self_y),
-                w,
-                h,
+                @intCast(sub_aabb.x - self_x),
+                @intCast(sub_aabb.y - self_y),
+                sub_aabb.w,
+                sub_aabb.h,
             ) catch unreachable;
+
             const b = other.subimage(
-                @intCast(xmin - other_x),
-                @intCast(ymin - other_y),
-                w,
-                h,
+                @intCast(sub_aabb.x - other_x),
+                @intCast(sub_aabb.y - other_y),
+                sub_aabb.w,
+                sub_aabb.h,
             ) catch unreachable;
 
             return .{ a, b };
+        }
+
+        pub fn imageAabbIntersect(
+            self: *const Self,
+            self_x: i32,
+            self_y: i32,
+            other_width: u32,
+            other_height: u32,
+            other_x: i32,
+            other_y: i32,
+        ) ?Self {
+            const sub_aabb = aabbIntersect(
+                self.width,
+                self.height,
+                self_x,
+                self_y,
+                other_width,
+                other_height,
+                other_x,
+                other_y,
+            ) orelse return null;
+
+            return self.subimage(
+                @intCast(sub_aabb.x - self_x),
+                @intCast(sub_aabb.y - self_y),
+                sub_aabb.w,
+                sub_aabb.h,
+            ) catch unreachable;
         }
 
         pub fn fill(self: *const Self, col: u32) void {
@@ -205,6 +226,54 @@ pub fn Image(storage: type) type {
                     dst.* = @as([4]u8, @bitCast(col));
                 }
             }
+        }
+
+        pub fn fillHollow(self: *const Self, col: u32, border_width: u32) void {
+            // AAAAAAAAAAAAA
+            //
+            // B           C
+            // B           C
+            // B           C
+            //
+            // DDDDDDDDDDDDD
+
+            if (self.width == 0 or self.height == 0 or border_width == 0)
+                return;
+
+            if (border_width * 2 >= self.width or border_width * 2 >= self.height)
+                return self.fill(col);
+
+            const a = self.subimage(
+                0,
+                0,
+                self.width,
+                border_width,
+            ) catch unreachable;
+            a.fill(col);
+
+            const d = self.subimage(
+                0,
+                self.height - border_width,
+                self.width,
+                border_width,
+            ) catch unreachable;
+            d.fill(col);
+
+            const b = self.subimage(
+                0,
+                0,
+                border_width,
+                self.height,
+            ) catch unreachable;
+            b.fill(col);
+
+            const c = self.subimage(
+                self.width - border_width,
+                0,
+                border_width,
+                self.height,
+            ) catch unreachable;
+            c.fill(col);
         }
 
         pub fn fillGlyph(self: *const Self, glyph: *const Glyph, fg: u32, bg: u32) void {
@@ -349,6 +418,43 @@ pub const Pixel = extern struct {
     red: u8,
     alpha: u8 = 0xff,
 };
+
+//
+
+pub fn aabbIntersect(
+    self_width: u32,
+    self_height: u32,
+    self_x: i32,
+    self_y: i32,
+    other_width: u32,
+    other_height: u32,
+    other_x: i32,
+    other_y: i32,
+) ?struct { x: i32, y: i32, w: u32, h: u32 } {
+    const self_xmin: isize = @as(isize, self_x);
+    const self_xmax: isize = @as(isize, self_x) + self_width;
+    const self_ymin: isize = @as(isize, self_y);
+    const self_ymax: isize = @as(isize, self_y) + self_height;
+
+    const other_xmin: isize = @as(isize, other_x);
+    const other_xmax: isize = @as(isize, other_x) + other_width;
+    const other_ymin: isize = @as(isize, other_y);
+    const other_ymax: isize = @as(isize, other_y) + other_height;
+
+    const xmin: isize = @max(self_xmin, other_xmin);
+    const xmax: isize = @min(self_xmax, other_xmax);
+    const ymin: isize = @max(self_ymin, other_ymin);
+    const ymax: isize = @min(self_ymax, other_ymax);
+
+    if (xmin > xmax or ymin > ymax) return null;
+
+    return .{
+        .x = std.math.cast(i32, xmin) orelse return null,
+        .y = std.math.cast(i32, ymin) orelse return null,
+        .w = @intCast(xmax - xmin),
+        .h = @intCast(ymax - ymin),
+    };
+}
 
 //
 
