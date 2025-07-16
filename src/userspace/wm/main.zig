@@ -31,16 +31,9 @@ pub fn main() !void {
     }, abi.caps.COMMON_VFS);
     try res.asErrorUnion();
 
-    const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
-        .arg_map = try caps.Frame.init("initfs:///sbin/term"),
-        .env_map = try caps.Frame.init("WM_SOCKET=fs:///wm.sock"),
-        .stdio = .{
-            .stdin = .{ .none = {} },
-            .stdout = .{ .none = {} },
-            .stderr = .{ .none = {} },
-        },
-    }, abi.caps.COMMON_PM);
-    _ = try initial_app.asErrorUnion();
+    exec("initfs:///sbin/term") catch |err| {
+        log.err("failed to exec initial app: {}", .{err});
+    };
 
     var fb_info: abi.FramebufferInfoFrame = undefined;
     try seat.fb_info.read(0, std.mem.asBytes(&fb_info));
@@ -126,6 +119,19 @@ var cursor_pixels = b: {
 
     break :b pixels;
 };
+
+fn exec(path: []const u8) !void {
+    const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
+        .arg_map = try caps.Frame.init(path),
+        .env_map = try caps.Frame.init("WM_SOCKET=fs:///wm.sock"),
+        .stdio = .{
+            .stdin = .{ .none = {} },
+            .stdout = .{ .none = {} },
+            .stderr = .{ .none = {} },
+        },
+    }, abi.caps.COMMON_PM);
+    _ = try initial_app.asErrorUnion();
+}
 
 fn compositorThreadMain() !void {
     const frametime_ns: u32 = 16_666_667;
@@ -405,7 +411,8 @@ const System = struct {
             self.alt_held = false;
         }
         if (ev.code == .enter and ev.state == .press and self.alt_held) {
-            self.alt_held = true;
+            exec("initfs:///sbin/term") catch {};
+            return;
         }
 
         const window = self.findHoveredWindow() orelse return;
