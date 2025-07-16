@@ -221,3 +221,16 @@ pub fn Once(comptime Mutex: type) type {
         }
     };
 }
+
+pub const Backoff = struct {
+    n: usize = 1,
+
+    pub fn spin(self: *@This()) void {
+        for (0..self.n) |_| {
+            std.atomic.spinLoopHint();
+        }
+
+        self.n *|= 3;
+        self.n /= 2;
+    }
+};

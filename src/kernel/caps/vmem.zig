@@ -495,7 +495,7 @@ pub const Vmem = struct {
             };
         }
 
-        const tlb_shootdown = try caps.TlbShootdown.init(
+        const shootdown = try caps.TlbShootdown.init(
             .{ .unmap = thread },
             .{ .range = .{
                 vaddr,
@@ -511,11 +511,9 @@ pub const Vmem = struct {
             if (locals == arch.cpuLocal()) continue;
 
             if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
-                locals.tlb_shootdown_queue_lock.lock();
-                locals.tlb_shootdown_queue.pushBack(tlb_shootdown.clone());
-                locals.tlb_shootdown_queue_lock.unlock();
+                locals.pushTlbShootdown(shootdown.clone());
 
-                // log.debug("issuing a TCB shootdown from unmap", .{});
+                // log.debug("issuing a TLB shootdown from unmap", .{});
                 apic.interProcessorInterrupt(
                     locals.lapic_id,
                     apic.IRQ_IPI_TLB_SHOOTDOWN,
@@ -523,7 +521,7 @@ pub const Vmem = struct {
             } else {}
         };
 
-        if (tlb_shootdown.deinit()) |this_thread| {
+        if (shootdown.deinit()) |this_thread| {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
             this_thread.status = .running;
@@ -566,7 +564,7 @@ pub const Vmem = struct {
 
             const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + 0x1000 * mapping_idx);
 
-            try refreshPageAndTcbShootdown(
+            try refreshPageAndTlbShootdown(
                 frame,
                 hal_vmem,
                 vaddr,
@@ -577,7 +575,7 @@ pub const Vmem = struct {
         // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
     }
 
-    fn refreshPageAndTcbShootdown(
+    fn refreshPageAndTlbShootdown(
         frame: *caps.Frame,
         hal_vmem: *volatile caps.HalVmem,
         vaddr: addr.Virt,
@@ -593,7 +591,7 @@ pub const Vmem = struct {
         // TODO: atomically swap the frame entry,
         // swapping in the empty entry and acquiring the `accessed` and `dirty` bits
 
-        // log.debug("found a stale TCB entry", .{});
+        // log.debug("found a stale TLB entry", .{});
 
         const shootdown = try caps.TlbShootdown.init(
             .{ .transient = frame.clone() },
@@ -608,9 +606,7 @@ pub const Vmem = struct {
                 // no need to send a self IPI
                 arch.flushTlbAddr(vaddr.raw);
             } else {
-                locals.tlb_shootdown_queue_lock.lock();
-                defer locals.tlb_shootdown_queue_lock.unlock();
-                locals.tlb_shootdown_queue.pushBack(shootdown.clone());
+                locals.pushTlbShootdown(shootdown.clone());
                 ipi_bitmap.* |= @as(u256, 1) << @as(u8, @intCast(i));
             }
         }

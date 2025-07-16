@@ -1152,12 +1152,9 @@ pub const Idt = extern struct {
                 if (conf.LOG_INTERRUPTS) log.debug("TLB shootdown interrupt", .{});
 
                 const locals = cpuLocal();
-                while (b: {
-                    locals.tlb_shootdown_queue_lock.lock();
-                    defer locals.tlb_shootdown_queue_lock.unlock();
-                    break :b locals.tlb_shootdown_queue.popFront();
-                }) |tcb_shootdown| {
-                    if (tcb_shootdown.deinit()) |thread| {
+                while (locals.tryPopTlbShootdown()) |shootdown| {
+                    // log.debug("one TLB shootdown complete for {*}", .{shootdown});
+                    if (shootdown.deinit()) |thread| {
                         // log.debug("TLB shootdowns complete for {*}", .{thread});
                         proc.ready(thread);
                     }
@@ -1594,7 +1591,7 @@ pub const TrapRegs = extern struct {
     }
 
     pub fn exitNow(trap: *const @This()) noreturn {
-        log.info("abnormal return to user-space, ctx={}", .{trap});
+        // log.info("abnormal return to user-space, ctx={}", .{trap});
 
         asm volatile (""
             :

@@ -361,7 +361,7 @@ pub const Frame = struct {
                     if (locals == arch.cpuLocal()) continue; // no need to send a self IPI
 
                     if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
-                        log.err("issuing a TCB shootdown from transient page", .{});
+                        // log.debug("issuing a TLB shootdown from transient page", .{});
                         apic.interProcessorInterrupt(
                             locals.lapic_id,
                             apic.IRQ_IPI_TLB_SHOOTDOWN,
@@ -516,9 +516,6 @@ pub const TlbShootdown = struct {
 
     completion: Completion,
     target: Target,
-
-    next: ?*@This() = null,
-    prev: ?*@This() = null,
 
     pub const Completion = union(enum) {
         transient: *caps.Frame,

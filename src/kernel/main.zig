@@ -50,11 +50,43 @@ pub const CpuLocalStorage = struct {
     lapic_id: u32,
     lapic: apic.Locals = .{},
 
-    tlb_shootdown_queue: abi.util.Queue(caps.TlbShootdown, "next", "prev") = .{},
+    tlb_shootdown_queue: std.fifo.LinearFifo(*caps.TlbShootdown, .{ .Static = 16 }) = .init(),
     tlb_shootdown_queue_lock: abi.lock.SpinMutex = .{},
     initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
+
+    pub fn popTlbShootdown(self: *@This()) *caps.TlbShootdown {
+        var backoff: abi.lock.Backoff = .{};
+
+        while (true) {
+            if (self.tryPopTlbShootdown()) |owned_ptr| return owned_ptr;
+            backoff.spin();
+        }
+    }
+
+    pub fn tryPopTlbShootdown(self: *@This()) ?*caps.TlbShootdown {
+        self.tlb_shootdown_queue_lock.lock();
+        defer self.tlb_shootdown_queue_lock.unlock();
+
+        return self.tlb_shootdown_queue.readItem();
+    }
+
+    pub fn pushTlbShootdown(self: *@This(), owned_ptr: *caps.TlbShootdown) void {
+        var backoff: abi.lock.Backoff = .{};
+
+        while (true) {
+            if (self.tryPushTlbShootdown(owned_ptr)) return;
+            backoff.spin();
+        }
+    }
+
+    pub fn tryPushTlbShootdown(self: *@This(), owned_ptr: *caps.TlbShootdown) bool {
+        self.tlb_shootdown_queue_lock.lock();
+        defer self.tlb_shootdown_queue_lock.unlock();
+
+        return !std.meta.isError(self.tlb_shootdown_queue.writeItem(owned_ptr));
+    }
 };
 
 //
