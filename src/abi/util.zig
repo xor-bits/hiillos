@@ -433,6 +433,67 @@ pub fn Queue(
     };
 }
 
+test "Queue.stress_test" {
+    const Test = struct {
+        next: ?*@This() = null,
+        prev: ?*@This() = null,
+    };
+
+    const alloc = std.testing.allocator;
+
+    var rng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const rand = rng.random();
+
+    var queue = Queue(Test, "next", "prev"){};
+
+    for (0..100_000) |_| {
+        switch (rand.intRangeAtMostBiased(u2, 0, 3)) {
+            0 => {
+                const before = queue.len();
+                queue.pushBack(try alloc.create(Test));
+                const after = queue.len();
+                try std.testing.expect(before + 1 == after);
+            },
+            1 => {
+                const before = queue.len();
+                queue.pushFront(try alloc.create(Test));
+                const after = queue.len();
+                try std.testing.expect(before + 1 == after);
+            },
+            2 => {
+                const before = queue.len();
+                if (queue.popBack()) |item| {
+                    alloc.destroy(item);
+                    const after = queue.len();
+                    try std.testing.expect(before == after + 1);
+                } else {
+                    try std.testing.expect(before == 0);
+                }
+            },
+            3 => {
+                const before = queue.len();
+                if (queue.popFront()) |item| {
+                    alloc.destroy(item);
+                    const after = queue.len();
+                    try std.testing.expect(before == after + 1);
+                } else {
+                    try std.testing.expect(before == 0);
+                }
+            },
+        }
+    }
+
+    try std.testing.expect(queue.len() <= 1_000);
+
+    for (0..queue.len()) |_| {
+        alloc.destroy(queue.popFront() orelse return error.LengthPopCountMismatch);
+    }
+
+    try std.testing.expect(queue.popFront() == null);
+    try std.testing.expect(queue.len() == 0);
+    try std.testing.expect(!std.testing.allocator_instance.detectLeaks());
+}
+
 // TODO: automatically convert tuples with just one item into that item
 // TODO: check extra caps count when deserializing
 // TODO: check cap types when deserializing
