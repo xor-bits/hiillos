@@ -120,8 +120,12 @@ var cursor_pixels = b: {
 
     for (0..16) |yo| {
         for (0..16) |xo| {
-            if (xo < yo and (xo * xo) + (yo * yo) < 15 * 15) {
-                pixels[xo + yo * 16] = 0xff_ffffff;
+            if (xo <= yo and (xo * xo) + (yo * yo) <= 15 * 15 - 1) {
+                if (xo == 0 or xo == yo or (xo * xo) + (yo * yo) >= 14 * 14 + 1) {
+                    pixels[xo + yo * 16] = 0xff_ffffff;
+                } else {
+                    pixels[xo + yo * 16] = 0xff_000000;
+                }
             }
         }
     }
