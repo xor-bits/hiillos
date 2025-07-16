@@ -8,10 +8,10 @@ const Ctx = @import("main.zig").Ctx;
 
 pub fn main(ctx: Ctx) !void {
     var time = ctx.args.next() orelse {
-        return try help(ctx);
+        return try help();
     };
     if (time.len == 0) {
-        return try help(ctx);
+        return try help();
     }
 
     var factor: f128 = 1.0;
@@ -38,7 +38,7 @@ pub fn main(ctx: Ctx) !void {
     }
 
     const time_num = std.fmt.parseFloat(f128, time) catch {
-        return try help(ctx);
+        return try help();
     };
 
     const nanos: u128 = @intFromFloat(time_num * factor * 1_000_000_000.0);
@@ -47,10 +47,11 @@ pub fn main(ctx: Ctx) !void {
     _ = try hpet.call(.sleep, .{nanos});
 }
 
-fn help(ctx: Ctx) !void {
-    try ctx.stdout_writer.print(
+fn help() !void {
+    try abi.io.stdout.writer().print(
         \\usage: sleep NUMBER[SUFFIX]
         \\Pause for NUMBER seconds, where NUMBER is an integer or a floating-point.
         \\SUFFIX may be 's', 'm', 'h' or 'd', for seconds, minutes, hours, days.
+        \\
     , .{});
 }

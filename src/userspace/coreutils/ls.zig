@@ -8,28 +8,27 @@ const Ctx = @import("main.zig").Ctx;
 
 pub fn main(ctx: Ctx) !void {
     if (ctx.args.next()) |path| {
-        try tryLsPath(ctx, path);
+        try tryLsPath(path);
     } else {
-        try tryLsPath(ctx, "initfs:///sbin/");
+        try tryLsPath("initfs:///sbin/");
         return;
     }
 
     while (ctx.args.next()) |path| {
-        try tryLsPath(ctx, path);
+        try tryLsPath(path);
     }
 }
 
-fn tryLsPath(ctx: Ctx, path: []const u8) !void {
-    lsPath(ctx, path) catch |err| {
-        try std.fmt.format(
-            ctx.stdout_writer,
+fn tryLsPath(path: []const u8) !void {
+    lsPath(path) catch |err| {
+        try abi.io.stdout.writer().print(
             "cannot open {s}: {}\n",
             .{ path, err },
         );
     };
 }
 
-fn lsPath(ctx: Ctx, path: []const u8) !void {
+fn lsPath(path: []const u8) !void {
     const result = try abi.lpc.call(abi.VfsProtocol.OpenDirRequest, .{
         .path = try abi.fs.Path.new(path),
         .open_opts = .{ .mode = .read_only },
@@ -41,8 +40,7 @@ fn lsPath(ctx: Ctx, path: []const u8) !void {
 
     var it = try abi.fs.Dir.iterator(dir_ents.data, dir_ents.count);
     while (it.next()) |entry| {
-        try std.fmt.format(
-            ctx.stdout_writer,
+        try abi.io.stdout.writer().print(
             "{s}\n",
             .{entry.name},
         );

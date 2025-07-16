@@ -10,6 +10,7 @@ pub const escape = @import("escape.zig");
 pub const font = @import("font");
 pub const fs = @import("fs.zig");
 pub const input = @import("input.zig");
+pub const io = @import("io.zig");
 pub const loader = @import("loader.zig");
 pub const lock = @import("lock.zig");
 pub const lpc = @import("lpc.zig");
@@ -232,6 +233,7 @@ pub const SysLog = struct {
     }
     pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
         sys.log(bytes);
+        io.stdout.writer().writeAll(bytes) catch {};
     }
     pub fn flush(_: @This()) Error!void {}
 };
@@ -277,35 +279,10 @@ pub const PmProtocol = struct {
     //     internal,
     // };
 
-    pub const Stdio = union(enum) {
-        ring: ring.SharedRing,
-        file: caps.Frame,
-        inherit: void,
-        none: void,
-
-        pub fn clone(self: @This()) sys.Error!@This() {
-            return switch (self) {
-                .ring => |v| .{ .ring = try v.clone() },
-                .file => |v| .{ .file = try v.clone() },
-                .inherit => .{ .inherit = {} },
-                .none => .{ .inherit = {} },
-            };
-        }
-
-        pub fn deinit(self: @This()) void {
-            switch (self) {
-                .ring => |v| v.deinit(),
-                .file => |v| v.close(),
-                .inherit => {},
-                .none => {},
-            }
-        }
-    };
-
     pub const AllStdio = struct {
-        stdin: Stdio = .{ .none = {} },
-        stdout: Stdio = .{ .none = {} },
-        stderr: Stdio = .{ .none = {} },
+        stdin: io.Stdio = .{ .none = {} },
+        stdout: io.Stdio = .{ .none = {} },
+        stderr: io.Stdio = .{ .none = {} },
 
         pub fn clone(self: @This()) sys.Error!@This() {
             return .{

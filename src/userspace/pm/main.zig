@@ -249,6 +249,10 @@ fn execElf(
     // if (stdio.stdin == .inherit) stdio.stdin = try sender.self_stdio.stdin.clone();
     // if (stdio.stdout == .inherit) stdio.stdout = try sender.self_stdio.stdout.clone();
     // if (stdio.stderr == .inherit) stdio.stderr = try sender.self_stdio.stderr.clone();
+    if (stdio.stdin == .inherit or stdio.stdout == .inherit or stdio.stderr == .inherit) {
+        handler.reply.send(.{ .err = .invalid_argument });
+        return;
+    }
 
     // FIXME: make the arg_map frame copy-on-write
 

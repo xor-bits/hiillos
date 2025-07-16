@@ -5,24 +5,27 @@ const caps = abi.caps;
 
 //
 
-pub fn main(ctx: @import("main.zig").Ctx) !void {
-    try std.fmt.format(ctx.stdout_writer, "> ", .{});
+pub fn main(_: @import("main.zig").Ctx) !void {
+    const stdin = abi.io.stdin.reader();
+    const stdout = abi.io.stdout.writer();
+
+    try stdout.print("> ", .{});
 
     var command: [0x100]u8 = undefined;
     var command_len: usize = 0;
 
     while (true) {
-        const ch = try ctx.stdin.popWait();
+        const ch = try stdin.readSingle();
 
         if (std.ascii.isPrint(ch) or ch == '\n') {
-            try ctx.stdout_writer.writeAll(&.{ch});
+            try stdout.writeAll(&.{ch});
         }
 
         if (ch == 8) { // backspace
             if (command_len == 0) continue;
             command_len -= 1;
             command[command_len] = ' ';
-            try ctx.stdout_writer.print("{} {}", .{
+            try stdout.print("{} {}", .{
                 abi.escape.cursorLeft(1),
                 abi.escape.cursorLeft(1),
             });
@@ -40,25 +43,20 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         command_len = 0;
 
         if (cmd.len == 0) {
-            try std.fmt.format(
-                ctx.stdout_writer,
-                "\n> ",
-                .{},
-            );
+            try stdout.print("\n> ", .{});
             continue;
         }
 
         const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
             .arg_map = try createArgMap(cmd),
             .env_map = try caps.COMMON_ENV_MAP.clone(),
-            .stdio = try @import("main.zig").stdio.clone(),
+            .stdio = try abi.io.stdio.clone(),
         }, .{
             .cap = 1,
         });
 
         const proc = result.asErrorUnion() catch |err| {
-            try std.fmt.format(
-                ctx.stdout_writer,
+            try stdout.print(
                 "unknown command: {s} ({})\n\n> ",
                 .{ cmd, err },
             );
@@ -68,14 +66,12 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         const exit_code = try proc.main_thread.wait();
 
         if (exit_code == 0) {
-            try std.fmt.format(
-                ctx.stdout_writer,
+            try stdout.print(
                 "\n> ",
                 .{},
             );
         } else {
-            try std.fmt.format(
-                ctx.stdout_writer,
+            try stdout.print(
                 "\n({}) > ",
                 .{exit_code},
             );

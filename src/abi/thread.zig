@@ -54,7 +54,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
     // FIXME: protect the stack guard region as
     // no read, no write, no exec and prevent mapping
     try vmem.unmap(stack_ptr, 0x1000);
-    std.log.info("thread stack = 0x{x}", .{stack_ptr});
+    // std.log.info("thread stack = 0x{x}", .{stack_ptr});
 
     stack_ptr += opts.stack_size; // top of the stack
     stack_ptr -= @sizeOf(Instance);

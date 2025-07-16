@@ -13,11 +13,11 @@ const Subcommand = enum {
 
 pub fn main(ctx: @import("main.zig").Ctx) !void {
     const subcmd_name = ctx.args.next() orelse {
-        try help(ctx.stdout_writer);
+        try help();
         return;
     };
     const subcmd = std.meta.stringToEnum(Subcommand, subcmd_name) orelse {
-        try help(ctx.stdout_writer);
+        try help();
         return;
     };
 
@@ -25,11 +25,10 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         .install => {
             try install();
 
-            try std.fmt.format(ctx.stdout_writer,
+            try abi.io.stdout.writer().print(
                 \\coreutils installed
                 \\
             , .{});
-            std.log.info("coreutils installed", .{});
 
             const opt_arg = ctx.args.next() orelse return;
             if (!std.mem.eql(u8, "--sh", opt_arg)) return;
@@ -37,7 +36,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
             _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
                 .arg_map = try caps.Frame.init("initfs:///sbin/sh"),
                 .env_map = try caps.COMMON_ENV_MAP.clone(),
-                .stdio = try @import("main.zig").stdio.clone(),
+                .stdio = try abi.io.stdio.clone(),
             }, .{
                 .cap = 1,
             });
@@ -66,9 +65,10 @@ fn installAs(comptime name: []const u8) !void {
     try result.asErrorUnion();
 }
 
-fn help(stdout_writer: abi.ring.Ring(u8).Writer) !void {
-    try std.fmt.format(stdout_writer,
+fn help() !void {
+    try abi.io.stdout.writer().print(
         \\Hiillos Coreutils v0.0.2
         \\usage: coreutils [install]
+        \\
     , .{});
 }

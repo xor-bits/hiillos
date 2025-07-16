@@ -8,19 +8,9 @@ const log = std.log.scoped(.wm);
 
 pub fn main() !void {
     try abi.process.init();
+    try abi.io.init();
 
-    const stdio = try (try abi.lpc.call(
-        abi.PmProtocol.GetStdioRequest,
-        .{},
-        .{ .cap = 1 },
-    )).asErrorUnion();
-
-    const stdout = try abi.ring.Ring(u8)
-        .fromShared(stdio.stdout.ring, null);
-
-    const stdout_writer = stdout.writer();
-
-    try stdout_writer.print("hello from wm", .{});
+    log.info("hello from wm", .{});
 
     const seat_result = try abi.lpc.call(
         abi.TtyProtocol.SeatRequest,
@@ -44,7 +34,11 @@ pub fn main() !void {
     const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
         .arg_map = try caps.Frame.init("initfs:///sbin/term"),
         .env_map = try caps.Frame.init("WM_SOCKET=fs:///wm.sock"),
-        .stdio = .{},
+        .stdio = .{
+            .stdin = .{ .none = {} },
+            .stdout = .{ .none = {} },
+            .stderr = .{ .none = {} },
+        },
     }, abi.caps.COMMON_PM);
     _ = try initial_app.asErrorUnion();
 
@@ -409,6 +403,9 @@ const System = struct {
         }
         if (ev.code == .left_alt and ev.state == .release) {
             self.alt_held = false;
+        }
+        if (ev.code == .enter and ev.state == .press and self.alt_held) {
+            self.alt_held = true;
         }
 
         const window = self.findHoveredWindow() orelse return;
