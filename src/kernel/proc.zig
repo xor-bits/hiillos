@@ -55,8 +55,9 @@ fn yieldReadyPrev(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
         prev_thread.trap = trap.*;
 
         switch (prev_thread.status) {
-            .ready, .running => {
-                prev_thread.status = .waiting;
+            .ready => unreachable,
+            .running => {
+                prev_thread.status = .ready;
                 ready(prev_thread);
             },
             .stopped, .waiting => {},

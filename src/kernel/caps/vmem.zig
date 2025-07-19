@@ -503,6 +503,7 @@ pub const Vmem = struct {
             } },
         );
         thread.status = .waiting;
+        thread.waiting_cause = .unmap_tlb_shootdown;
         thread.trap = trap.*;
 
         // tests cannot yield or do IPIs or other stuff rn

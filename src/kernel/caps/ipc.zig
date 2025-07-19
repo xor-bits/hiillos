@@ -76,6 +76,7 @@ pub const Receiver = struct {
     fn recvNoFail(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) bool {
         // stop the thread early to hold the lock for a shorter time
         thread.status = .waiting;
+        thread.waiting_cause = .ipc_recv;
         thread.trap = trap.*;
 
         // check if a sender is already waiting
@@ -210,6 +211,7 @@ pub const Sender = struct {
                 log.debug("IPC sleep {*}", .{thread});
 
             thread.status = .waiting;
+            thread.waiting_cause = .ipc_call1;
             thread.trap = trap.*;
             thread.trap.writeMessage(msg);
             arch.cpuLocal().current_thread = null;
@@ -233,6 +235,7 @@ pub const Sender = struct {
 
         // switch to the listener
         thread.status = .waiting;
+        thread.waiting_cause = .ipc_call1;
         thread.trap = trap.*;
 
         proc.switchTo(trap, listener);
@@ -346,6 +349,7 @@ pub const Notify = struct {
 
         // save the state and go to sleep
         thread.status = .waiting;
+        thread.waiting_cause = .notify_wait;
         thread.trap = trap.*;
         self.queue_lock.lock();
         self.queue.pushBack(thread);

@@ -27,6 +27,16 @@ pub const Thread = struct {
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
+    waiting_cause: enum {
+        none,
+        other_proc_exit,
+        unmap_tlb_shootdown,
+        transient_page_fault,
+        notify_wait,
+        ipc_recv,
+        ipc_call0,
+        ipc_call1,
+    } = .none,
     exit_code: usize = 0,
     /// scheduler linked list
     next: ?*Thread = null,
@@ -125,6 +135,7 @@ pub const Thread = struct {
         }
 
         thread.status = .waiting;
+        thread.waiting_cause = .other_proc_exit;
         thread.trap = trap.*;
         self.exit_waiters.pushBack(thread);
         self.lock.unlock();

@@ -502,6 +502,7 @@ pub const Frame = struct {
     fn transientQueueSleep(self: *@This(), trap: *arch.TrapRegs, thread: *caps.Thread) void {
         // save the current thread that might or might not go to sleep
         thread.status = .waiting;
+        thread.waiting_cause = .transient_page_fault;
         thread.trap = trap.*;
         arch.cpuLocal().current_thread = null;
 
