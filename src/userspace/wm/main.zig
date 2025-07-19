@@ -1,8 +1,27 @@
 const std = @import("std");
 const abi = @import("abi");
+const gui = @import("gui");
 
 const caps = abi.caps;
 const log = std.log.scoped(.wm);
+
+/// in pixels
+const window_borders = 2;
+
+/// in pixels
+const min_window_size: gui.Pos = @splat(10);
+
+const border_colour = gui.Colour{
+    .red = 0x25,
+    .green = 0x25,
+    .blue = 0x25,
+};
+
+const background_colour = gui.Colour{
+    .red = 0x1a,
+    .green = 0x1a,
+    .blue = 0x27,
+};
 
 //
 
@@ -93,19 +112,18 @@ pub fn main() !void {
         .fb = fb,
         .fb_info = fb_info,
 
-        .cursor_fb = cursor_fb,
-
         // damage everything initially, so that everything is drawn
-        .damage = .{
-            .min = .{
-                .x = 0,
-                .y = 0,
-            },
+        .damage = .full(),
+
+        .display = .{
+            .min = @splat(0),
             .max = .{
-                .x = @min(std.math.maxInt(i32), fb_info.width),
-                .y = @min(std.math.maxInt(i32), fb_info.height),
+                @min(std.math.maxInt(i32), fb_info.width),
+                @min(std.math.maxInt(i32), fb_info.height),
             },
         },
+
+        .cursor_fb = cursor_fb,
     };
     system_lock.unlock();
 
@@ -169,10 +187,11 @@ fn inputThreadMain(input: caps.Sender) !void {
         const ev = try ev_result.asErrorUnion();
 
         system_lock.lock();
+        defer system_lock.unlock();
+
         system.event(ev) catch |err| {
             log.err("event handler failure: {}", .{err});
         };
-        system_lock.unlock();
     }
 }
 
@@ -184,7 +203,7 @@ fn connectionThreadMain(rx: caps.Receiver) !void {
 
 fn connectRequest(
     _: *abi.lpc.Daemon(ConnectionContext),
-    handler: abi.lpc.Handler(abi.WmProtocol.ConnectRequest),
+    handler: abi.lpc.Handler(gui.WmProtocol.Connect),
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
 
@@ -193,7 +212,9 @@ fn connectRequest(
 
     try abi.thread.spawn(clientConnectionThreadMain, .{rx});
 
-    handler.reply.send(.{ .ok = tx });
+    handler.reply.send(.{ .ok = .{
+        .sender = tx,
+    } });
 }
 
 const ConnectionContext = struct {
@@ -202,7 +223,7 @@ const ConnectionContext = struct {
     pub const routes = .{
         connectRequest,
     };
-    pub const Request = abi.WmProtocol.Request;
+    pub const Request = gui.WmProtocol.Request;
 };
 
 fn clientConnectionThreadMain(rx: caps.Receiver) !void {
@@ -214,9 +235,9 @@ fn clientConnectionThreadMain(rx: caps.Receiver) !void {
 
 fn createWindowRequest(
     daemon: *abi.lpc.Daemon(DisplayContext),
-    handler: abi.lpc.Handler(abi.WmDisplayProtocol.CreateWindowRequest),
+    handler: abi.lpc.Handler(gui.WmDisplayProtocol.CreateWindow),
 ) !void {
-    const shmem = createShmem(handler.req.size) catch |err| {
+    const shmem = gui.Framebuffer.init(handler.req.size) catch |err| {
         log.warn("could not create window framebuffer shmem: {}", .{err});
         return handler.reply.send(.{ .err = .internal });
     };
@@ -235,11 +256,10 @@ fn createWindowRequest(
     var window = Window{
         .client_id = client_id,
         .server_id = server_id,
-        .pos = .{
-            .x = 100,
-            .y = 100,
+        .rect = .{
+            .pos = .{ 100, 100 },
+            .size = shmem.size,
         },
-        .size = shmem.size,
 
         // the window is closed before the connection, so the pointer stays valid
         .conn = &daemon.ctx.conn,
@@ -266,63 +286,16 @@ fn createWindowRequest(
         return;
     };
 
-    system.addWindowDamage(window.pos, shmem.size);
-
+    system.damage.addRect(window.rect.border(window_borders));
     handler.reply.send(.{ .ok = .{
         .fb = shmem,
         .window_id = client_id,
     } });
 }
 
-fn shmemInfo(w: u32, h: u32) error{Overflow}!struct { pitch: u32, bytes: u32 } {
-    const real_width = try std.math.ceilPowerOfTwo(u32, w);
-    const bytes = try std.math.mul(
-        u32,
-        try std.math.mul(
-            u32,
-            real_width,
-            try std.math.ceilPowerOfTwo(u32, h),
-        ),
-        4,
-    );
-
-    return .{ .pitch = real_width * 4, .bytes = bytes };
-}
-
-fn createShmem(size: abi.WmDisplayProtocol.Size) !abi.WmDisplayProtocol.NewFramebuffer {
-    const shmem_info = try shmemInfo(
-        size.width,
-        size.height,
-    );
-
-    const shmem = try caps.Frame.create(shmem_info.bytes);
-
-    log.debug("new shmem for fb", .{});
-
-    return .{
-        .shmem = shmem,
-        .size = size,
-        .pitch = shmem_info.pitch,
-        .bytes = shmem_info.bytes,
-    };
-}
-
-fn updateShmem(
-    old: abi.WmDisplayProtocol.NewFramebuffer,
-    new: abi.WmDisplayProtocol.Size,
-) !?abi.WmDisplayProtocol.NewFramebuffer {
-    const new_info = try shmemInfo(new.width, new.height);
-    if (old.bytes >= new_info.bytes) {
-        // the old shmem can already hold the new framebuffer
-        return null;
-    }
-
-    return try createShmem(new);
-}
-
 fn nextEventRequest(
     daemon: *abi.lpc.Daemon(DisplayContext),
-    handler: abi.lpc.Handler(abi.WmDisplayProtocol.NextEventRequest),
+    handler: abi.lpc.Handler(gui.WmDisplayProtocol.NextEvent),
 ) !void {
     system_lock.lock();
     defer system_lock.unlock();
@@ -332,14 +305,10 @@ fn nextEventRequest(
 
 fn damage(
     daemon: *abi.lpc.Daemon(DisplayContext),
-    handler: abi.lpc.Handler(abi.WmDisplayProtocol.Damage),
+    handler: abi.lpc.Handler(gui.WmDisplayProtocol.Damage),
 ) !void {
-    const min_x = @min(handler.req.min.x, handler.req.max.x);
-    const max_x = @max(handler.req.min.x, handler.req.max.x);
-    const min_y = @min(handler.req.min.y, handler.req.max.y);
-    const max_y = @max(handler.req.min.y, handler.req.max.y);
-
-    if (min_x == max_x or min_y == max_y) {
+    var relative_area = handler.req.area.fix();
+    if (relative_area.isEmpty()) {
         handler.reply.send(.{ .ok = {} });
         return;
     }
@@ -359,19 +328,15 @@ fn damage(
         return;
     };
 
-    const clipped_min_x: i32 = @max(min_x, 0);
-    const clipped_max_x: i32 = @min(max_x, @min(std.math.maxInt(i32), window.size.width));
-    const clipped_min_y: i32 = @max(min_y, 0);
-    const clipped_max_y: i32 = @min(max_y, @min(std.math.maxInt(i32), window.size.height));
+    relative_area.min +|= window.rect.pos;
+    relative_area.max +|= window.rect.pos;
 
-    system.addDamage(.{
-        .x = window.pos.x +| clipped_min_x,
-        .y = window.pos.y +| clipped_min_y,
-    }, .{
-        .x = window.pos.x +| clipped_max_x,
-        .y = window.pos.y +| clipped_max_y,
-    });
+    const clipped_area = relative_area.intersect(window.rect.asAabb()) orelse {
+        handler.reply.send(.{ .ok = {} });
+        return;
+    };
 
+    system.damage.addAabb(clipped_area);
     handler.reply.send(.{ .ok = {} });
 }
 
@@ -384,7 +349,7 @@ const DisplayContext = struct {
         nextEventRequest,
         damage,
     };
-    pub const Request = abi.WmDisplayProtocol.Request;
+    pub const Request = gui.WmDisplayProtocol.Request;
 };
 
 var system: System = undefined;
@@ -394,10 +359,13 @@ const Connection = struct {
     next_client_window_id: usize = 1,
     window_server_ids: std.AutoHashMap(usize, usize) = .init(abi.mem.slab_allocator),
 
-    event_queue: std.fifo.LinearFifo(abi.WmDisplayProtocol.Event, .Dynamic) = .init(abi.mem.slab_allocator),
-    reply: ?abi.lpc.DetachedReply(abi.WmDisplayProtocol.NextEventRequest.Response) = null,
+    event_queue: std.fifo.LinearFifo(gui.Event, .Dynamic) = .init(abi.mem.slab_allocator),
+    reply: ?abi.lpc.DetachedReply(gui.WmDisplayProtocol.NextEvent.Response) = null,
 
-    pub fn pushEvent(self: *@This(), ev: abi.WmDisplayProtocol.Event) void {
+    pub fn pushEvent(
+        self: *@This(),
+        ev: gui.Event,
+    ) void {
         if (self.reply) |*reply| {
             reply.send(.{ .ok = ev }) catch |err| {
                 log.warn("failed to send input event reply: {}", .{err});
@@ -411,7 +379,10 @@ const Connection = struct {
         };
     }
 
-    pub fn popEvent(self: *@This(), reply: *abi.lpc.Reply(abi.WmDisplayProtocol.NextEventRequest.Response)) !void {
+    pub fn popEvent(
+        self: *@This(),
+        reply: *abi.lpc.Reply(gui.WmDisplayProtocol.NextEvent.Response),
+    ) !void {
         if (self.reply != null) {
             reply.send(.{ .err = .thread_safety });
             return;
@@ -429,8 +400,7 @@ const Connection = struct {
 const Window = struct {
     client_id: usize,
     server_id: usize,
-    pos: abi.WmDisplayProtocol.Position,
-    size: abi.WmDisplayProtocol.Size,
+    rect: gui.Rect,
 
     fb: ?Framebuffer = null,
 
@@ -440,33 +410,33 @@ const Window = struct {
         if (self.fb) |fb| fb.deinit();
     }
 
-    pub fn pushEvent(self: *const @This(), ev: abi.WmDisplayProtocol.WindowEvent.Inner) void {
+    pub fn pushEvent(self: *const @This(), ev: gui.WindowEvent.Inner) void {
         self.conn.pushEvent(.{ .window = .{
             .window_id = self.client_id,
             .event = ev,
         } });
     }
 
-    pub fn attach(self: *@This(), shmem: abi.WmDisplayProtocol.NewFramebuffer) !void {
+    pub fn attach(self: *@This(), shmem: gui.Framebuffer) !void {
         if (self.fb) |old| old.deinit();
         self.fb = try Framebuffer.init(shmem);
     }
 
     pub fn resize(self: *@This()) !void {
         if (self.fb) |*fb| {
-            try fb.resize(self.size, self.conn, self.client_id);
+            try fb.resize(self.rect.size, self.conn, self.client_id);
         } else {
-            self.fb = try Framebuffer.init(try createShmem(self.size));
+            self.fb = try Framebuffer.init(try gui.Framebuffer.init(self.rect.size));
         }
     }
 };
 
 const Framebuffer = struct {
     /// frame field in shmem is not valid, it is always sent to the client
-    shmem: abi.WmDisplayProtocol.NewFramebuffer,
+    shmem: gui.Framebuffer,
     fb: abi.util.Image([*]volatile u8),
 
-    pub fn init(shmem: abi.WmDisplayProtocol.NewFramebuffer) !@This() {
+    pub fn init(shmem: gui.Framebuffer) !@This() {
         const vmem = caps.Vmem.self() catch unreachable;
         defer vmem.close();
 
@@ -480,8 +450,8 @@ const Framebuffer = struct {
         );
 
         const fb = abi.util.Image([*]volatile u8){
-            .width = shmem.size.width,
-            .height = shmem.size.height,
+            .width = shmem.size[0],
+            .height = shmem.size[1],
             .pitch = shmem.pitch,
             .bits_per_pixel = 32,
             .pixel_array = @ptrFromInt(shmem_addr),
@@ -510,11 +480,11 @@ const Framebuffer = struct {
 
     pub fn resize(
         self: *@This(),
-        size: abi.WmDisplayProtocol.Size,
+        size: gui.Size,
         resize_event_conn: *Connection,
         resize_event_window_id: usize,
     ) !void {
-        if (try updateShmem(self.shmem, size)) |new| {
+        if (try self.shmem.update(size)) |new| {
             self.deinit();
             self.* = try Framebuffer.init(new);
 
@@ -523,8 +493,8 @@ const Framebuffer = struct {
                 .event = .{ .resize = new },
             } });
         } else {
-            self.fb.width = size.width;
-            self.fb.height = size.height;
+            self.fb.width = size[0];
+            self.fb.height = size[1];
             self.shmem.size = size;
 
             resize_event_conn.pushEvent(.{ .window = .{
@@ -539,12 +509,12 @@ const HeldWindow = union(enum) {
     moving: struct {
         window_id: usize,
         // initial window-cursor relative dragging start position
-        offs: abi.WmDisplayProtocol.Position,
+        offs: gui.Pos,
     },
     resizing: struct {
         window_id: usize,
-        init_cursor: abi.WmDisplayProtocol.Position,
-        init_window_pos: abi.WmDisplayProtocol.Position,
+        init_cursor: gui.Pos,
+        init_window_pos: gui.Pos,
         corner: Corner,
     },
     none: void,
@@ -560,18 +530,12 @@ const Corner = enum {
 const System = struct {
     // recv: caps.Receiver,
 
-    cursor: abi.WmDisplayProtocol.Position = .{
-        .x = 100,
-        .y = 100,
-    },
+    cursor: gui.Pos = .{ 100, 100 },
 
     next_server_window_id: usize = 0,
     windows: std.AutoHashMap(usize, Window) = .init(abi.mem.slab_allocator),
 
-    damage: struct {
-        min: abi.WmDisplayProtocol.Position = .{ .x = 0, .y = 0 },
-        max: abi.WmDisplayProtocol.Position = .{ .x = 0, .y = 0 },
-    } = .{},
+    damage: gui.Damage = .{},
 
     alt_held: bool = false,
     held_window: HeldWindow = .{ .none = {} },
@@ -579,6 +543,7 @@ const System = struct {
     fb_backbuf: abi.util.Image([*]u8),
     fb: abi.util.Image([*]volatile u8),
     fb_info: abi.FramebufferInfoFrame,
+    display: gui.Aabb,
 
     cursor_fb: abi.util.Image([*]const u8),
 
@@ -634,26 +599,22 @@ const System = struct {
         if (self.findHoveredWindow()) |window| {
             self.held_window = .{ .moving = .{
                 .window_id = window.server_id,
-                .offs = .{
-                    .x = self.cursor.x - window.pos.x,
-                    .y = self.cursor.y - window.pos.y,
-                },
+                .offs = self.cursor -| window.rect.pos,
             } };
         }
     }
 
     fn resizeWindow(self: *@This()) void {
         if (self.findHoveredWindow()) |window| {
-            const middle_x = window.pos.x +| @as(i32, @intCast(window.size.width / 2));
-            const middle_y = window.pos.y +| @as(i32, @intCast(window.size.height / 2));
+            const middle = window.rect.middle();
 
-            const corner = if (self.cursor.x < middle_x and self.cursor.y < middle_y)
+            const corner = if (self.cursor[0] < middle[0] and self.cursor[1] < middle[1])
                 Corner.top_left
-            else if (self.cursor.x >= middle_x and self.cursor.y < middle_y)
+            else if (self.cursor[0] >= middle[0] and self.cursor[1] < middle[1])
                 Corner.top_right
-            else if (self.cursor.x < middle_x and self.cursor.y >= middle_y)
+            else if (self.cursor[0] < middle[0] and self.cursor[1] >= middle[1])
                 Corner.bottom_left
-            else if (self.cursor.x >= middle_x and self.cursor.y >= middle_y)
+            else if (self.cursor[0] >= middle[0] and self.cursor[1] >= middle[1])
                 Corner.bottom_right
             else
                 unreachable;
@@ -661,7 +622,7 @@ const System = struct {
             self.held_window = .{ .resizing = .{
                 .window_id = window.server_id,
                 .init_cursor = self.cursor,
-                .init_window_pos = window.pos,
+                .init_window_pos = window.rect.pos,
                 .corner = corner,
             } };
         }
@@ -671,10 +632,10 @@ const System = struct {
     fn findHoveredWindow(self: *@This()) ?*Window {
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
-            if (self.cursor.x >= window.pos.x and
-                self.cursor.y >= window.pos.y and
-                @as(isize, self.cursor.x) <= @as(isize, window.pos.x) + window.size.width and
-                @as(isize, self.cursor.y) <= @as(isize, window.pos.y) + window.size.height)
+            const window_aabb = window.rect.asAabb();
+
+            if (@reduce(.And, self.cursor >= window_aabb.min) and
+                @reduce(.And, self.cursor <= window_aabb.max))
             {
                 return window;
             }
@@ -693,56 +654,49 @@ const System = struct {
     }
 
     fn cursorMoveEvent(self: *@This(), delta_x: i16, delta_y: i16) !void {
-        self.addRectDamage(self.cursor, .{ .width = 16, .height = 16 });
-        self.cursor.x +|= delta_x;
-        self.cursor.y +|= -delta_y;
-        self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width -| 1);
-        self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height -| 1);
-        self.addRectDamage(self.cursor, .{ .width = 16, .height = 16 });
+        self.damage.addRect(.{ .pos = self.cursor, .size = .{ 16, 16 } });
+        self.cursor +|= gui.Pos{ delta_x, -delta_y };
+        self.cursor = gui.clamp(self.cursor, self.display);
+        self.damage.addRect(.{ .pos = self.cursor, .size = .{ 16, 16 } });
 
         switch (self.held_window) {
             .moving => |moving| {
                 const window = self.windows.getPtr(moving.window_id) orelse unreachable;
-                system.addWindowDamage(window.pos, window.size);
-                window.pos.x = self.cursor.x -| moving.offs.x;
-                window.pos.y = self.cursor.y -| moving.offs.y;
-                system.addWindowDamage(window.pos, window.size);
+                system.damage.addAabb(window.rect.asAabb().border(window_borders));
+                window.rect.pos = self.cursor -| moving.offs;
+                system.damage.addAabb(window.rect.asAabb().border(window_borders));
             },
             .resizing => |*resizing| {
                 const window = self.windows.getPtr(resizing.window_id) orelse unreachable;
-                system.addWindowDamage(window.pos, window.size);
+                system.damage.addAabb(window.rect.asAabb().border(window_borders));
 
-                var min_x: i32 = window.pos.x;
-                var min_y: i32 = window.pos.y;
-                var max_x: i32 = window.pos.x +| @min(std.math.maxInt(i32), window.size.width);
-                var max_y: i32 = window.pos.y +| @min(std.math.maxInt(i32), window.size.height);
+                var window_aabb = window.rect.asAabb();
 
                 switch (resizing.corner) {
                     .top_left => {
-                        min_x += self.cursor.x -| resizing.init_cursor.x;
-                        min_y += self.cursor.y -| resizing.init_cursor.y;
+                        window_aabb.min += self.cursor -| resizing.init_cursor;
+                        window_aabb.min = @min(window_aabb.min, window_aabb.max -| min_window_size);
                     },
                     .top_right => {
-                        max_x += self.cursor.x -| resizing.init_cursor.x;
-                        min_y += self.cursor.y -| resizing.init_cursor.y;
+                        window_aabb.max[0] += self.cursor[0] -| resizing.init_cursor[0];
+                        window_aabb.min[1] += self.cursor[1] -| resizing.init_cursor[1];
+                        window_aabb.max[0] = @max(window_aabb.max[0], window_aabb.min[0] +| min_window_size[0]);
+                        window_aabb.min[1] = @min(window_aabb.min[1], window_aabb.max[1] +| min_window_size[1]);
                     },
                     .bottom_left => {
-                        min_x += self.cursor.x -| resizing.init_cursor.x;
-                        max_y += self.cursor.y -| resizing.init_cursor.y;
+                        window_aabb.min[0] += self.cursor[0] -| resizing.init_cursor[0];
+                        window_aabb.max[1] += self.cursor[1] -| resizing.init_cursor[1];
+                        window_aabb.min[0] = @max(window_aabb.min[0], window_aabb.max[0] +| min_window_size[0]);
+                        window_aabb.max[1] = @min(window_aabb.max[1], window_aabb.min[1] +| min_window_size[1]);
                     },
                     .bottom_right => {
-                        max_x += self.cursor.x -| resizing.init_cursor.x;
-                        max_y += self.cursor.y -| resizing.init_cursor.y;
+                        window_aabb.max += self.cursor -| resizing.init_cursor;
+                        window_aabb.max = @max(window_aabb.max, window_aabb.min +| min_window_size);
                     },
                 }
                 resizing.init_cursor = self.cursor;
-
-                window.pos.x = min_x;
-                window.pos.y = min_y;
-                window.size.width = @intCast(@max(10, max_x - min_x));
-                window.size.height = @intCast(@max(10, max_y - min_y));
-
-                system.addWindowDamage(window.pos, window.size);
+                window.rect = window_aabb.asRect();
+                system.damage.addAabb(window.rect.asAabb().border(window_borders));
                 try window.resize();
             },
             .none => {},
@@ -759,172 +713,58 @@ const System = struct {
 
     fn forwardCursorMove(self: *@This()) void {
         const window = self.findHoveredWindow() orelse return;
+        const window_aabb = window.rect.asAabb();
 
-        if (self.cursor.x < window.pos.x or self.cursor.y < window.pos.y)
+        if (@reduce(.Or, self.cursor < window_aabb.min))
             return;
 
-        const window_relative_cursor: abi.WmDisplayProtocol.Position = .{
-            .x = self.cursor.x - window.pos.x,
-            .y = self.cursor.y - window.pos.y,
-        };
+        const window_relative_cursor: gui.Pos =
+            self.cursor -| window.rect.pos;
 
-        if (window_relative_cursor.x >= window.size.width or
-            window_relative_cursor.y >= window.size.height)
+        if (@reduce(.Or, window_relative_cursor >= window_aabb.max))
             return;
 
         window.pushEvent(.{ .cursor_moved = window_relative_cursor });
     }
 
-    fn addWindowDamage(
-        self: *@This(),
-        pos: abi.WmDisplayProtocol.Position,
-        size: abi.WmDisplayProtocol.Size,
-    ) void {
-        self.addRectDamage(.{
-            .x = pos.x -| 1,
-            .y = pos.y -| 1,
-        }, .{
-            .width = size.width +| 2,
-            .height = size.height +| 2,
-        });
-    }
-
-    fn addRectDamage(
-        self: *@This(),
-        pos: abi.WmDisplayProtocol.Position,
-        size: abi.WmDisplayProtocol.Size,
-    ) void {
-        self.addDamage(.{
-            .x = pos.x,
-            .y = pos.y,
-        }, .{
-            .x = pos.x +| @min(std.math.maxInt(i32), size.width),
-            .y = pos.y +| @min(std.math.maxInt(i32), size.height),
-        });
-    }
-
-    fn addDamage(
-        self: *@This(),
-        min: abi.WmDisplayProtocol.Position,
-        max: abi.WmDisplayProtocol.Position,
-    ) void {
-        if (self.damage.min.x == self.damage.max.x or
-            self.damage.min.y == self.damage.max.y)
-        {
-            // the damage was previously zero,
-            // so instead of extending from the [0,0],
-            // move the damage to the added damage
-
-            self.damage.min = min;
-            self.damage.max = max;
-            return;
-        }
-
-        self.damage.min.x = @min(self.damage.min.x, min.x);
-        self.damage.max.x = @max(self.damage.max.x, max.x);
-        self.damage.min.y = @min(self.damage.min.y, min.y);
-        self.damage.max.y = @max(self.damage.max.y, max.y);
-    }
-
     fn draw(self: *@This()) void {
-        const damage_x = @max(0, self.damage.min.x);
-        const damage_y = @max(0, self.damage.min.y);
-        const damage_width: u32 = @intCast(self.damage.max.x - self.damage.min.x);
-        const damage_height: u32 = @intCast(self.damage.max.y - self.damage.min.y);
-        self.damage = .{};
-        if (damage_width == 0 or damage_height == 0) return;
+        const dmg_unrestricted = self.damage.take() orelse return;
+        const dmg = dmg_unrestricted.intersect(self.display) orelse return;
 
-        // log.debug("damage: pos=[{},{}] size=[{},{}]", .{
-        //     damage_x,
-        //     damage_y,
-        //     damage_width,
-        //     damage_height,
-        // });
-
-        const fb = self.fb.imageAabbIntersect(
-            0,
-            0,
-            damage_width,
-            damage_height,
-            damage_x,
-            damage_y,
-        ) orelse return;
-        const fb_backbuf = self.fb_backbuf.imageAabbIntersect(
-            0,
-            0,
-            damage_width,
-            damage_height,
-            damage_x,
-            damage_y,
-        ) orelse return;
+        const fb: abi.util.Image([*]volatile u8) =
+            dmg.subimage(self.fb) orelse return;
+        const fb_backbuf: abi.util.Image([*]u8) =
+            dmg.subimage(self.fb_backbuf) orelse return;
 
         // draw the background in the damaged area
-        fb_backbuf.fill(0xFF1A1A27);
+        dmg.draw(self.fb_backbuf, background_colour);
+        defer fb_backbuf.copyTo(fb) catch unreachable;
 
         // draw all windows in the damaged area
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
             const window_fb = (window.fb orelse return).fb;
 
-            // draw window borders
-            if (fb_backbuf.imageAabbIntersect(
-                damage_x,
-                damage_y,
-                window.size.width + 2,
-                window.size.height + 2,
-                window.pos.x -| 1,
-                window.pos.y -| 1,
-            )) |rect| {
-                rect.fillHollow(0xff_353535, 1);
-            }
+            const window_aabb = window.rect.asAabb();
+            const window_border_aabb = window_aabb.border(window_borders);
 
-            // draw window contents
-            const visible_window = window_fb.subimage(
-                0,
-                0,
-                @min(window_fb.width, window.size.width),
-                @min(window_fb.height, window.size.height),
-            ) catch continue;
-            if (fb_backbuf.intersection(
-                damage_x,
-                damage_y,
-                visible_window,
-                window.pos.x,
-                window.pos.y,
-            )) |rects| {
-                rects[1].blitTo(rects[0]) catch {};
+            window_border_aabb.drawHollow(self.fb_backbuf, border_colour, window_borders);
+
+            if (window_aabb.intersect(dmg)) |damaged_window_aabb| {
+                const dst = damaged_window_aabb.subimage(self.fb_backbuf).?;
+                const src = damaged_window_aabb.move(-window.rect.pos).subimage(window_fb).?;
+                src.blitTo(dst) catch {};
             }
         }
 
         // draw cursor
-        if (fb_backbuf.intersection(
-            damage_x,
-            damage_y,
-            self.cursor_fb,
-            self.cursor.x,
-            self.cursor.y,
-        )) |rects| {
-            rects[1].blitTo(rects[0]) catch {};
+        if (dmg.intersect((gui.Rect{
+            .pos = self.cursor,
+            .size = .{ self.cursor_fb.width, self.cursor_fb.height },
+        }).asAabb())) |damaged_cursor_aabb| {
+            const dst = damaged_cursor_aabb.subimage(self.fb_backbuf).?;
+            const src = damaged_cursor_aabb.move(-self.cursor).subimage(self.cursor_fb).?;
+            src.blitTo(dst) catch {};
         }
-
-        // fb.fill(0xff_ff00ff);
-        // for (0..2_000_000) |_| std.atomic.spinLoopHint();
-
-        // copy the data to the actual framebuffer
-        fb_backbuf.copyTo(&fb) catch unreachable;
     }
 };
-
-fn Signed(comptime T: type) type {
-    var same_int = @typeInfo(T).int;
-    same_int.signedness = .signed;
-    return @Type(.{ .int = same_int });
-}
-
-fn addSigned(a: anytype, b: Signed(@TypeOf(a))) @TypeOf(a) {
-    if (b > 0) {
-        return a +| @as(@TypeOf(a), @intCast(b));
-    } else {
-        return a -| @as(@TypeOf(a), @intCast(-b));
-    }
-}

@@ -94,9 +94,10 @@ pub fn build(b: *std.Build) !void {
     }));
 
     const abi = createAbi(b, &opts);
+    const gui = createLibGui(b, abi);
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi);
-    const initfs_tar_zst = createInitfsTarZst(b, &opts, abi);
+    const initfs_tar_zst = createInitfsTarZst(b, &opts, abi, gui);
     const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
     runQemu(b, &opts, os_iso);
@@ -251,6 +252,7 @@ fn createInitfsTarZst(
     b: *std.Build,
     opts: *const Opts,
     abi: *std.Build.Module,
+    gui: *std.Build.Module,
 ) std.Build.LazyPath {
     const initfs_processes = .{
         "coreutils",
@@ -276,6 +278,10 @@ fn createInitfsTarZst(
             .root_source_file = b.path(source),
             .target = opts.target,
             .optimize = opts.optimize,
+            .imports = &.{
+                .{ .name = "abi", .module = abi },
+                .{ .name = "gui", .module = gui },
+            },
         });
         proc.addImport("abi", abi);
 
@@ -518,5 +524,15 @@ fn createFont(b: *std.Build) *std.Build.Module {
 
     return b.createModule(.{
         .root_source_file = font_zig,
+    });
+}
+
+fn createLibGui(b: *std.Build, abi: *std.Build.Module) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/gui/lib.zig"),
+        .imports = &.{.{
+            .name = "abi",
+            .module = abi,
+        }},
     });
 }

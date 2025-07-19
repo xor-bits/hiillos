@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi");
+const gui = @import("gui");
 
 const caps = abi.caps;
 const log = std.log.scoped(.term);
@@ -16,66 +17,17 @@ pub fn main() !void {
     const vmem = try caps.Vmem.self();
     // intentionally leak `vmem`
 
-    const wm_sock_addr = abi.process.env("WM_SOCKET") orelse {
-        log.err("could not find WM_SOCKET", .{});
-        abi.sys.selfStop(1);
-    };
+    const wm_display = try gui.WmDisplay.connect();
 
-    log.info("found WM_SOCKET={s}", .{wm_sock_addr});
-
-    const wm_sock_result = try abi.lpc.call(abi.VfsProtocol.ConnectRequest, .{
-        .path = try abi.fs.Path.new(wm_sock_addr),
-    }, caps.COMMON_VFS);
-    const wm_sock_raw = try wm_sock_result.asErrorUnion();
-
-    std.debug.assert(wm_sock_raw.identify() == .sender);
-    const wm_sock = caps.Sender{ .cap = wm_sock_raw.cap };
-
-    const wm_display_result = try abi.lpc.call(
-        abi.WmProtocol.ConnectRequest,
-        .{},
-        wm_sock,
-    );
-    const wm_display = try wm_display_result.asErrorUnion();
-
-    const window_result = try abi.lpc.call(abi.WmDisplayProtocol.CreateWindowRequest, .{
-        .size = .{
-            .width = 600,
-            .height = 400,
-        },
-    }, wm_display);
-    const window = try window_result.asErrorUnion();
-
-    const shmem_size = try window.fb.shmem.getSize();
-    const shmem_addr = try vmem.map(
-        window.fb.shmem,
-        0,
-        0,
-        shmem_size,
-        .{ .writable = true },
-        .{},
-    );
-
-    const shmem = @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
-    for (shmem, 0..) |*b, i| {
-        // const x = (i % @as(usize, window.fb.pitch)) / 4;
-        // const y = i / @as(usize, window.fb.pitch);
-        if (i % 4 == 3) {
-            b.* = 255; // max alpha
-            // } else if (i % 4 == 2) {
-            //     b.* = @intFromFloat(@as(f32, @floatFromInt(x)) / 900.0 * 255.0);
-            // } else if (i % 4 == 1) {
-            //     b.* = @intFromFloat(@as(f32, @floatFromInt(y)) / 600.0 * 255.0);
-        } else {
-            b.* = 0;
-        }
-    }
+    const window = try wm_display.createWindow(.{
+        .size = .{ 600, 400 },
+    });
 
     term = try Terminal.new(
         vmem,
         window.fb,
         wm_display,
-        window.window_id,
+        window,
     );
     term_lock.unlock();
 
@@ -121,7 +73,7 @@ pub fn main() !void {
                 defer term_lock.unlock();
 
                 term.writeByte(byte);
-                term.flush();
+                term.flush(false);
             },
             .fg_colour => {},
             .bg_colour => {},
@@ -137,28 +89,23 @@ pub fn main() !void {
 var term: Terminal = undefined;
 var term_lock: abi.lock.CapMutex = undefined;
 
-fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: caps.Sender) !void {
-    defer wm_display.close();
+fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: gui.WmDisplay) !void {
+    defer wm_display.deinit();
 
     while (true) {
-        const ev_result = try abi.lpc.call(
-            abi.WmDisplayProtocol.NextEventRequest,
-            .{},
-            wm_display,
-        );
-        const ev = try ev_result.asErrorUnion();
+        const ev = try wm_display.nextEvent();
         try event(sh_stdin, ev);
     }
 }
 
-fn event(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.Event) !void {
+fn event(sh_stdin: abi.ring.Ring(u8), ev: gui.Event) !void {
     switch (ev) {
         .window => |w_ev| try windowEvent(sh_stdin, w_ev),
     }
 }
 
 var shift: bool = false;
-fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.WindowEvent) !void {
+fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: gui.WindowEvent) !void {
     switch (ev.event) {
         .resize => |new_fb| {
             term_lock.lock();
@@ -183,7 +130,7 @@ fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.WindowEven
     }
 }
 
-fn mapFb(vmem: caps.Vmem, fb: abi.WmDisplayProtocol.NewFramebuffer) ![]volatile u8 {
+fn mapFb(vmem: caps.Vmem, fb: gui.Framebuffer) ![]volatile u8 {
     const shmem_size = try fb.shmem.getSize();
     const shmem_addr = try vmem.map(
         fb.shmem,
@@ -194,17 +141,7 @@ fn mapFb(vmem: caps.Vmem, fb: abi.WmDisplayProtocol.NewFramebuffer) ![]volatile 
         .{},
     );
 
-    // fill with opaque black
-    const shmem = @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
-    for (shmem, 0..) |*b, i| {
-        if (i % 4 == 3) {
-            b.* = 255; // max alpha
-        } else {
-            b.* = 0;
-        }
-    }
-
-    return shmem;
+    return @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
 }
 
 // TODO: similar code is duplicated in userspace/tty/main.zig and kernel/fb.zig
@@ -229,16 +166,16 @@ pub const Terminal = struct {
     framebuffer: abi.util.Image([]volatile u8),
 
     /// wm ipc handle, to send damaged regions
-    wm_display: caps.Sender,
-    window_id: usize,
+    wm_display: gui.WmDisplay,
+    window: gui.Window,
 
     vmem: caps.Vmem,
 
     pub fn new(
         vmem: caps.Vmem,
-        info: abi.WmDisplayProtocol.NewFramebuffer,
-        wm_display: caps.Sender,
-        window_id: usize,
+        info: gui.Framebuffer,
+        wm_display: gui.WmDisplay,
+        window: gui.Window,
     ) !@This() {
         var self: @This() = .{
             .framebuffer = abi.util.Image([]volatile u8){
@@ -249,7 +186,7 @@ pub const Terminal = struct {
                 .pixel_array = &.{},
             },
             .wm_display = wm_display,
-            .window_id = window_id,
+            .window = window,
             .vmem = vmem,
         };
 
@@ -259,7 +196,7 @@ pub const Terminal = struct {
 
     pub fn resize(
         self: *@This(),
-        info: abi.WmDisplayProtocol.NewFramebuffer,
+        info: gui.Framebuffer,
     ) !void {
         if (self.framebuffer.pixel_array.len != 0 and info.shmem.cap != 0) {
             try self.vmem.unmap(
@@ -272,43 +209,43 @@ pub const Terminal = struct {
                 try mapFb(self.vmem, info)
             else
                 self.framebuffer.pixel_array;
-        try self.damage(
-            0,
-            0,
-            info.size.width,
-            info.size.height,
-        );
 
         self.framebuffer = abi.util.Image([]volatile u8){
-            .width = info.size.width,
-            .height = info.size.height,
+            .width = info.size[0],
+            .height = info.size[1],
             .pitch = info.pitch,
             .bits_per_pixel = 32,
             .pixel_array = fb,
         };
+        self.framebuffer.fill(0xff_000000);
 
         const old_size = self.size;
         self.size = .{
-            .width = info.size.width / 8,
-            .height = info.size.height / 16,
+            .width = info.size[0] / 8,
+            .height = info.size[1] / 16,
         };
+        const old_terminal_buf_size = old_size.width * old_size.height;
         const terminal_buf_size = self.size.width * self.size.height;
-        const whole_terminal_buf = try abi.mem.slab_allocator.alloc(u8, terminal_buf_size * 2);
+        const whole_terminal_buf = try abi.mem.server_page_allocator.alloc(u8, terminal_buf_size * 2);
 
         for (whole_terminal_buf) |*b| {
             b.* = ' ';
         }
-        for (0..old_size.height) |_y| {
-            for (0..old_size.width) |_x| {
+        for (0..@min(old_size.height, self.size.height)) |_y| {
+            for (0..@min(old_size.width, self.size.width)) |_x| {
                 whole_terminal_buf[_x + _y * self.size.width] =
                     self.terminal_buf_front[_x + _y * old_size.width];
             }
         }
 
+        if (old_terminal_buf_size != 0) {
+            abi.mem.server_page_allocator.free(self.terminal_buf_back.ptr[0 .. old_terminal_buf_size * 2]);
+        }
         self.terminal_buf_front = whole_terminal_buf[0..terminal_buf_size];
         self.terminal_buf_back = whole_terminal_buf[terminal_buf_size..];
 
-        self.flush();
+        self.wrapCursor();
+        self.flush(true);
     }
 
     pub const Writer = struct {
@@ -351,10 +288,20 @@ pub const Terminal = struct {
                 self.cursor.x = std.mem.alignForward(u32, self.cursor.x + 1, 4);
             },
             else => {
-                // uart.print("writing {d} to {d},{d}", .{ byte, cursor_x, cursor_y });
-                self.terminal_buf_front[self.cursor.x + self.cursor.y * self.size.width] = byte;
                 self.cursor.x += 1;
+
+                if (self.terminal_buf_front.len == 0) return;
+                self.terminal_buf_front[self.cursor.x + self.cursor.y * self.size.width] = byte;
             },
+        }
+
+        self.wrapCursor();
+    }
+
+    pub fn wrapCursor(self: *@This()) void {
+        if (self.size.width == 0 or self.size.height == 0) {
+            self.cursor = .{};
+            return;
         }
 
         if (self.cursor.x >= self.size.width) {
@@ -362,23 +309,16 @@ pub const Terminal = struct {
             self.cursor.x = 0;
             self.cursor.y += 1;
         }
-        if (self.cursor.y >= self.size.height) {
+        while (self.cursor.y >= self.size.height) {
             // scroll down, because the cursor went off screen
-            const len = self.terminal_buf_front.len;
             self.cursor.y -= 1;
 
-            std.mem.copyForwards(
-                u8,
-                self.terminal_buf_front[0..],
-                self.terminal_buf_front[self.size.width..],
-            );
-            for (self.terminal_buf_front[len - self.size.width ..]) |*b| {
-                b.* = ' ';
-            }
+            @memset(self.terminal_buf_front[0..self.size.width], ' ');
+            std.mem.rotate(u8, self.terminal_buf_front, self.size.width);
         }
     }
 
-    pub fn flush(self: *@This()) void {
+    pub fn flush(self: *@This(), comptime full_damage: bool) void {
         var damage_min_x: u32 = 0;
         var damage_max_x: u32 = 0;
         var damage_min_y: u32 = 0;
@@ -420,7 +360,8 @@ pub const Terminal = struct {
             }
         }
 
-        if (damage_min_x != damage_max_x and
+        if (!full_damage and
+            damage_min_x != damage_max_x and
             damage_min_y != damage_max_y)
         {
             self.damage(
@@ -428,6 +369,16 @@ pub const Terminal = struct {
                 damage_min_y,
                 damage_max_x,
                 damage_max_y,
+            ) catch |err| {
+                log.err("failed to damage regions: {}", .{err});
+                return;
+            };
+        } else if (full_damage) {
+            self.damage(
+                0,
+                0,
+                self.window.fb.size[0],
+                self.window.fb.size[1],
             ) catch |err| {
                 log.err("failed to damage regions: {}", .{err});
                 return;
@@ -442,11 +393,9 @@ pub const Terminal = struct {
         max_x: u32,
         max_y: u32,
     ) !void {
-        const full_damage_result = try abi.lpc.call(abi.WmDisplayProtocol.Damage, .{
-            .window_id = self.window_id,
-            .min = .{ .x = @intCast(min_x), .y = @intCast(min_y) },
-            .max = .{ .x = @intCast(max_x), .y = @intCast(max_y) },
-        }, self.wm_display);
-        try full_damage_result.asErrorUnion();
+        try self.window.damage(self.wm_display, .{
+            .min = .{ @intCast(min_x), @intCast(min_y) },
+            .max = .{ @intCast(max_x), @intCast(max_y) },
+        });
     }
 };
