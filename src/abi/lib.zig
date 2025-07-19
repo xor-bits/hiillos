@@ -428,14 +428,17 @@ pub const WmDisplayProtocol = struct {
         shmem: caps.Frame,
         pitch: u32,
         size: Size,
+        bytes: usize,
     };
 
     pub const Position = struct {
+        // FIXME: @Vector
         x: i32,
         y: i32,
     };
 
     pub const Size = struct {
+        // FIXME: @Vector
         width: u32,
         height: u32,
     };

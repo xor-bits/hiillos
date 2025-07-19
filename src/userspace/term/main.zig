@@ -10,8 +10,11 @@ pub fn main() !void {
     try abi.process.init();
     try abi.io.init();
 
+    term_lock = try .new();
+    term_lock.lock();
+
     const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    // intentionally leak `vmem`
 
     const wm_sock_addr = abi.process.env("WM_SOCKET") orelse {
         log.err("could not find WM_SOCKET", .{});
@@ -68,19 +71,13 @@ pub fn main() !void {
         }
     }
 
-    var term = try Terminal.new(
-        shmem_addr,
+    term = try Terminal.new(
+        vmem,
         window.fb,
         wm_display,
         window.window_id,
     );
-
-    try term.damage(
-        0,
-        0,
-        window.fb.size.width,
-        window.fb.size.height,
-    );
+    term_lock.unlock();
 
     const sh_stdin = try abi.ring.Ring(u8).new(0x8000);
     defer sh_stdin.deinit();
@@ -120,6 +117,9 @@ pub fn main() !void {
         // });
         switch (token) {
             .ch => |byte| {
+                term_lock.lock();
+                defer term_lock.unlock();
+
                 term.writeByte(byte);
                 term.flush();
             },
@@ -133,6 +133,9 @@ pub fn main() !void {
         }
     }
 }
+
+var term: Terminal = undefined;
+var term_lock: abi.lock.CapMutex = undefined;
 
 fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: caps.Sender) !void {
     defer wm_display.close();
@@ -157,6 +160,14 @@ fn event(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.Event) !void {
 var shift: bool = false;
 fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.WindowEvent) !void {
     switch (ev.event) {
+        .resize => |new_fb| {
+            term_lock.lock();
+            defer term_lock.unlock();
+
+            term.resize(new_fb) catch |err| {
+                log.err("failed to resize terminal: {}", .{err});
+            };
+        },
         .keyboard_input => |kb_ev| {
             const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
             if (kb_ev.state == .press and is_shift) shift = true;
@@ -170,6 +181,30 @@ fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: abi.WmDisplayProtocol.WindowEven
         },
         else => {},
     }
+}
+
+fn mapFb(vmem: caps.Vmem, fb: abi.WmDisplayProtocol.NewFramebuffer) ![]volatile u8 {
+    const shmem_size = try fb.shmem.getSize();
+    const shmem_addr = try vmem.map(
+        fb.shmem,
+        0,
+        0,
+        shmem_size,
+        .{ .writable = true },
+        .{},
+    );
+
+    // fill with opaque black
+    const shmem = @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
+    for (shmem, 0..) |*b, i| {
+        if (i % 4 == 3) {
+            b.* = 255; // max alpha
+        } else {
+            b.* = 0;
+        }
+    }
+
+    return shmem;
 }
 
 // TODO: similar code is duplicated in userspace/tty/main.zig and kernel/fb.zig
@@ -191,30 +226,68 @@ pub const Terminal = struct {
     } = .{},
 
     /// cpu accessible pixel buffer
-    framebuffer: abi.util.Image([*]volatile u8),
+    framebuffer: abi.util.Image([]volatile u8),
 
     /// wm ipc handle, to send damaged regions
     wm_display: caps.Sender,
     window_id: usize,
 
+    vmem: caps.Vmem,
+
     pub fn new(
-        fb_addr: usize,
+        vmem: caps.Vmem,
         info: abi.WmDisplayProtocol.NewFramebuffer,
         wm_display: caps.Sender,
         window_id: usize,
     ) !@This() {
         var self: @This() = .{
-            .framebuffer = abi.util.Image([*]volatile u8){
-                .width = info.size.width,
-                .height = info.size.height,
-                .pitch = info.pitch,
+            .framebuffer = abi.util.Image([]volatile u8){
+                .width = 0,
+                .height = 0,
+                .pitch = 0,
                 .bits_per_pixel = 32,
-                .pixel_array = @ptrFromInt(fb_addr),
+                .pixel_array = &.{},
             },
             .wm_display = wm_display,
             .window_id = window_id,
+            .vmem = vmem,
         };
 
+        try self.resize(info);
+        return self;
+    }
+
+    pub fn resize(
+        self: *@This(),
+        info: abi.WmDisplayProtocol.NewFramebuffer,
+    ) !void {
+        if (self.framebuffer.pixel_array.len != 0 and info.shmem.cap != 0) {
+            try self.vmem.unmap(
+                @intFromPtr(self.framebuffer.pixel_array.ptr),
+                self.framebuffer.pixel_array.len,
+            );
+        }
+        const fb =
+            if (info.shmem.cap != 0)
+                try mapFb(self.vmem, info)
+            else
+                self.framebuffer.pixel_array;
+        try self.damage(
+            0,
+            0,
+            info.size.width,
+            info.size.height,
+        );
+
+        self.framebuffer = abi.util.Image([]volatile u8){
+            .width = info.size.width,
+            .height = info.size.height,
+            .pitch = info.pitch,
+            .bits_per_pixel = 32,
+            .pixel_array = fb,
+        };
+
+        const old_size = self.size;
         self.size = .{
             .width = info.size.width / 8,
             .height = info.size.height / 16,
@@ -225,11 +298,17 @@ pub const Terminal = struct {
         for (whole_terminal_buf) |*b| {
             b.* = ' ';
         }
+        for (0..old_size.height) |_y| {
+            for (0..old_size.width) |_x| {
+                whole_terminal_buf[_x + _y * self.size.width] =
+                    self.terminal_buf_front[_x + _y * old_size.width];
+            }
+        }
 
         self.terminal_buf_front = whole_terminal_buf[0..terminal_buf_size];
         self.terminal_buf_back = whole_terminal_buf[terminal_buf_size..];
 
-        return self;
+        self.flush();
     }
 
     pub const Writer = struct {
