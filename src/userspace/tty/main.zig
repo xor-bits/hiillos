@@ -122,11 +122,11 @@ pub fn main() !void {
         // });
         switch (token) {
             .ch => |byte| {
-                seat_lock.lock();
-                defer seat_lock.unlock();
-
                 tty.writeByte(byte);
-                tty.flush();
+                if (seat_lock.tryLock()) {
+                    defer seat_lock.unlock();
+                    tty.flush();
+                }
             },
             .fg_colour => {},
             .bg_colour => {},
