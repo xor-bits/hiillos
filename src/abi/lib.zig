@@ -37,7 +37,8 @@ pub const std_options: std.Options = .{
 fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-    var bw = std.io.bufferedWriter(SysLog{});
+
+    var bw = std.io.bufferedWriter(UnifiedLog{});
     const writer = bw.writer();
 
     // FIXME: lock the log
@@ -225,7 +226,7 @@ pub const BootInfo = extern struct {
 
 //
 
-pub const SysLog = struct {
+pub const UnifiedLog = struct {
     pub const Error = error{};
     pub fn write(self: @This(), bytes: []const u8) Error!usize {
         try self.writeAll(bytes);
@@ -234,6 +235,24 @@ pub const SysLog = struct {
     pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
         sys.log(bytes);
         io.stdout.writer().writeAll(bytes) catch {};
+    }
+    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
+        try std.fmt.format(self, fmt, args);
+    }
+    pub fn flush(_: @This()) Error!void {}
+};
+
+pub const SysLog = struct {
+    pub const Error = error{};
+    pub fn write(self: @This(), bytes: []const u8) Error!usize {
+        try self.writeAll(bytes);
+        return bytes.len;
+    }
+    pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
+        sys.log(bytes);
+    }
+    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
+        try std.fmt.format(self, fmt, args);
     }
     pub fn flush(_: @This()) Error!void {}
 };
