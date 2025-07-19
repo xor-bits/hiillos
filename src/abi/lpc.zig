@@ -294,6 +294,23 @@ pub fn serializeInner(msg: anytype) Message(messageInfo(@TypeOf(msg))) {
             }
             return res;
         },
+        .vector => |t| {
+            var res: Message(msg_info) = .{};
+            for (0..t.len) |i| {
+                const val = serializeInner(msg[i]);
+                std.mem.copyForwards(
+                    u8,
+                    res.data[i * val.data.len .. (i + 1) * val.data.len],
+                    &val.data,
+                );
+                std.mem.copyForwards(
+                    caps.Handle,
+                    res.caps[i * val.caps.len .. (i + 1) * val.caps.len],
+                    &val.caps,
+                );
+            }
+            return res;
+        },
         .@"struct" => |t| {
             var res: Message(msg_info) = .{};
             var data_i: usize = 0;
@@ -486,6 +503,16 @@ pub fn deserializeInner(comptime T: type, msg: Message(messageInfo(T))) Error!T 
             @compileError("TODO: pointers");
         },
         .array => |t| {
+            var res: T = undefined;
+            inline for (0..t.len) |i| {
+                res[i] = try deserializeInner(
+                    t.child,
+                    msg.nth(messageInfo(t.child), i),
+                );
+            }
+            return res;
+        },
+        .vector => |t| {
             var res: T = undefined;
             inline for (0..t.len) |i| {
                 res[i] = try deserializeInner(
@@ -871,6 +898,7 @@ pub fn messageInfo(comptime T: type) MessageInfo {
             @compileError("TODO: pointers");
         },
         .array => |t| return messageInfo(t.child).mul(t.len),
+        .vector => |t| return messageInfo(t.child).mul(t.len),
         .@"struct" => |t| {
             var acc = messageInfo(void);
             inline for (t.fields) |field| acc.append(field.type);
