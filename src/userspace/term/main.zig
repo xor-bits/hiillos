@@ -68,7 +68,19 @@ pub fn main() !void {
         }
     }
 
-    var term = try Terminal.new(shmem_addr, window.fb);
+    var term = try Terminal.new(
+        shmem_addr,
+        window.fb,
+        wm_display,
+        window.window_id,
+    );
+
+    try term.damage(
+        0,
+        0,
+        window.fb.size.width,
+        window.fb.size.height,
+    );
 
     const sh_stdin = try abi.ring.Ring(u8).new(0x8000);
     defer sh_stdin.deinit();
@@ -181,7 +193,16 @@ pub const Terminal = struct {
     /// cpu accessible pixel buffer
     framebuffer: abi.util.Image([*]volatile u8),
 
-    pub fn new(fb_addr: usize, info: abi.WmDisplayProtocol.NewFramebuffer) !@This() {
+    /// wm ipc handle, to send damaged regions
+    wm_display: caps.Sender,
+    window_id: usize,
+
+    pub fn new(
+        fb_addr: usize,
+        info: abi.WmDisplayProtocol.NewFramebuffer,
+        wm_display: caps.Sender,
+        window_id: usize,
+    ) !@This() {
         var self: @This() = .{
             .framebuffer = abi.util.Image([*]volatile u8){
                 .width = info.size.width,
@@ -190,6 +211,8 @@ pub const Terminal = struct {
                 .bits_per_pixel = 32,
                 .pixel_array = @ptrFromInt(fb_addr),
             },
+            .wm_display = wm_display,
+            .window_id = window_id,
         };
 
         self.size = .{
@@ -277,6 +300,11 @@ pub const Terminal = struct {
     }
 
     pub fn flush(self: *@This()) void {
+        var damage_min_x: u32 = 0;
+        var damage_max_x: u32 = 0;
+        var damage_min_y: u32 = 0;
+        var damage_max_y: u32 = 0;
+
         // var nth: usize = 0;
         for (0..self.size.height) |_y| {
             for (0..self.size.width) |_x| {
@@ -295,7 +323,51 @@ pub const Terminal = struct {
                     return;
                 };
                 to.fillGlyph(letter, 0xFF_FFFFFF, 0xFF_000000);
+
+                // TODO: refactor duplicated code: this and in wm.zig
+                if (damage_min_x == damage_max_x or
+                    damage_min_y == damage_max_y)
+                {
+                    damage_min_x = x * 8;
+                    damage_min_y = y * 16;
+                    damage_max_x = x * 8 + 8;
+                    damage_max_y = y * 16 + 16;
+                } else {
+                    damage_min_x = @min(damage_min_x, x * 8);
+                    damage_min_y = @min(damage_min_y, y * 16);
+                    damage_max_x = @max(damage_max_x, x * 8 + 8);
+                    damage_max_y = @max(damage_max_y, y * 16 + 16);
+                }
             }
         }
+
+        if (damage_min_x != damage_max_x and
+            damage_min_y != damage_max_y)
+        {
+            self.damage(
+                damage_min_x,
+                damage_min_y,
+                damage_max_x,
+                damage_max_y,
+            ) catch |err| {
+                log.err("failed to damage regions: {}", .{err});
+                return;
+            };
+        }
+    }
+
+    fn damage(
+        self: *@This(),
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+    ) !void {
+        const full_damage_result = try abi.lpc.call(abi.WmDisplayProtocol.Damage, .{
+            .window_id = self.window_id,
+            .min = .{ .x = @intCast(min_x), .y = @intCast(min_y) },
+            .max = .{ .x = @intCast(max_x), .y = @intCast(max_y) },
+        }, self.wm_display);
+        try full_damage_result.asErrorUnion();
     }
 };

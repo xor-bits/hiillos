@@ -467,13 +467,23 @@ pub const WmDisplayProtocol = struct {
         pub const Union = Request;
     };
 
+    // TODO: rename all request that end with `Request`
     pub const NextEventRequest = struct {
         pub const Response = Result(Event, sys.ErrorEnum);
         pub const Union = Request;
     };
 
+    pub const Damage = struct {
+        window_id: usize,
+        min: Position,
+        max: Position,
+
+        pub const Response = Result(void, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
     pub const Request = lpc.Request(&.{
-        CreateWindowRequest, NextEventRequest,
+        CreateWindowRequest, NextEventRequest, Damage,
     });
 };
 

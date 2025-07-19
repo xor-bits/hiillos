@@ -94,6 +94,18 @@ pub fn main() !void {
         .fb_info = fb_info,
 
         .cursor_fb = cursor_fb,
+
+        // damage everything initially, so that everything is drawn
+        .damage = .{
+            .min = .{
+                .x = 0,
+                .y = 0,
+            },
+            .max = .{
+                .x = @min(std.math.maxInt(i32), fb_info.width),
+                .y = @min(std.math.maxInt(i32), fb_info.height),
+            },
+        },
     };
     system_lock.unlock();
 
@@ -264,6 +276,19 @@ fn createWindowRequest(
         return;
     };
 
+    daemon.ctx.conn.window_server_ids
+        .putNoClobber(client_id, server_id) catch {
+        _ = system.windows.remove(server_id);
+        shmem.close();
+        handler.reply.send(.{ .err = .out_of_memory });
+        return;
+    };
+
+    system.addWindowDamage(.{
+        .x = 100,
+        .y = 100,
+    }, handler.req.size);
+
     handler.reply.send(.{ .ok = .{
         .fb = .{
             .pitch = shmem_info.pitch,
@@ -299,6 +324,58 @@ fn nextEventRequest(
     try daemon.ctx.conn.popEvent(handler.reply);
 }
 
+fn damage(
+    daemon: *abi.lpc.Daemon(DisplayContext),
+    handler: abi.lpc.Handler(abi.WmDisplayProtocol.Damage),
+) !void {
+    const min_x = @min(handler.req.min.x, handler.req.max.x);
+    const max_x = @max(handler.req.min.x, handler.req.max.x);
+    const min_y = @min(handler.req.min.y, handler.req.max.y);
+    const max_y = @max(handler.req.min.y, handler.req.max.y);
+
+    if (min_x == max_x or min_y == max_y) {
+        handler.reply.send(.{ .ok = {} });
+        return;
+    }
+
+    system_lock.lock();
+    defer system_lock.unlock();
+
+    const window_id: usize = daemon.ctx.conn.window_server_ids
+        .get(handler.req.window_id) orelse {
+        handler.reply.send(.{ .err = .bad_handle });
+        return;
+    };
+
+    const window = system.windows.get(window_id) orelse {
+        log.err("server_id resolved from a client_id does not match any window", .{});
+        handler.reply.send(.{ .err = .internal });
+        return;
+    };
+
+    if (handler.req.max.x > window.size.width or
+        handler.req.max.y > window.size.height)
+    {
+        handler.reply.send(.{ .err = .invalid_argument });
+        return;
+    }
+
+    const clipped_min_x: i32 = @max(min_x, 0);
+    const clipped_max_x: i32 = @min(max_x, @min(std.math.maxInt(i32), window.size.width));
+    const clipped_min_y: i32 = @max(min_y, 0);
+    const clipped_max_y: i32 = @min(max_y, @min(std.math.maxInt(i32), window.size.height));
+
+    system.addDamage(.{
+        .x = window.pos.x +| clipped_min_x,
+        .y = window.pos.y +| clipped_min_y,
+    }, .{
+        .x = window.pos.x +| clipped_max_x,
+        .y = window.pos.y +| clipped_max_y,
+    });
+
+    handler.reply.send(.{ .ok = {} });
+}
+
 const DisplayContext = struct {
     recv: caps.Receiver,
     conn: Connection,
@@ -306,6 +383,7 @@ const DisplayContext = struct {
     pub const routes = .{
         createWindowRequest,
         nextEventRequest,
+        damage,
     };
     pub const Request = abi.WmDisplayProtocol.Request;
 };
@@ -315,6 +393,8 @@ var system_lock: abi.lock.CapMutex = undefined;
 
 const Connection = struct {
     next_client_window_id: usize = 1,
+    window_server_ids: std.AutoHashMap(usize, usize) = .init(abi.mem.slab_allocator),
+
     event_queue: std.fifo.LinearFifo(abi.WmDisplayProtocol.Event, .Dynamic) = .init(abi.mem.slab_allocator),
     reply: ?abi.lpc.DetachedReply(abi.WmDisplayProtocol.NextEventRequest.Response) = null,
 
@@ -376,12 +456,10 @@ const System = struct {
     next_server_window_id: usize = 0,
     windows: std.AutoHashMap(usize, Window) = .init(abi.mem.slab_allocator),
 
-    // damage: struct {
-    //     x_min: u32 = 0,
-    //     x_max: u32 = 0,
-    //     y_min: u32 = 0,
-    //     y_max: u32 = 0,
-    // } = .{},
+    damage: struct {
+        min: abi.WmDisplayProtocol.Position = .{ .x = 0, .y = 0 },
+        max: abi.WmDisplayProtocol.Position = .{ .x = 0, .y = 0 },
+    } = .{},
 
     alt_held: bool = false,
     window_held: ?struct {
@@ -468,26 +546,32 @@ const System = struct {
     }
 
     fn mouseMotionEvent(self: *@This(), ev: abi.input.MouseMotionEvent) void {
-        self.cursor.x +|= ev.delta_x;
-        self.cursor.y +|= -ev.delta_y;
-        self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width -| 1);
-        self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height -| 1);
-
-        if (self.window_held) |grab_pos| {
-            const window = self.windows.getPtr(grab_pos.server_id) orelse unreachable;
-            window.pos.x = self.cursor.x -| grab_pos.offs.x;
-            window.pos.y = self.cursor.y -| grab_pos.offs.y;
-        }
-
-        self.draw();
-
         if (ev.delta_z != 0) {
             self.forwardMouseWheel(ev.delta_z);
         }
         if (ev.delta_x != 0 or ev.delta_y != 0) {
-            // log.info("cursor={}", .{self.cursor});
-            self.forwardCursorMove();
+            self.cursorMoveEvent(ev.delta_x, ev.delta_y);
         }
+    }
+
+    fn cursorMoveEvent(self: *@This(), delta_x: i16, delta_y: i16) void {
+        self.addRectDamage(self.cursor, .{ .width = 16, .height = 16 });
+        self.cursor.x +|= delta_x;
+        self.cursor.y +|= -delta_y;
+        self.cursor.x = @min(@max(self.cursor.x, 0), self.fb_info.width -| 1);
+        self.cursor.y = @min(@max(self.cursor.y, 0), self.fb_info.height -| 1);
+        self.addRectDamage(self.cursor, .{ .width = 16, .height = 16 });
+
+        if (self.window_held) |grab_pos| {
+            const window = self.windows.getPtr(grab_pos.server_id) orelse unreachable;
+            system.addWindowDamage(window.pos, window.size);
+            window.pos.x = self.cursor.x -| grab_pos.offs.x;
+            window.pos.y = self.cursor.y -| grab_pos.offs.y;
+            system.addWindowDamage(window.pos, window.size);
+        }
+
+        // log.info("cursor={}", .{self.cursor});
+        self.forwardCursorMove();
     }
 
     fn forwardMouseWheel(self: *@This(), delta_z: i16) void {
@@ -513,15 +597,99 @@ const System = struct {
         window.pushEvent(.{ .cursor_moved = window_relative_cursor });
     }
 
-    fn draw(self: *@This()) void {
-        defer self.fb_backbuf.copyTo(&self.fb) catch unreachable;
-        self.fb_backbuf.fill(0xFF1A1A27);
+    fn addWindowDamage(
+        self: *@This(),
+        pos: abi.WmDisplayProtocol.Position,
+        size: abi.WmDisplayProtocol.Size,
+    ) void {
+        self.addRectDamage(.{
+            .x = pos.x -| 1,
+            .y = pos.y -| 1,
+        }, .{
+            .width = size.width +| 2,
+            .height = size.height +| 2,
+        });
+    }
 
+    fn addRectDamage(
+        self: *@This(),
+        pos: abi.WmDisplayProtocol.Position,
+        size: abi.WmDisplayProtocol.Size,
+    ) void {
+        self.addDamage(.{
+            .x = pos.x,
+            .y = pos.y,
+        }, .{
+            .x = pos.x +| @min(std.math.maxInt(i32), size.width),
+            .y = pos.y +| @min(std.math.maxInt(i32), size.height),
+        });
+    }
+
+    fn addDamage(
+        self: *@This(),
+        min: abi.WmDisplayProtocol.Position,
+        max: abi.WmDisplayProtocol.Position,
+    ) void {
+        if (self.damage.min.x == self.damage.max.x or
+            self.damage.min.y == self.damage.max.y)
+        {
+            // the damage was previously zero,
+            // so instead of extending from the [0,0],
+            // move the damage to the added damage
+
+            self.damage.min = min;
+            self.damage.max = max;
+            return;
+        }
+
+        self.damage.min.x = @min(self.damage.min.x, min.x);
+        self.damage.max.x = @max(self.damage.max.x, max.x);
+        self.damage.min.y = @min(self.damage.min.y, min.y);
+        self.damage.max.y = @max(self.damage.max.y, max.y);
+    }
+
+    fn draw(self: *@This()) void {
+        const damage_x = @max(0, self.damage.min.x);
+        const damage_y = @max(0, self.damage.min.y);
+        const damage_width: u32 = @intCast(self.damage.max.x - self.damage.min.x);
+        const damage_height: u32 = @intCast(self.damage.max.y - self.damage.min.y);
+        self.damage = .{};
+        if (damage_width == 0 or damage_height == 0) return;
+
+        // log.debug("damage: pos=[{},{}] size=[{},{}]", .{
+        //     damage_x,
+        //     damage_y,
+        //     damage_width,
+        //     damage_height,
+        // });
+
+        const fb = self.fb.imageAabbIntersect(
+            0,
+            0,
+            damage_width,
+            damage_height,
+            damage_x,
+            damage_y,
+        ) orelse return;
+        const fb_backbuf = self.fb_backbuf.imageAabbIntersect(
+            0,
+            0,
+            damage_width,
+            damage_height,
+            damage_x,
+            damage_y,
+        ) orelse return;
+
+        // draw the background in the damaged area
+        fb_backbuf.fill(0xFF1A1A27);
+
+        // draw all windows in the damaged area
         var it = self.windows.valueIterator();
         while (it.next()) |window| {
-            if (self.fb_backbuf.imageAabbIntersect(
-                0,
-                0,
+            // draw window borders
+            if (fb_backbuf.imageAabbIntersect(
+                damage_x,
+                damage_y,
                 window.size.width + 2,
                 window.size.height + 2,
                 window.pos.x -| 1,
@@ -530,25 +698,22 @@ const System = struct {
                 rect.fillHollow(0xff_353535, 1);
             }
 
-            if (self.fb_backbuf.intersection(
-                0,
-                0,
+            // draw window contents
+            if (fb_backbuf.intersection(
+                damage_x,
+                damage_y,
                 window.fb,
                 window.pos.x,
                 window.pos.y,
             )) |rects| {
-                // std.log.info(
-                //     \\window intersection:
-                //     \\ - pos: {}
-                //     \\ - size: {}x{}
-                // , .{ window.pos, rects[0].width, rects[0].height });
                 rects[1].blitTo(rects[0]) catch {};
             }
         }
 
-        if (self.fb_backbuf.intersection(
-            0,
-            0,
+        // draw cursor
+        if (fb_backbuf.intersection(
+            damage_x,
+            damage_y,
             self.cursor_fb,
             self.cursor.x,
             self.cursor.y,
@@ -556,13 +721,8 @@ const System = struct {
             rects[1].blitTo(rects[0]) catch {};
         }
 
-        // const cursor_img = self.fb_backbuf.subimage(
-        //     self.cursor.x,
-        //     self.cursor.y,
-        //     10,
-        //     10,
-        // ) catch return;
-        // cursor_img.fill(0xFFFFFF);
+        // copy the data to the actual framebuffer
+        fb_backbuf.copyTo(&fb) catch unreachable;
     }
 };
 
