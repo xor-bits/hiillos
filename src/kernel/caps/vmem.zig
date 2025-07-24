@@ -374,12 +374,14 @@ pub const Vmem = struct {
         self: *@This(),
         trap: *arch.TrapRegs,
         thread: *caps.Thread,
-        vaddr: addr.Virt,
+        unaligned_vaddr: addr.Virt,
         pages: u32,
         comptime is_test: bool,
     ) Error!void {
         std.debug.assert(self.check());
         defer std.debug.assert(self.check());
+
+        const vaddr: addr.Virt = .fromInt(std.mem.alignBackward(usize, unaligned_vaddr.raw, 0x1000));
 
         if (conf.LOG_OBJ_CALLS)
             log.info("Vmem.unmap vaddr=0x{x} pages={}", .{ vaddr.raw, pages });
