@@ -4,6 +4,7 @@ const gui = @import("gui");
 
 const caps = abi.caps;
 const log = std.log.scoped(.wm);
+const gpa = abi.mem.slab_allocator;
 
 /// in pixels
 const window_borders = 2;
@@ -248,48 +249,14 @@ fn createWindowRequest(
     system_lock.lock();
     defer system_lock.unlock();
 
-    const client_id = daemon.ctx.conn.next_client_window_id;
-    daemon.ctx.conn.next_client_window_id += 1;
-    const server_id = system.next_server_window_id;
-    system.next_server_window_id += 1;
-
-    var window = Window{
-        .client_id = client_id,
-        .server_id = server_id,
-        .rect = .{
-            .pos = .{ 100, 100 },
-            .size = shmem.size,
-        },
-
-        // the window is closed before the connection, so the pointer stays valid
-        .conn = &daemon.ctx.conn,
-    };
-    window.attach(shmem) catch |err| {
-        log.warn("could not attach window framebuffer shmem: {}", .{err});
-        daemon.ctx.conn.next_client_window_id = client_id;
-        system.next_server_window_id = server_id;
-        return handler.reply.send(.{ .err = .internal });
+    const result = system.addWindow(&daemon.ctx.conn, shmem) catch |err| {
+        log.err("internal error while trying to create a window: {}", .{err});
+        return handler.reply.send(.{ .err = .out_of_memory });
     };
 
-    system.windows.putNoClobber(server_id, window) catch {
-        daemon.ctx.conn.next_client_window_id = client_id;
-        system.next_server_window_id = server_id;
-        handler.reply.send(.{ .err = .out_of_memory });
-        return;
-    };
-
-    daemon.ctx.conn.window_server_ids.putNoClobber(client_id, server_id) catch {
-        daemon.ctx.conn.next_client_window_id = client_id;
-        system.next_server_window_id = server_id;
-        _ = system.windows.remove(server_id);
-        handler.reply.send(.{ .err = .out_of_memory });
-        return;
-    };
-
-    system.damage.addRect(window.rect.border(window_borders));
     handler.reply.send(.{ .ok = .{
         .fb = shmem,
-        .window_id = client_id,
+        .window_id = result.client_id,
     } });
 }
 
@@ -322,7 +289,7 @@ fn damage(
         return;
     };
 
-    const window = system.windows.get(window_id) orelse {
+    const window = system.windows_map.get(window_id) orelse {
         log.err("server_id resolved from a client_id does not match any window", .{});
         handler.reply.send(.{ .err = .internal });
         return;
@@ -533,7 +500,8 @@ const System = struct {
     cursor: gui.Pos = .{ 100, 100 },
 
     next_server_window_id: usize = 0,
-    windows: std.AutoHashMap(usize, Window) = .init(abi.mem.slab_allocator),
+    windows_map: std.AutoHashMap(usize, *Window) = .init(abi.mem.slab_allocator),
+    windows_list: std.DoublyLinkedList(Window) = .{},
 
     damage: gui.Damage = .{},
 
@@ -630,8 +598,11 @@ const System = struct {
 
     /// the returned pointer is valid as long as the `windows` hashmap is not modified
     fn findHoveredWindow(self: *@This()) ?*Window {
-        var it = self.windows.valueIterator();
-        while (it.next()) |window| {
+        var it = self.windows_list.last;
+        while (it) |node| {
+            it = node.prev;
+            const window = &node.data;
+
             const window_aabb = window.rect.asAabb();
 
             if (@reduce(.And, self.cursor >= window_aabb.min) and
@@ -661,13 +632,13 @@ const System = struct {
 
         switch (self.held_window) {
             .moving => |moving| {
-                const window = self.windows.getPtr(moving.window_id) orelse unreachable;
+                const window = self.windows_map.get(moving.window_id) orelse unreachable;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
                 window.rect.pos = self.cursor -| moving.offs;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
             },
             .resizing => |*resizing| {
-                const window = self.windows.getPtr(resizing.window_id) orelse unreachable;
+                const window = self.windows_map.get(resizing.window_id) orelse unreachable;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
 
                 var window_aabb = window.rect.asAabb();
@@ -727,6 +698,49 @@ const System = struct {
         window.pushEvent(.{ .cursor_moved = window_relative_cursor });
     }
 
+    fn addWindow(
+        self: *@This(),
+        conn: *Connection,
+        shmem: gui.Framebuffer,
+    ) !struct {
+        client_id: usize,
+        server_id: usize,
+    } {
+        const client_id = conn.next_client_window_id;
+        conn.next_client_window_id += 1;
+        errdefer conn.next_client_window_id = client_id;
+
+        const server_id = self.next_server_window_id;
+        self.next_server_window_id += 1;
+        errdefer self.next_server_window_id = server_id;
+
+        const window_node = try gpa.create(std.DoublyLinkedList(Window).Node);
+        errdefer gpa.destroy(window_node);
+
+        self.windows_list.append(window_node);
+        errdefer std.debug.assert(self.windows_list.pop() == window_node);
+
+        window_node.data = .{
+            .client_id = client_id,
+            .server_id = server_id,
+            .rect = .{
+                .pos = .{ 100, 100 },
+                .size = shmem.size,
+            },
+
+            // the window is closed before the connection, so the pointer stays valid
+            .conn = conn,
+        };
+        try window_node.data.attach(shmem);
+
+        try self.windows_map.putNoClobber(server_id, &window_node.data);
+        try conn.window_server_ids.putNoClobber(client_id, server_id);
+
+        system.damage.addRect(window_node.data.rect.border(window_borders));
+
+        return .{ .client_id = client_id, .server_id = server_id };
+    }
+
     fn draw(self: *@This()) void {
         const dmg_unrestricted = self.damage.take() orelse return;
         const dmg = dmg_unrestricted.intersect(self.display) orelse return;
@@ -741,8 +755,11 @@ const System = struct {
         defer fb_backbuf.copyTo(fb) catch unreachable;
 
         // draw all windows in the damaged area
-        var it = self.windows.valueIterator();
-        while (it.next()) |window| {
+        var it = self.windows_list.first;
+        while (it) |node| {
+            it = node.next;
+            const window = &node.data;
+
             const window_fb = (window.fb orelse return).fb;
 
             const window_aabb = window.rect.asAabb();
