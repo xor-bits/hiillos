@@ -423,7 +423,6 @@ fn handle_syscall(
                 @truncate(std.math.divCeil(usize, trap.arg4, 0x1000) catch unreachable);
             const rights, const flags = abi.sys.unpackRightsFlags(@truncate(trap.arg5));
 
-            // TODO: search, maybe
             const mapped_vaddr = try vmem.map(
                 frame,
                 frame_first_page,
