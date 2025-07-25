@@ -1232,10 +1232,13 @@ pub const CpuConfig = struct {
         cr0.emulate_coprocessor = 0;
         cr0.monitor_coprocessor = 1;
         cr0.write();
+        log.debug("cr0={}", .{Cr0.read()});
         var cr4 = Cr4.read();
         cr4.osfxsr = 1;
         cr4.osxmmexcpt = 1;
+        cr4.page_global_enable = 1;
         cr4.write();
+        log.debug("cr4={}", .{Cr4.read()});
 
         // // initialize CPU identification for scheduling purposes
         // wrmsr(IA32_TCS_AUX, this_cpu_id);

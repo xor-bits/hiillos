@@ -23,7 +23,6 @@ pub const Phys = struct {
     }
 
     pub fn toHhdm(self: Phys) Virt {
-        std.debug.assert(self.raw != 0);
         return Virt{
             .raw = self.raw + main.hhdm_offset,
         };

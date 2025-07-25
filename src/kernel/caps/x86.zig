@@ -18,10 +18,66 @@ const volat = abi.util.volat;
 
 pub fn init() !void {
     const cr3 = arch.Cr3.read();
-    const level4 = addr.Phys.fromInt(cr3.pml4_phys_base << 12)
-        .toHhdm().toPtr(*Vmem);
-    // TODO: make a deep copy instead and make every higher half mapping global
-    abi.util.copyForwardsVolatile(Entry, kernel_table.entries[256..], level4.entries[256..]);
+    const level4 = addr.Phys.fromParts(.{ .page = @truncate(cr3.pml4_phys_base) })
+        .toHhdm().toPtr(*volatile Vmem);
+
+    for (256..512) |i| {
+        deepClone(volat(&level4.entries[i]).*, &kernel_table.entries[i], 4);
+    }
+}
+
+/// create a deep copy of the higher half mappings
+/// NOTE: does not copy any target pages
+fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
+    if (from.present == 0) return;
+
+    const rights: abi.sys.Rights = from.getRights();
+    var tmp: Entry = undefined;
+
+    if (level != 1 and from.huge_page_or_pat == 0) {
+        // a table, not a 4kib frame, 2mib frame, 1gib frame nor a 512gib frame
+
+        const to_addr = allocTable();
+        const from_addr = from.getAddr(false);
+        const to_table = to_addr.toHhdm().toPtr(*volatile [512]Entry);
+        const from_table = from_addr.toHhdm().toPtr(*const volatile [512]Entry);
+
+        for (0..512) |i| {
+            deepClone(volat(&from_table[i]).*, &to_table[i], level - 1);
+        }
+
+        tmp = Entry.fromParts(
+            false,
+            false,
+            rights,
+            to_addr,
+            .{ .cache = from.getCacheMode(false) },
+        );
+    } else if (level == 1) {
+        // last level, 4kib frame
+
+        tmp = Entry.fromParts(
+            false,
+            true,
+            rights,
+            from.getAddr(true),
+            .{ .cache = from.getCacheMode(true) },
+        );
+        tmp.global = 1;
+    } else {
+        // some higher size page
+
+        tmp = Entry.fromParts(
+            true,
+            false,
+            rights,
+            from.getAddr(true),
+            .{ .cache = from.getCacheMode(false) },
+        );
+        tmp.global = 1;
+    }
+
+    to.* = tmp;
 }
 
 //
@@ -75,15 +131,10 @@ pub const MappingIterator = struct {
         exec: bool,
         user: bool,
 
-        fn fromEntry(from: addr.Virt, e: Entry, is_huge: bool) @This() {
-            const page_index = if (is_huge)
-                e.page_index & ~@as(u32, 1) // huge pages carry one of the PAT bits in the LSB
-            else
-                e.page_index;
-
+        fn fromEntry(from: addr.Virt, e: Entry, comptime is_last_level: bool) @This() {
             return .{
                 .base = from,
-                .target = addr.Phys.fromParts(.{ .page = page_index }),
+                .target = e.getAddr(is_last_level),
                 .write = e.writable != 0,
                 .exec = e.no_execute == 0,
                 .user = e.user_accessible != 0,
@@ -136,7 +187,7 @@ pub const MappingIterator = struct {
                     return missing(&self.maybe_base, colossial);
                 } else if (entry.huge_page_or_pat != 0) {
                     self.l4 += 1;
-                    return present(&self.maybe_base, colossial, entry, true);
+                    return present(&self.maybe_base, colossial, entry, false);
                 } else {
                     self.state = .l3;
                     return null;
@@ -161,7 +212,7 @@ pub const MappingIterator = struct {
                     return missing(&self.maybe_base, giant);
                 } else if (entry.huge_page_or_pat != 0) {
                     self.l3 += 1;
-                    return present(&self.maybe_base, giant, entry, true);
+                    return present(&self.maybe_base, giant, entry, false);
                 } else {
                     self.state = .l2;
                     return null;
@@ -187,7 +238,7 @@ pub const MappingIterator = struct {
                     return missing(&self.maybe_base, huge);
                 } else if (entry.huge_page_or_pat != 0) {
                     self.l2 += 1;
-                    return present(&self.maybe_base, huge, entry, true);
+                    return present(&self.maybe_base, huge, entry, false);
                 } else {
                     self.state = .l1;
                     return null;
@@ -214,7 +265,7 @@ pub const MappingIterator = struct {
                     return missing(&self.maybe_base, page);
                 } else {
                     self.l1 += 1;
-                    return present(&self.maybe_base, page, entry, false);
+                    return present(&self.maybe_base, page, entry, true);
                 }
             },
         }
@@ -237,8 +288,8 @@ pub const MappingIterator = struct {
         };
     }
 
-    fn present(maybe_base: *?Current, vaddr: addr.Virt, entry: Entry, is_huge: bool) ?Mapping {
-        const cur = Current.fromEntry(vaddr, entry, is_huge);
+    fn present(maybe_base: *?Current, vaddr: addr.Virt, entry: Entry, comptime is_last_level: bool) ?Mapping {
+        const cur = Current.fromEntry(vaddr, entry, is_last_level);
         const base: Current = maybe_base.* orelse {
             maybe_base.* = cur;
             return null;
@@ -296,7 +347,7 @@ pub const Vmem = struct {
         // go through every single page in this address space,
         // and print contiguous similar chunks.
 
-        var it = self.mappings(false);
+        var it = self.mappings(true);
         while (try it.next()) |mapping| {
             log.info(" - {}", .{mapping});
         }
@@ -590,7 +641,10 @@ pub const Entry = packed struct {
     protection_key: u4 = 0,
     no_execute: u1 = 0,
 
-    pub fn getCacheMode(self: @This(), comptime is_last_level: bool) abi.sys.CacheType {
+    pub fn getCacheMode(
+        self: @This(),
+        comptime is_last_level: bool,
+    ) abi.sys.CacheType {
         var idx: u3 = 0;
         if (is_last_level)
             idx |= @as(u3, self.huge_page_or_pat) << 2
@@ -599,6 +653,28 @@ pub const Entry = packed struct {
         idx |= @as(u3, self.cache_disable) << 1;
         idx |= @as(u3, self.write_through) << 0;
         return std.meta.intToEnum(abi.sys.CacheType, idx) catch unreachable;
+    }
+
+    pub fn getRights(self: @This()) abi.sys.Rights {
+        return .{
+            .writable = self.writable != 0,
+            .executable = self.no_execute == 0,
+            .user_accessible = self.user_accessible != 0,
+        };
+    }
+
+    pub fn getAddr(
+        self: @This(),
+        comptime is_last_level: bool,
+    ) addr.Phys {
+        return addr.Phys.fromParts(.{
+            .page = if (is_last_level)
+                self.page_index
+            else if (self.huge_page_or_pat != 0)
+                self.page_index & ~@as(u32, 1) // huge pages carry one of the PAT bits in the LSB
+            else
+                self.page_index,
+        });
     }
 
     pub fn fromParts(
@@ -647,7 +723,7 @@ pub const Entry = packed struct {
 
 //
 
-var kernel_table: Vmem = undefined;
+var kernel_table: Vmem = .{};
 
 fn allocPage() addr.Phys {
     return pmem.allocChunk(.@"4KiB") orelse std.debug.panic("OOM", .{});
