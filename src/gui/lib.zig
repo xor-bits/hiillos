@@ -80,7 +80,6 @@ pub const Aabb = struct {
     pub fn asRect(
         self: @This(),
     ) Rect {
-        // TODO: use std.math.lossyCast() everywhere
         return .{
             .pos = self.min,
             .size = absDiff(self.max, self.min),
@@ -167,8 +166,8 @@ pub const Aabb = struct {
     ) ?@TypeOf(image) {
         const zero: @Vector(2, i32) = @splat(0);
         const image_size: @Vector(2, i32) = .{
-            @min(std.math.maxInt(i32), image.width),
-            @min(std.math.maxInt(i32), image.height),
+            std.math.lossyCast(i32, image.width),
+            std.math.lossyCast(i32, image.height),
         };
 
         const min: @Vector(2, u32) =
