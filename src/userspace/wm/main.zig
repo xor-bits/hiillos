@@ -162,7 +162,10 @@ var cursor_pixels = b: {
 fn exec(path: []const u8) !void {
     const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
         .arg_map = try caps.Frame.init(path),
-        .env_map = try caps.Frame.init("WM_SOCKET=fs:///wm.sock"),
+        .env_map = try abi.process.deriveEnvMap(&.{}, &[_]abi.process.Var{.{
+            .name = "WM_SOCKET",
+            .value = "fs:///wm.sock",
+        }}),
         .stdio = .{
             .stdin = .{ .none = {} },
             .stdout = .{ .none = {} },

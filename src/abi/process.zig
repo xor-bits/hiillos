@@ -6,9 +6,13 @@ const util = @import("util.zig");
 //
 
 pub fn args() ArgIterator {
+    return argsOf(arg_map);
+}
+
+pub fn argsOf(override_arg_map: []const u8) ArgIterator {
     return .{ .inner = std.mem.splitScalar(
         u8,
-        arg_map,
+        override_arg_map,
         0,
     ) };
 }
@@ -26,7 +30,11 @@ pub const ArgIterator = struct {
 };
 
 pub fn env(name: []const u8) ?[]const u8 {
-    var it = envs();
+    return envOf(name, env_map);
+}
+
+pub fn envOf(name: []const u8, override_env_map: []const u8) ?[]const u8 {
+    var it = envsOf(override_env_map);
     while (it.next()) |entry| {
         if (std.mem.eql(u8, entry.name, name)) {
             return entry.value;
@@ -36,20 +44,19 @@ pub fn env(name: []const u8) ?[]const u8 {
 }
 
 pub fn envs() EnvIterator {
+    return envsOf(env_map);
+}
+
+pub fn envsOf(override_env_map: []const u8) EnvIterator {
     return .{ .inner = std.mem.splitScalar(
         u8,
-        env_map,
+        override_env_map,
         0,
     ) };
 }
 
 pub const EnvIterator = struct {
     inner: std.mem.SplitIterator(u8, .scalar),
-
-    pub const Var = struct {
-        name: []const u8,
-        value: []const u8,
-    };
 
     pub fn next(self: *@This()) ?Var {
         while (self.inner.next()) |entry| {
@@ -64,6 +71,87 @@ pub const EnvIterator = struct {
         return null;
     }
 };
+
+pub const Var = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// copies the current env map and then modifies it
+///
+/// `remove` is an array of environment keys to be removed
+/// `insert` is an array of environment key val pairs to be inserted
+pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame {
+    var size: usize = 0;
+
+    var it = envs();
+    while (it.next()) |env_var| {
+        if (removeContains(env_var.name, remove) or
+            insertContains(env_var.name, insert))
+        {
+            continue;
+        }
+
+        size += 1 + env_var.name.len + env_var.value.len;
+    }
+
+    for (insert) |env_var| {
+        size += 1 + env_var.name.len + env_var.value.len;
+    }
+    size -|= 1; // trailing zero is not needed
+
+    var derived = try caps.Frame.create(size);
+    var derived_stream = derived.stream();
+    var derived_buf_stream = std.io.bufferedWriter(derived_stream.writer());
+    const derived_writer = derived_buf_stream.writer();
+    var first = true;
+
+    it = envs();
+    while (it.next()) |env_var| {
+        if (removeContains(env_var.name, remove) or
+            insertContains(env_var.name, insert))
+        {
+            continue;
+        }
+
+        if (!first) try derived_writer.writeAll("\x00");
+        first = false;
+
+        try derived_writer.print("{s}={s}", .{
+            env_var.name,
+            env_var.value,
+        });
+    }
+
+    for (insert) |env_var| {
+        if (!first) try derived_writer.writeAll("\x00");
+        first = false;
+
+        try derived_writer.print("{s}={s}", .{
+            env_var.name,
+            env_var.value,
+        });
+    }
+
+    try derived_buf_stream.flush();
+    return derived;
+}
+
+fn removeContains(name: []const u8, remove: []const []const u8) bool {
+    for (remove) |removed| {
+        if (std.mem.eql(u8, name, removed))
+            return true;
+    }
+    return false;
+}
+
+fn insertContains(name: []const u8, insert: []const Var) bool {
+    for (insert) |inserted| {
+        if (std.mem.eql(u8, name, inserted.name))
+            return true;
+    }
+    return false;
+}
 
 var arg_map: []const u8 = &.{};
 var env_map: []const u8 = &.{};
