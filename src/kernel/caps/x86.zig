@@ -26,6 +26,241 @@ pub fn init() !void {
 
 //
 
+pub const MappingIterator = struct {
+    maybe_base: ?Current = null,
+    l4: u16 = 0,
+    l3: u16 = 0,
+    l2: u16 = 0,
+    l1: u16 = 0,
+    vmem: *volatile Vmem,
+    state: enum {
+        l4,
+        l3,
+        l2,
+        l1,
+    } = .l4,
+    include_kernel: bool = false,
+
+    pub const Mapping = struct {
+        from: addr.Virt,
+        to: addr.Virt,
+        target: addr.Phys,
+        size: usize,
+        write: bool,
+        exec: bool,
+        user: bool,
+
+        pub fn format(
+            self: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            try std.fmt.format(writer, "{s}R{s}{s} [ 0x{x:0>16}..0x{x:0>16} ] => 0x{x:0>16} (0x{x}B)", .{
+                if (self.user) "U" else "-",
+                if (self.write) "W" else "-",
+                if (self.exec) "X" else "-",
+                self.from.raw,
+                self.to.raw,
+                self.target.raw,
+                self.size,
+            });
+        }
+    };
+
+    const Current = struct {
+        base: addr.Virt,
+        target: addr.Phys,
+        write: bool,
+        exec: bool,
+        user: bool,
+
+        fn fromEntry(from: addr.Virt, e: Entry, is_huge: bool) @This() {
+            const page_index = if (is_huge)
+                e.page_index & ~@as(u32, 1) // huge pages carry one of the PAT bits in the LSB
+            else
+                e.page_index;
+
+            return .{
+                .base = from,
+                .target = addr.Phys.fromParts(.{ .page = page_index }),
+                .write = e.writable != 0,
+                .exec = e.no_execute == 0,
+                .user = e.user_accessible != 0,
+            };
+        }
+
+        fn isContiguous(a: @This(), b: @This()) bool {
+            if (a.write != b.write or a.exec != b.exec or a.user != b.user) {
+                return false;
+            }
+
+            const a_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
+            const b_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
+
+            return a_diff == b_diff;
+        }
+    };
+
+    pub fn next(self: *@This()) !?Mapping {
+        while (true) {
+            if (self.l4 >= self.l4limit()) break;
+            if (try self.tryNext()) |mapping| return mapping;
+        }
+
+        return missing(&self.maybe_base, addr.Virt.fromParts(.{
+            .level4 = if (self.include_kernel) 0 else 256,
+            ._extra = if (self.include_kernel) 1 else 0,
+        }));
+    }
+
+    fn l4limit(self: *const @This()) u16 {
+        return if (self.include_kernel) 512 else 256;
+    }
+
+    fn tryNext(self: *@This()) !?Mapping {
+        switch (self.state) {
+            .l4 => {
+                if (self.l4 >= self.l4limit()) {
+                    self.l4 = self.l4limit();
+                    return null;
+                }
+
+                const colossial = addr.Virt.fromParts(.{
+                    .level4 = @truncate(self.l4),
+                });
+                const entry: Entry = volat(&self.vmem.entries[self.l4]).*;
+
+                if (entry.present == 0) {
+                    self.l4 += 1;
+                    return missing(&self.maybe_base, colossial);
+                } else if (entry.huge_page_or_pat != 0) {
+                    self.l4 += 1;
+                    return present(&self.maybe_base, colossial, entry, true);
+                } else {
+                    self.state = .l3;
+                    return null;
+                }
+            },
+            .l3 => {
+                if (self.l3 >= 512) {
+                    self.l3 = 0;
+                    self.l4 += 1;
+                    self.state = .l4;
+                    return null;
+                }
+
+                const giant = addr.Virt.fromParts(.{
+                    .level4 = @truncate(self.l4),
+                    .level3 = @truncate(self.l3),
+                });
+                const entry: Entry = (try self.vmem.entryGiantFrame(giant)).*;
+
+                if (entry.present == 0) {
+                    self.l3 += 1;
+                    return missing(&self.maybe_base, giant);
+                } else if (entry.huge_page_or_pat != 0) {
+                    self.l3 += 1;
+                    return present(&self.maybe_base, giant, entry, true);
+                } else {
+                    self.state = .l2;
+                    return null;
+                }
+            },
+            .l2 => {
+                if (self.l2 >= 512) {
+                    self.l2 = 0;
+                    self.l3 += 1;
+                    self.state = .l3;
+                    return null;
+                }
+
+                const huge = addr.Virt.fromParts(.{
+                    .level4 = @truncate(self.l4),
+                    .level3 = @truncate(self.l3),
+                    .level2 = @truncate(self.l2),
+                });
+                const entry: Entry = (try self.vmem.entryHugeFrame(huge)).*;
+
+                if (entry.present == 0) {
+                    self.l2 += 1;
+                    return missing(&self.maybe_base, huge);
+                } else if (entry.huge_page_or_pat != 0) {
+                    self.l2 += 1;
+                    return present(&self.maybe_base, huge, entry, true);
+                } else {
+                    self.state = .l1;
+                    return null;
+                }
+            },
+            .l1 => {
+                if (self.l1 >= 512) {
+                    self.l1 = 0;
+                    self.l2 += 1;
+                    self.state = .l2;
+                    return null;
+                }
+
+                const page = addr.Virt.fromParts(.{
+                    .level4 = @truncate(self.l4),
+                    .level3 = @truncate(self.l3),
+                    .level2 = @truncate(self.l2),
+                    .level1 = @truncate(self.l1),
+                });
+                const entry: Entry = (try self.vmem.entryFrame(page)).*;
+
+                if (entry.present == 0) {
+                    self.l1 += 1;
+                    return missing(&self.maybe_base, page);
+                } else {
+                    self.l1 += 1;
+                    return present(&self.maybe_base, page, entry, false);
+                }
+            },
+        }
+    }
+
+    fn missing(maybe_base: *?Current, vaddr: addr.Virt) ?Mapping {
+        const base: Current = maybe_base.* orelse {
+            return null;
+        };
+
+        defer maybe_base.* = null;
+        return Mapping{
+            .from = base.base,
+            .to = vaddr,
+            .target = base.target,
+            .size = vaddr.raw - base.base.raw,
+            .write = base.write,
+            .exec = base.exec,
+            .user = base.user,
+        };
+    }
+
+    fn present(maybe_base: *?Current, vaddr: addr.Virt, entry: Entry, is_huge: bool) ?Mapping {
+        const cur = Current.fromEntry(vaddr, entry, is_huge);
+        const base: Current = maybe_base.* orelse {
+            maybe_base.* = cur;
+            return null;
+        };
+
+        if (!base.isContiguous(cur)) {
+            defer maybe_base.* = cur;
+            return Mapping{
+                .from = base.base,
+                .to = vaddr,
+                .target = base.target,
+                .size = vaddr.raw - base.base.raw,
+                .write = base.write,
+                .exec = base.exec,
+                .user = base.user,
+            };
+        }
+
+        return null;
+    }
+};
+
 // FIXME: flush TLB + IPI other CPUs to prevent race conditions
 /// a `Thread` points to this
 pub const Vmem = struct {
@@ -61,127 +296,17 @@ pub const Vmem = struct {
         // go through every single page in this address space,
         // and print contiguous similar chunks.
 
-        const Current = struct {
-            base: addr.Virt,
-            target: addr.Phys,
-            write: bool,
-            exec: bool,
-            user: bool,
-
-            fn fromEntry(from: addr.Virt, e: Entry) @This() {
-                return .{
-                    .base = from,
-                    .target = addr.Phys.fromParts(.{ .page = e.page_index }),
-                    .write = e.writable != 0,
-                    .exec = e.no_execute == 0,
-                    .user = e.user_accessible != 0,
-                };
-            }
-
-            fn isContiguous(a: @This(), b: @This()) bool {
-                if (a.write != b.write or a.exec != b.exec or a.user != b.user) {
-                    return false;
-                }
-
-                const a_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
-                const b_diff: i128 = @truncate(@as(i128, a.base.raw) - @as(i128, a.target.raw));
-
-                return a_diff == b_diff;
-            }
-
-            fn printRange(from: @This(), to: addr.Virt) void {
-                const size = to.raw - from.base.raw;
-                log.info(" - {s}R{s}{s} [ 0x{x:0>16}..0x{x:0>16} ] => 0x{x:0>16} (0x{x}B)", .{
-                    if (from.user) "U" else "-",
-                    if (from.write) "W" else "-",
-                    if (from.exec) "X" else "-",
-                    from.base.raw,
-                    to.raw,
-                    from.target.raw,
-                    size,
-                });
-            }
-
-            fn missing(s: *?@This(), vaddr: addr.Virt) void {
-                if (s.*) |base| {
-                    base.printRange(vaddr);
-                    s.* = null;
-                }
-            }
-
-            fn present(s: *?@This(), vaddr: addr.Virt, entry: Entry) void {
-                const cur = @This().fromEntry(vaddr, entry);
-                const base: @This() = s.* orelse {
-                    s.* = cur;
-                    return;
-                };
-
-                if (!base.isContiguous(cur)) {
-                    base.printRange(vaddr);
-                    s.* = cur;
-                    return;
-                }
-            }
-        };
-
-        var maybe_base: ?Current = null;
-
-        for (0..256) |l4| {
-            const colossial = addr.Virt.fromParts(.{
-                .level4 = @truncate(l4),
-            });
-
-            if (volat(&self.entries[l4]).*.present == 0) {
-                Current.missing(&maybe_base, colossial);
-                continue;
-            }
-
-            for (0..512) |l3| {
-                const giant = addr.Virt.fromParts(.{
-                    .level4 = @truncate(l4),
-                    .level3 = @truncate(l3),
-                });
-
-                if ((try self.entryGiantFrame(giant)).*.present == 0) {
-                    Current.missing(&maybe_base, giant);
-                    continue;
-                }
-
-                for (0..512) |l2| {
-                    const huge = addr.Virt.fromParts(.{
-                        .level4 = @truncate(l4),
-                        .level3 = @truncate(l3),
-                        .level2 = @truncate(l2),
-                    });
-
-                    if ((try self.entryHugeFrame(huge)).*.present == 0) {
-                        Current.missing(&maybe_base, huge);
-                        continue;
-                    }
-
-                    for (0..512) |l1| {
-                        const vaddr = addr.Virt.fromParts(.{
-                            .level4 = @truncate(l4),
-                            .level3 = @truncate(l3),
-                            .level2 = @truncate(l2),
-                            .level1 = @truncate(l1),
-                        });
-                        const frame = (try self.entryFrame(vaddr)).*;
-
-                        if (frame.present == 0) {
-                            Current.missing(&maybe_base, vaddr);
-                            continue;
-                        }
-
-                        Current.present(&maybe_base, vaddr, frame);
-                    }
-                }
-            }
+        var it = self.mappings(false);
+        while (try it.next()) |mapping| {
+            log.info(" - {}", .{mapping});
         }
+    }
 
-        Current.missing(&maybe_base, addr.Virt.fromParts(.{
-            .level4 = 256,
-        }));
+    pub fn mappings(self: *volatile @This(), include_kernel: bool) MappingIterator {
+        return .{
+            .vmem = self,
+            .include_kernel = include_kernel,
+        };
     }
 
     pub fn entryGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {

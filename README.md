@@ -63,6 +63,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
   - [x] SMP
   - [x] HPET
   - [ ] TSC
+  - [ ] I/O Privilege Bitmap for port io caps (IOPB)
   - [x] scheduler
   - [x] binary loader
   - [x] stack tracer with line info
