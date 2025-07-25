@@ -7,15 +7,21 @@ const log = std.log.scoped(.wm);
 const gpa = abi.mem.slab_allocator;
 
 /// in pixels
-const window_borders = 2;
+const window_borders = 1;
 
 /// in pixels
 const min_window_size: gui.Pos = @splat(10);
 
-const border_colour = gui.Colour{
+const unfocused_border_colour = gui.Colour{
     .red = 0x25,
     .green = 0x25,
     .blue = 0x25,
+};
+
+const focused_border_colour = gui.Colour{
+    .red = 0x31,
+    .green = 0xc0,
+    .blue = 0xf0,
 };
 
 const background_colour = gui.Colour{
@@ -724,6 +730,8 @@ const System = struct {
         const window_node = try gpa.create(WindowNode);
         errdefer gpa.destroy(window_node);
 
+        const old_focused_window = self.focusedWindow();
+
         self.windows_list.append(window_node);
         errdefer std.debug.assert(self.windows_list.pop() == window_node);
 
@@ -743,6 +751,8 @@ const System = struct {
         try self.windows_map.putNoClobber(server_id, &window_node.data);
         try conn.window_server_ids.putNoClobber(client_id, server_id);
 
+        if (old_focused_window) |prev|
+            self.damage.addRect(prev.rect.border(window_borders));
         system.damage.addRect(window_node.data.rect.border(window_borders));
 
         return .{ .client_id = client_id, .server_id = server_id };
@@ -752,10 +762,13 @@ const System = struct {
         self: *@This(),
         window: *Window,
     ) void {
+        if (self.focusedWindow()) |prev|
+            self.damage.addRect(prev.rect.border(window_borders));
+
         const node: *WindowNode = @fieldParentPtr("data", window);
         self.windows_list.remove(node);
         self.windows_list.append(node);
-        self.damage.addRect(node.data.rect.border(window_borders));
+        self.damage.addRect(window.rect.border(window_borders));
     }
 
     fn focusedWindow(
@@ -789,7 +802,16 @@ const System = struct {
             const window_aabb = window.rect.asAabb();
             const window_border_aabb = window_aabb.border(window_borders);
 
-            window_border_aabb.drawHollow(self.fb_backbuf, border_colour, window_borders);
+            const border_colour = if (self.focusedWindow() == window)
+                focused_border_colour
+            else
+                unfocused_border_colour;
+
+            window_border_aabb.drawHollow(
+                self.fb_backbuf,
+                border_colour,
+                window_borders,
+            );
 
             if (window_aabb.intersect(dmg)) |damaged_window_aabb| {
                 const dst = damaged_window_aabb.subimage(self.fb_backbuf).?;
