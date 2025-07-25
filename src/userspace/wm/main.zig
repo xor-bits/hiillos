@@ -24,6 +24,8 @@ const background_colour = gui.Colour{
     .blue = 0x27,
 };
 
+const WindowNode = std.DoublyLinkedList(Window).Node;
+
 //
 
 pub fn main() !void {
@@ -534,7 +536,7 @@ const System = struct {
             return;
         }
 
-        const window = self.findHoveredWindow() orelse return;
+        const window = self.focusedWindow() orelse return;
         window.pushEvent(.{ .keyboard_input = ev });
     }
 
@@ -560,11 +562,14 @@ const System = struct {
         }
 
         const window = self.findHoveredWindow() orelse return;
+        self.focusWindow(window);
         window.pushEvent(.{ .mouse_button = ev });
     }
 
     fn moveWindow(self: *@This()) void {
         if (self.findHoveredWindow()) |window| {
+            self.focusWindow(window);
+
             self.held_window = .{ .moving = .{
                 .window_id = window.server_id,
                 .offs = self.cursor -| window.rect.pos,
@@ -574,6 +579,8 @@ const System = struct {
 
     fn resizeWindow(self: *@This()) void {
         if (self.findHoveredWindow()) |window| {
+            self.focusWindow(window);
+
             const middle = window.rect.middle();
 
             const corner = if (self.cursor[0] < middle[0] and self.cursor[1] < middle[1])
@@ -678,12 +685,12 @@ const System = struct {
     }
 
     fn forwardMouseWheel(self: *@This(), delta_z: i16) void {
-        const window = self.findHoveredWindow() orelse return;
+        const window = self.focusedWindow() orelse return;
         window.pushEvent(.{ .mouse_wheel = delta_z });
     }
 
     fn forwardCursorMove(self: *@This()) void {
-        const window = self.findHoveredWindow() orelse return;
+        const window = self.focusedWindow() orelse return;
         const window_aabb = window.rect.asAabb();
 
         if (@reduce(.Or, self.cursor < window_aabb.min))
@@ -714,7 +721,7 @@ const System = struct {
         self.next_server_window_id += 1;
         errdefer self.next_server_window_id = server_id;
 
-        const window_node = try gpa.create(std.DoublyLinkedList(Window).Node);
+        const window_node = try gpa.create(WindowNode);
         errdefer gpa.destroy(window_node);
 
         self.windows_list.append(window_node);
@@ -739,6 +746,23 @@ const System = struct {
         system.damage.addRect(window_node.data.rect.border(window_borders));
 
         return .{ .client_id = client_id, .server_id = server_id };
+    }
+
+    fn focusWindow(
+        self: *@This(),
+        window: *Window,
+    ) void {
+        const node: *WindowNode = @fieldParentPtr("data", window);
+        self.windows_list.remove(node);
+        self.windows_list.append(node);
+        self.damage.addRect(node.data.rect.border(window_borders));
+    }
+
+    fn focusedWindow(
+        self: *@This(),
+    ) ?*Window {
+        const node = self.windows_list.last orelse return null;
+        return &node.data;
     }
 
     fn draw(self: *@This()) void {
