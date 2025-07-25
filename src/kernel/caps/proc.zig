@@ -17,7 +17,7 @@ pub const Process = struct {
 
     vmem: *caps.Vmem,
     lock: abi.lock.SpinMutex = .newLocked(),
-    caps: std.ArrayList(caps.CapabilitySlot), // TODO: unmanaged
+    caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
 
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
         errdefer from_vmem.deinit();
@@ -30,7 +30,7 @@ pub const Process = struct {
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{
             .vmem = from_vmem,
-            .caps = .init(caps.slab_allocator.allocator()),
+            .caps = .{},
         };
         obj.lock.unlock();
 
@@ -49,7 +49,7 @@ pub const Process = struct {
             cap_slot.deinit();
         }
 
-        self.caps.deinit();
+        self.caps.deinit(caps.slab_allocator.allocator());
         self.vmem.deinit();
 
         caps.slab_allocator.allocator().destroy(self);
@@ -75,7 +75,10 @@ pub const Process = struct {
         if (handle_usize > std.math.maxInt(u32)) return Error.OutOfBounds;
         const handle: u32 = @intCast(handle_usize);
 
-        try self.caps.append(caps.CapabilitySlot.init(cap));
+        try self.caps.append(
+            caps.slab_allocator.allocator(),
+            caps.CapabilitySlot.init(cap),
+        );
 
         return handle;
     }
