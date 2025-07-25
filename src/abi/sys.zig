@@ -16,6 +16,9 @@ pub const Id = enum(usize) {
     frame_create,
     /// get the `Frame` object's size in pages
     frame_get_size,
+    // TODO:
+    // /// resize the `Frame` object
+    // frame_set_size,
     /// read from a `Frame` capability
     frame_read,
     /// write into a `Frame` capability
@@ -120,6 +123,12 @@ pub const Id = enum(usize) {
 
     /// identify which object type some capability is
     handle_identify,
+    // TODO:
+    // /// query handle rights
+    // handle_rights,
+    // TODO:
+    // /// remove rights from a handle
+    // handle_demote,
     /// create another handle to the same object
     handle_duplicate,
     /// close a handle to some object, might or might not delete the object

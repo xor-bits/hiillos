@@ -51,11 +51,6 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
   - [x] PMM
   - [x] VMM
     - [ ] PCID for better context switch performance
-    - [x] VMM arch implementation back in the kernel,
-          user-space vmm manages mapping of capabilities
-          to the (single per thread) vmem capability.
-          Frame should be the only mappable capability
-          and it is dynamically sized: `0x1000 * 2^size`.
     - [x] Mapping cache modes with PAT, uncacheable, write-combining,
           write-through, write-protect, write-back and uncached
   - [x] GDT, TSS, IDT
@@ -72,7 +67,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
     - [x] multiple parallel calls to the same endpoint
   - [x] figure out userland interrupts (ps2 keyboard, ..)
   - [x] capabilities
-    - [ ] free list of capabilities
+    - [x] free list of capabilities
     - [x] allocate capabilities
     - [x] deallocate capabilities
     - [x] map capabilities
