@@ -18,6 +18,7 @@ pub const Process = struct {
     vmem: *caps.Vmem,
     lock: abi.lock.SpinMutex = .newLocked(),
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
+    free: u32 = 0,
 
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
         errdefer from_vmem.deinit();
@@ -63,22 +64,45 @@ pub const Process = struct {
         return self;
     }
 
+    fn allocSlotLocked(self: *@This()) Error!u32 {
+        const free = self.free;
+
+        if (free != 0) {
+            // use the free list
+
+            self.free = self.caps.items[free - 1].nextFree();
+            return free;
+        } else {
+            // allocate more
+
+            const handle_usize = self.caps.items.len + 1;
+            if (handle_usize > std.math.maxInt(u32)) return Error.OutOfMemory;
+            try self.caps.append(
+                caps.slab_allocator.allocator(),
+                caps.CapabilitySlot{},
+            );
+
+            return @intCast(handle_usize);
+        }
+    }
+
+    fn freeSlotLocked(self: *@This(), handle: u32) void {
+        self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
+        self.free = handle;
+    }
+
     pub fn pushCapability(self: *@This(), cap: caps.Capability) Error!u32 {
         // std.debug.assert(cap.type != .null);
-
-        // TODO: free list
 
         self.lock.lock();
         defer self.lock.unlock();
 
-        const handle_usize = self.caps.items.len + 1;
-        if (handle_usize > std.math.maxInt(u32)) return Error.OutOfBounds;
-        const handle: u32 = @intCast(handle_usize);
+        const handle: u32 = try self.allocSlotLocked();
+        std.debug.assert(handle != 0);
+        const slot = &self.caps.items[handle - 1];
 
-        try self.caps.append(
-            caps.slab_allocator.allocator(),
-            caps.CapabilitySlot.init(cap),
-        );
+        std.debug.assert(slot.type == .null);
+        slot.* = caps.CapabilitySlot.init(cap);
 
         return handle;
     }
@@ -98,15 +122,15 @@ pub const Process = struct {
     pub fn takeCapability(self: *@This(), handle: u32) Error!caps.Capability {
         if (handle == 0) return Error.NullHandle;
 
-        // TODO: free list
-
         self.lock.lock();
         defer self.lock.unlock();
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
 
-        return slot.take() orelse return Error.BadHandle;
+        const cap = slot.take() orelse return Error.BadHandle;
+        self.freeSlotLocked(handle);
+        return cap;
     }
 
     pub fn replaceCapability(self: *@This(), handle: u32, cap: caps.Capability) Error!?caps.Capability {
@@ -138,8 +162,8 @@ pub const Process = struct {
         // place it back if an error occurs
         errdefer std.debug.assert(null == self.replaceCapability(handle, cap) catch unreachable);
 
-        // TODO: free list
-
-        return cap.as(caps.Reply) orelse return Error.InvalidCapability;
+        const obj = cap.as(caps.Reply) orelse return Error.InvalidCapability;
+        self.freeSlotLocked(handle);
+        return obj;
     }
 };

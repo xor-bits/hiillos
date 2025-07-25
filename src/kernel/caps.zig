@@ -98,10 +98,20 @@ pub const CapabilitySlot = packed struct {
         return self;
     }
 
+    pub fn initFree(next_free: u32) @This() {
+        return @This(){ .ptr = next_free };
+    }
+
     pub fn deinit(self: @This()) void {
         if (self.get()) |cap| {
             cap.deinit();
         }
+    }
+
+    /// returns the next free list entry
+    pub fn nextFree(self: *const @This()) u32 {
+        std.debug.assert(self.type == .null);
+        return @intCast(self.ptr);
     }
 
     /// returns a Capability THAT IS NOT REF COUNTED
