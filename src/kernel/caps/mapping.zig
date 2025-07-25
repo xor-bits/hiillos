@@ -83,62 +83,6 @@ pub const Mapping = struct {
         return std.mem.eql(u8, std.mem.asBytes(self), std.mem.asBytes(other));
     }
 
-    pub fn ______clone(self: *const @This()) @This() {
-        self.frame.refcnt.inc();
-        self.vmem.refcnt.inc();
-        return self.*;
-    }
-
-    pub fn ______deinitCloned(self: @This()) void {
-        self.frame.deinit();
-        self.vmem.deinit();
-    }
-
-    /// doesnt take a normal Mapping, but one where `frame` and `vmem` are owned by the passed struct
-    pub fn ______remove(self: @This()) void {
-        defer self.frame.deinit();
-        defer self.vmem.deinit();
-
-        self.frame.lock.lock();
-        self.vmem.lock.lock();
-
-        const frame_mapping_i: ?usize = for (self.frame.mappings.items, 0..) |mapping, i| {
-            // TODO: binary search
-            if (std.mem.eql(u8, std.mem.asBytes(mapping), std.mem.asBytes(&self))) {
-                break i;
-            }
-        } else null;
-
-        if (frame_mapping_i) |i| {
-            _ = self.frame.mappings.swapRemove(i);
-        }
-
-        self.frame.lock.unlock();
-
-        const vmem_mapping_i: ?usize = for (self.vmem.mappings.items, 0..) |mapping, i| {
-            // TODO: binary search
-            if (std.mem.eql(u8, std.mem.asBytes(mapping), std.mem.asBytes(&self))) {
-                break i;
-            }
-        } else null;
-
-        if (vmem_mapping_i) |i| {
-            _ = self.vmem.mappings.orderedRemove(i);
-        }
-
-        self.vmem.lock.unlock();
-
-        const remove_count = @as(u32, @intFromBool(vmem_mapping_i != null)) +
-            @as(u32, @intFromBool(frame_mapping_i != null));
-        std.debug.assert(remove_count != 1);
-        std.debug.assert(remove_count == 0 or remove_count == 2);
-
-        if (remove_count == 2) {
-            // this mapping was successfully removed from both, so deinit the Mapping itself
-            self.frame.deinit();
-        }
-    }
-
     pub fn setVaddr(self: *@This(), vaddr: addr.Virt) void {
         self.target.page = @truncate(vaddr.raw >> 12);
     }

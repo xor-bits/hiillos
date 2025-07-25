@@ -790,7 +790,7 @@ const DirNode = struct {
 
         try self.lazyLoadLocked();
 
-        // TODO:
+        // TODO: missing_policy, requres real filesystems
         _ = missing_policy;
 
         log.debug("looking up part '{s}'", .{part});
