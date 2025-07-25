@@ -9,7 +9,7 @@ pub fn main(_: @import("main.zig").Ctx) !void {
     const stdin = abi.io.stdin.reader();
     const stdout = abi.io.stdout.writer();
 
-    try stdout.print("> ", .{});
+    try stdout.print("{}", .{Prompt{}});
 
     var command: [0x100]u8 = undefined;
     var command_len: usize = 0;
@@ -39,52 +39,83 @@ pub fn main(_: @import("main.zig").Ctx) !void {
 
         if (ch != '\n') continue;
 
-        const cmd = command[0..command_len];
+        const raw_cli = command[0..command_len];
         command_len = 0;
+        try runScript(stdout, raw_cli);
+    }
+}
 
-        if (cmd.len == 0) {
-            try stdout.print("\n> ", .{});
-            continue;
-        }
+const Prompt = struct {
+    exit_code: usize = 0,
 
-        const arg_map = createArgMap(cmd) catch |err| {
-            try stdout.print(
-                "could not find command: {s} ({})\n\n> ",
-                .{ cmd, err },
-            );
-            continue;
-        };
-
-        const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
-            .arg_map = arg_map,
-            .env_map = try caps.COMMON_ENV_MAP.clone(),
-            .stdio = try abi.io.stdio.clone(),
-        }, .{
-            .cap = 1,
-        });
-
-        const proc = result.asErrorUnion() catch |err| {
-            try stdout.print(
-                "unknown command: {s} ({})\n\n> ",
-                .{ cmd, err },
-            );
-            continue;
-        };
-
-        const exit_code = try proc.main_thread.wait();
-
-        if (exit_code == 0) {
-            try stdout.print(
-                "\n> ",
+    pub fn format(
+        self: @This(),
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (self.exit_code == 0) {
+            try writer.print(
+                "> ",
                 .{},
             );
         } else {
-            try stdout.print(
-                "\n({}) > ",
-                .{exit_code},
+            try writer.print(
+                "({}) > ",
+                .{self.exit_code},
             );
         }
     }
+};
+
+fn runScript(
+    stdout: abi.io.File.Writer,
+    script: []const u8,
+) !void {
+    var lines = std.mem.splitScalar(u8, script, '\n');
+    while (lines.next()) |line| {
+        try runLine(stdout, line);
+    }
+}
+
+fn runLine(
+    stdout: abi.io.File.Writer,
+    raw_cli: []const u8,
+) !void {
+    const cli = std.mem.trimRight(u8, raw_cli, " \t\n\r");
+
+    if (cli.len == 0) {
+        try stdout.print("\n{}", .{Prompt{}});
+        return;
+    }
+
+    var parts = std.mem.splitScalar(u8, cli, ' ');
+    const cmd = parts.next().?;
+
+    const arg_map = createArgMap(cli) catch |err| {
+        try stdout.print("could not find command: {s} ({})\n\n{}", .{
+            cmd, err, Prompt{},
+        });
+        return;
+    };
+
+    const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
+        .arg_map = arg_map,
+        .env_map = try caps.COMMON_ENV_MAP.clone(),
+        .stdio = try abi.io.stdio.clone(),
+    }, .{
+        .cap = 1,
+    });
+
+    const proc = result.asErrorUnion() catch |err| {
+        try stdout.print("unknown command: {s} ({})\n\n{}", .{
+            cmd, err, Prompt{},
+        });
+        return;
+    };
+
+    const exit_code = try proc.main_thread.wait();
+    try stdout.print("\n{}", .{Prompt{ .exit_code = exit_code }});
 }
 
 fn createArgMap(cli: []const u8) !caps.Frame {
