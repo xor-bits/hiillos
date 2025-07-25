@@ -47,8 +47,16 @@ pub fn main(_: @import("main.zig").Ctx) !void {
             continue;
         }
 
+        const arg_map = createArgMap(cmd) catch |err| {
+            try stdout.print(
+                "could not find command: {s} ({})\n\n> ",
+                .{ cmd, err },
+            );
+            continue;
+        };
+
         const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
-            .arg_map = try createArgMap(cmd),
+            .arg_map = arg_map,
             .env_map = try caps.COMMON_ENV_MAP.clone(),
             .stdio = try abi.io.stdio.clone(),
         }, .{
@@ -87,8 +95,8 @@ fn createArgMap(cli: []const u8) !caps.Frame {
     var args_buffered_stream = std.io.bufferedWriter(args_stream.writer());
     var args_writer = args_buffered_stream.writer();
 
-    // TODO: use $PATH instead
-    try args_writer.writeAll("initfs:///sbin/");
+    const path = abi.process.env("PATH") orelse return error.MissingPathEnv;
+    try args_writer.writeAll(path);
 
     var input_arg_it = std.mem.splitScalar(u8, cli, ' ');
     while (input_arg_it.next()) |input_arg| {

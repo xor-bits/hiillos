@@ -100,7 +100,7 @@ pub fn main() !void {
 
     _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
         .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install\x00--sh"),
-        .env_map = try caps.Frame.create(0x1000),
+        .env_map = try caps.Frame.init("PATH=initfs:///sbin/"),
         .stdio = .{
             .stdin = .{ .ring = try stdin.share() },
             .stdout = .{ .ring = try stdout.share() },
