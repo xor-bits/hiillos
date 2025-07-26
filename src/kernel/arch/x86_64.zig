@@ -1008,7 +1008,9 @@ pub const Idt = extern struct {
                         trap.rip,
                         trap.rsp,
                         err,
+                        trap,
                     );
+                    return;
                 };
 
                 thread.proc.vmem.pageFault(
@@ -1024,6 +1026,7 @@ pub const Idt = extern struct {
                         trap.rip,
                         trap.rsp,
                         err,
+                        trap,
                     ),
                 };
             }

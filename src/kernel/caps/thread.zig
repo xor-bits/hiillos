@@ -223,7 +223,8 @@ pub const Thread = struct {
         ip: usize,
         sp: usize,
         reason: anyerror,
-    ) noreturn {
+        trap: *arch.TrapRegs,
+    ) void {
         log.warn(
             \\unhandled page fault 0x{x} (user) ({})
             \\ - caused by: {}
@@ -236,11 +237,13 @@ pub const Thread = struct {
             ip,
             sp,
         });
-
         self.proc.vmem.dump();
 
         while (conf.DEBUG_UNHANDLED_FAULT) {}
 
-        proc.enter();
+        // TODO: sigsegv
+
+        proc.switchFrom(trap, self);
+        proc.switchNow(trap);
     }
 };
