@@ -462,7 +462,9 @@ const Framebuffer = struct {
         resize_event_conn: *Connection,
         resize_event_window_id: usize,
     ) !void {
-        if (try self.shmem.update(size)) |new| {
+        if (@reduce(.And, self.shmem.size == size)) {
+            return;
+        } else if (try self.shmem.update(size)) |new| {
             self.deinit();
             self.* = try Framebuffer.init(new);
 
@@ -684,7 +686,6 @@ const System = struct {
                 resizing.init_cursor = self.cursor;
                 window.rect = window_aabb.asRect();
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
-                try window.resize();
             },
             .none => {},
         }
@@ -799,6 +800,9 @@ const System = struct {
         while (it) |node| {
             it = node.next;
             const window = &node.data;
+            window.resize() catch |err| {
+                log.err("failed to resize a window: {}", .{err});
+            };
 
             const window_fb = (window.fb orelse return).fb;
 
