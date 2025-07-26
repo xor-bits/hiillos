@@ -1,5 +1,5 @@
 .{
-    .name = .zig_kernel,
+    .name = .hiillos,
     .version = "0.0.2",
     .dependencies = .{
         .limine = .{
@@ -12,6 +12,6 @@
         },
     },
     .paths = .{"."},
-    .fingerprint = 0x1182412c7771d4ca,
+    .fingerprint = 0x85b8bb43b41d4850,
     .minimum_zig_version = "0.14.0",
 }
