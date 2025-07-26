@@ -879,44 +879,41 @@ pub const Idt = extern struct {
             }
         }).asInt();
         // general protection fault
-        entries[13] = Entry.generateWithEc(struct {
-            fn handler(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) void {
-                const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
+        entries[13] = Entry.generateTrapWithEc(struct {
+            fn handler(trap: *TrapRegs) void {
+                const is_user = trap.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (conf.LOG_EXCEPTIONS) log.debug("general protection fault interrupt", .{});
+
+                if (!is_user or cpuLocal().current_thread == null) std.debug.panic(
+                    \\unhandled general protection fault (0x{x})
+                    \\ - user: {any}
+                    \\ - ip: 0x{x}
+                    \\ - sp: 0x{x}
+                    \\ - line:
+                    \\{}
+                , .{
+                    trap.error_code,
+                    is_user,
+                    trap.rip,
+                    trap.rsp,
+                    logs.Addr2Line{ .addr = trap.rip },
+                });
 
                 log.warn(
                     \\general protection fault (0x{x})
-                    \\ - user: {}
+                    \\ - user: true
                     \\ - ip: 0x{x}
                     \\ - sp: 0x{x}
                 , .{
-                    ec,
-                    is_user,
-                    interrupt_stack_frame.rip,
-                    interrupt_stack_frame.rsp,
+                    trap.error_code,
+                    trap.rip,
+                    trap.rsp,
                 });
 
-                if (is_user and !conf.KERNEL_PANIC_ON_USER_FAULT) {
-                    log.warn("user", .{});
-                    cpuLocal().current_thread.?.status = .stopped;
-                    proc.enter();
-                } else {
-                    log.warn("kernel", .{});
-                    std.debug.panic(
-                        \\unhandled general protection fault (0x{x})
-                        \\ - user: {}
-                        \\ - ip: 0x{x}
-                        \\ - sp: 0x{x}
-                        \\ - line:
-                        \\{}
-                    , .{
-                        ec,
-                        is_user,
-                        interrupt_stack_frame.rip,
-                        interrupt_stack_frame.rsp,
-                        logs.Addr2Line{ .addr = interrupt_stack_frame.rip },
-                    });
-                }
+                const thread = cpuLocal().current_thread.?;
+                thread.status = .stopped;
+                proc.switchFrom(trap, thread);
+                proc.enter();
             }
         }).withStack(2).asInt();
         // page fault
