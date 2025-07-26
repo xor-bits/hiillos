@@ -119,6 +119,83 @@ pub const Rect = struct {
         return self.asAabb().contains(pos);
     }
 
+    pub fn split(
+        self: @This(),
+        dir: SplitDirection,
+        constraints: []const Constraint,
+        results: []Rect,
+    ) void {
+        const limit: u32 = if (dir == .horizontal) self.size[0] else self.size[1];
+        const dir_i32: Pos = if (dir == .horizontal) .{ 1, 0 } else .{ 0, 1 };
+        const dir_u32: Size = if (dir == .horizontal) .{ 1, 0 } else .{ 0, 1 };
+        const width: Size = if (dir == .horizontal) .{ 0, self.size[1] } else .{ self.size[0], 0 };
+
+        var minimum: u32 = 0;
+        var weight_sum: u32 = 0;
+        for (constraints) |constraint| switch (constraint) {
+            .pixels => |px| minimum += px,
+            .weight => |weight| weight_sum += weight,
+            else => {},
+        };
+
+        var allocation = limit;
+        const flexible: u32 = allocation - minimum;
+
+        for (constraints, results) |constraint, *result| switch (constraint) {
+            .pixels => |px| result.* = allocate(
+                self.pos,
+                &allocation,
+                limit,
+                px,
+                dir_i32,
+                dir_u32,
+                width,
+            ),
+            .percentage => |percentage| {
+                const px = flexible * 100 / percentage;
+                result.* = allocate(
+                    self.pos,
+                    &allocation,
+                    limit,
+                    px,
+                    dir_i32,
+                    dir_u32,
+                    width,
+                );
+            },
+            .weight => |weight| {
+                const px = flexible * weight / weight_sum;
+                result.* = allocate(
+                    self.pos,
+                    &allocation,
+                    limit,
+                    px,
+                    dir_i32,
+                    dir_u32,
+                    width,
+                );
+            },
+        };
+    }
+
+    fn allocate(
+        pos: Pos,
+        allocation: *u32,
+        limit: u32,
+        px: u32,
+        dir_i32: Pos,
+        dir_u32: Size,
+        width: Size,
+    ) Rect {
+        const prev_allocation = allocation.*;
+        const size = @min(px, prev_allocation);
+        allocation.* -|= px;
+        return Rect{
+            .pos = pos + dir_i32 * @as(Pos, @splat(std.math.lossyCast(i32, limit - prev_allocation))),
+            .size = width + dir_u32 * @as(Size, @splat(size)),
+        };
+    }
+
     pub fn drawLabel(
         self: @This(),
         image: anytype,
@@ -144,6 +221,19 @@ pub const Rect = struct {
             ch_image.fillGlyph(glyph, @bitCast(fg), @bitCast(bg));
         }
     }
+};
+
+pub const Constraint = union(enum) {
+    // min: u32,
+    // max: u32,
+    pixels: u32,
+    percentage: u32,
+    weight: u32,
+};
+
+pub const SplitDirection = enum {
+    vertical,
+    horizontal,
 };
 
 pub const Aabb = struct {
@@ -367,7 +457,6 @@ pub const WmDisplay = struct {
     sender: caps.Sender,
 
     pub fn connect() !@This() {
-
         // find the IPC socket address using WM_SOCKET env var
         const wm_sock_addr = abi.process.env("WM_SOCKET") orelse {
             log.err("could not find WM_SOCKET", .{});
