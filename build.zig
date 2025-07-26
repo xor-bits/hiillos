@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) !void {
     const gui = createLibGui(b, abi);
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi);
-    const initfs_tar_zst = createInitfsTarZst(b, &opts, abi, gui);
+    const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui);
     const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
     runQemu(b, &opts, os_iso);
@@ -253,62 +253,13 @@ fn createInitfsTarZst(
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
-) std.Build.LazyPath {
-    const initfs_processes = .{
-        "coreutils",
-        "hpet",
-        "init",
-        "pci",
-        "pm",
-        "ps2",
-        "term",
-        "tty",
-        "vfs",
-        "wm",
-    };
+) !std.Build.LazyPath {
 
     // create virtual initfs.tar.zst root
     const initfs = b.addNamedWriteFiles("create virtual initfs root");
 
-    inline for (initfs_processes) |name| {
-        const source = std.fmt.comptimePrint("src/userspace/{s}/main.zig", .{name});
-        const path = std.fmt.comptimePrint("sbin/{s}", .{name});
-
-        const proc = b.addModule(name, .{
-            .root_source_file = b.path(source),
-            .target = opts.target,
-            .optimize = opts.optimize,
-            .imports = &.{
-                .{ .name = "abi", .module = abi },
-                .{ .name = "gui", .module = gui },
-            },
-        });
-        proc.addImport("abi", abi);
-
-        const wf = b.addWriteFiles();
-        const userspace_entry_wrapper_zig = wf.add("userspace_entry_wrapper.zig",
-            \\pub usingnamespace @import("proc");
-            \\comptime { @import("abi").rt.installRuntime(); }
-            \\pub const std_options = @import("abi").std_options;
-            \\pub const panic = @import("abi").panic;
-        );
-
-        const userspace_entry_wrapper = b.addExecutable(.{
-            .name = name,
-            .root_source_file = userspace_entry_wrapper_zig,
-            .target = opts.target,
-            // FIXME: manifest/imports/exports rely on symtab
-            .optimize = opts.optimize,
-            .pic = true,
-            .strip = false,
-        });
-        userspace_entry_wrapper.root_module.addImport("abi", abi);
-        userspace_entry_wrapper.root_module.addImport("proc", proc);
-
-        b.installArtifact(userspace_entry_wrapper);
-
-        _ = initfs.addCopyFile(userspace_entry_wrapper.getEmittedBin(), path);
-    }
+    try createInitfsTarZstProcesses(b, opts, abi, gui, initfs);
+    try createInitfsTarZstAssets(b, initfs);
 
     const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
@@ -325,6 +276,112 @@ fn createInitfsTarZst(
     b.getInstallStep().dependOn(&install_initfs_tar_zst.step);
 
     return initfs_tar_zst_file;
+}
+
+fn createInitfsTarZstProcesses(
+    b: *std.Build,
+    opts: *const Opts,
+    abi: *std.Build.Module,
+    gui: *std.Build.Module,
+    initfs: *std.Build.Step.WriteFile,
+) !void {
+    const userspace_src_dir_path = b.path("src/userspace")
+        .getPath3(b, null);
+
+    var userspace_src_dir = try userspace_src_dir_path.openDir(
+        "",
+        .{ .iterate = true },
+    );
+    defer userspace_src_dir.close();
+
+    var it = userspace_src_dir.iterate();
+    while (try it.next()) |entry| {
+        // root doesn't go into initfs.tar.zst
+        if (std.mem.eql(u8, entry.name, "root")) continue;
+
+        try createInitfsTarZstProcess(
+            b,
+            opts,
+            abi,
+            gui,
+            initfs,
+            entry.name,
+        );
+    }
+}
+
+fn createInitfsTarZstProcess(
+    b: *std.Build,
+    opts: *const Opts,
+    abi: *std.Build.Module,
+    gui: *std.Build.Module,
+    initfs: *std.Build.Step.WriteFile,
+    name: []const u8,
+) !void {
+    const source = b.pathJoin(&.{
+        "src",
+        "userspace",
+        name,
+        "main.zig",
+    });
+    const path = b.pathJoin(&.{
+        "sbin",
+        name,
+    });
+
+    const proc = b.addModule(name, .{
+        .root_source_file = b.path(source),
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "abi", .module = abi },
+            .{ .name = "gui", .module = gui },
+        },
+    });
+    proc.addImport("abi", abi);
+
+    const wf = b.addWriteFiles();
+    const userspace_entry_wrapper_zig = wf.add("userspace_entry_wrapper.zig",
+        \\pub usingnamespace @import("proc");
+        \\comptime { @import("abi").rt.installRuntime(); }
+        \\pub const std_options = @import("abi").std_options;
+        \\pub const panic = @import("abi").panic;
+    );
+
+    const userspace_entry_wrapper = b.addExecutable(.{
+        .name = name,
+        .root_source_file = userspace_entry_wrapper_zig,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .pic = true,
+        .strip = false,
+    });
+    userspace_entry_wrapper.root_module.addImport("abi", abi);
+    userspace_entry_wrapper.root_module.addImport("proc", proc);
+
+    b.installArtifact(userspace_entry_wrapper);
+
+    _ = initfs.addCopyFile(userspace_entry_wrapper.getEmittedBin(), path);
+}
+
+fn createInitfsTarZstAssets(
+    b: *std.Build,
+    initfs: *std.Build.Step.WriteFile,
+) !void {
+    const asset_dir_path = b.path("asset").getPath3(b, null);
+
+    var asset_dir = try asset_dir_path.openDir("", .{ .iterate = true });
+    defer asset_dir.close();
+
+    var walker = try asset_dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        _ = initfs.addCopyFile(
+            try b.path("asset").join(b.allocator, entry.path),
+            entry.path,
+        );
+    }
 }
 
 fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {
