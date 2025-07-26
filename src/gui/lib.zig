@@ -649,11 +649,13 @@ pub const WindowEvent = struct {
         mouse_wheel: i16,
         mouse_button: input.MouseButtonEvent,
         redraw: void,
+        _,
     };
 };
 
 pub const Event = union(enum) {
     window: WindowEvent,
+    _,
 };
 
 pub const WmProtocol = struct {

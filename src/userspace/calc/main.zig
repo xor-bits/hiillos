@@ -309,6 +309,7 @@ pub fn main() !void {
 
                 else => {},
             },
+            else => {},
         }
     }
 }

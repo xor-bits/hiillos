@@ -102,6 +102,7 @@ fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: gui.WmDisplay) !void {
 fn event(sh_stdin: abi.ring.Ring(u8), ev: gui.Event) !void {
     switch (ev) {
         .window => |w_ev| try windowEvent(sh_stdin, w_ev),
+        else => {},
     }
 }
 
