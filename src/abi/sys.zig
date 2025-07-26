@@ -251,11 +251,15 @@ pub const Error = error{
     InvalidSyscall,
     OutOfMemory,
     OutOfVirtualMemory,
+    // FIXME: remove
     EntryNotPresent,
+    // FIXME: remove
     EntryIsHuge,
     NotStopped,
     IsStopped,
+    // FIXME: remove
     NoVmem,
+    // FIXME: remove
     ThreadSafety,
     AlreadyMapped,
     NotMapped,
