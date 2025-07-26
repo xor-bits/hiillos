@@ -8,6 +8,7 @@ const Error = abi.sys.Error;
 
 pub const Command = enum {
     coreutils,
+    cat,
     ls,
     sh,
     sleep,
@@ -15,6 +16,7 @@ pub const Command = enum {
 
 const commands = .{
     .coreutils = @import("coreutils.zig"),
+    .cat = @import("cat.zig"),
     .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
     .sleep = @import("sleep.zig"),
