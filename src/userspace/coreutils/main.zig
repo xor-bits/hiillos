@@ -13,6 +13,7 @@ pub const Command = enum {
     ls,
     sh,
     sleep,
+    yes,
 };
 
 const commands = .{
@@ -22,6 +23,7 @@ const commands = .{
     .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
     .sleep = @import("sleep.zig"),
+    .yes = @import("yes.zig"),
 };
 
 pub const Ctx = struct {
