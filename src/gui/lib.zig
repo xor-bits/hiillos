@@ -11,9 +11,9 @@ const log = std.log.scoped(.gui);
 //
 
 pub const Colour = extern struct {
-    blue: u8,
-    green: u8,
-    red: u8,
+    blue: u8 = 0,
+    green: u8 = 0,
+    red: u8 = 0,
     alpha: u8 = 0xff,
 
     pub const white: @This() = .{ .red = 0xff, .green = 0xff, .blue = 0xff };
