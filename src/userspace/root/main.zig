@@ -420,6 +420,7 @@ pub extern var __thread_stack_end: u8;
 
 pub export fn _start() linksection(".text._start") callconv(.Naked) noreturn {
     asm volatile (
+        \\ subq $0x108, %rsp
         \\ jmp zigMain
         :
         : [sp] "{rsp}" (&__stack_end),
@@ -435,7 +436,7 @@ export fn zigMain() noreturn {
     asm volatile (
         \\ jmp zigMainRealstack
         :
-        : [sp] "{rsp}" (stack_top - 0x100),
+        : [sp] "{rsp}" (stack_top - 0x108),
     );
     unreachable;
 }

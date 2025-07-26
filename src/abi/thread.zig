@@ -61,7 +61,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
     stack_ptr -= @sizeOf(Instance);
     const instance_ptr = stack_ptr;
     stack_ptr -= 0x100; // some extra zeroes that zig requires
-    stack_ptr = std.mem.alignBackward(usize, stack_ptr, 0x100);
+    stack_ptr = std.mem.alignBackward(usize, stack_ptr + 0x8, 0x100) - 0x8;
 
     const instance: *volatile Instance = @ptrFromInt(instance_ptr);
     instance.* = .{ .args = args };

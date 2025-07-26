@@ -51,7 +51,7 @@ pub fn prepareSpawn(vmem: caps.Vmem, thread: caps.Thread, entry: u64) !void {
     try thread.writeRegs(&.{
         // .arg0 = sender_there,
         .rip = entry,
-        .rsp = stack_ptr + 1024 * 256 - 0x100,
+        .rsp = stack_ptr + 1024 * 256 - 0x108,
     });
 }
 
