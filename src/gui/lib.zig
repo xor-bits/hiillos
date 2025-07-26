@@ -16,8 +16,48 @@ pub const Colour = extern struct {
     red: u8 = 0,
     alpha: u8 = 0xff,
 
-    pub const white: @This() = .{ .red = 0xff, .green = 0xff, .blue = 0xff };
-    pub const black: @This() = .{ .red = 0x00, .green = 0x00, .blue = 0x00 };
+    pub fn hex(name: []const u8) !@This() {
+        if (name.len != 7 and name.len != 9) {
+            return error.InvalidHexCode;
+        }
+
+        std.debug.assert(name[0] == '#');
+        const num = try std.fmt.parseInt(u32, name[1..], 16);
+
+        return .{
+            .red = @truncate((num & 0x00_ff_00_00) >> 16),
+            .green = @truncate((num & 0x00_00_ff_00) >> 8),
+            .blue = @truncate(num & 0x00_00_00_ff),
+            .alpha = if (name.len == 7) 255 else @truncate(num >> 24),
+        };
+    }
+
+    pub fn mono(brightness: u8) @This() {
+        return .{ .red = brightness, .green = brightness, .blue = brightness };
+    }
+
+    pub const white: @This() = .mono(0xff);
+    pub const black: @This() = .mono(0x00);
+};
+
+pub const colour = struct {
+    // TODO: move to `Colour` and rename the original fields
+    pub const red: Colour = .{ .red = 0xff };
+    pub const green: Colour = .{ .green = 0xff };
+    pub const blue: Colour = .{ .blue = 0xff };
+    pub const yellow: Colour = .{ .red = 0xff, .green = 0xff };
+    pub const cyan: Colour = .{ .green = 0xff, .blue = 0xff };
+    pub const magenta: Colour = .{ .red = 0xff, .blue = 0xff };
+
+    pub const orange: Colour = .{ .red = 0xff, .green = 0x80 };
+    pub const pink: Colour = .{ .red = 0xff, .blue = 0x80 };
+    pub const purple: Colour = .{ .blue = 0xff, .red = 0x80 };
+
+    pub const white: Colour = .mono(0xff);
+    pub const light_grey: Colour = .mono(0x87);
+    pub const grey: Colour = .mono(0x37);
+    pub const dark_grey: Colour = .mono(0x0c);
+    pub const black: Colour = .mono(0x00);
 };
 
 pub const Pos = @Vector(2, i32);
