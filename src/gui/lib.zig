@@ -111,6 +111,13 @@ pub const Rect = struct {
             .size = self.size,
         };
     }
+
+    pub fn contains(
+        self: @This(),
+        pos: Pos,
+    ) bool {
+        return self.asAabb().contains(pos);
+    }
 };
 
 pub const Aabb = struct {
@@ -275,6 +282,15 @@ pub const Aabb = struct {
             .max = .{ self.max[0], self.max[1] - border_width },
         };
         c.draw(image, col);
+    }
+
+    pub fn contains(
+        self: @This(),
+        pos: Pos,
+    ) bool {
+        if (@reduce(.Or, pos < self.min)) return false;
+        if (@reduce(.Or, pos >= self.max)) return false;
+        return true;
     }
 };
 
