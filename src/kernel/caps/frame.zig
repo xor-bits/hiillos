@@ -503,8 +503,7 @@ pub const Frame = struct {
         // save the current thread that might or might not go to sleep
         thread.status = .waiting;
         thread.waiting_cause = .transient_page_fault;
-        thread.trap = trap.*;
-        arch.cpuLocal().current_thread = null;
+        proc.switchFrom(trap, thread);
 
         self.transient_sleep_queue.pushBack(thread);
     }

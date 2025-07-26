@@ -506,7 +506,7 @@ pub const Vmem = struct {
         );
         thread.status = .waiting;
         thread.waiting_cause = .unmap_tlb_shootdown;
-        thread.trap = trap.*;
+        proc.switchFrom(trap, thread);
 
         // tests cannot yield or do IPIs or other stuff rn
         if (!is_test) for (main.all_cpu_locals, 0..) |*locals, i| {
@@ -528,6 +528,7 @@ pub const Vmem = struct {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
             this_thread.status = .running;
+            proc.switchUndo(thread);
         } else {
             return Error.Retry;
         }

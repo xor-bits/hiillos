@@ -16,13 +16,15 @@ const Error = abi.sys.Error;
 /// thread information
 pub const Thread = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    refcnt: abi.epoch.RefCnt align(16) = .{},
 
     proc: *caps.Process,
     // lock for modifying / executing the thread
     lock: abi.lock.SpinMutex = .newLocked(),
-    /// all context data
+    /// all context data, except fx
     trap: arch.TrapRegs = .{},
+    /// fx context data, switched lazily
+    fx: arch.FxRegs = .{},
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
@@ -136,7 +138,8 @@ pub const Thread = struct {
 
         thread.status = .waiting;
         thread.waiting_cause = .other_proc_exit;
-        thread.trap = trap.*;
+        proc.switchFrom(trap, thread);
+
         self.exit_waiters.pushBack(thread);
         self.lock.unlock();
 

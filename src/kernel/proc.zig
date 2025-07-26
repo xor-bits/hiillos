@@ -51,8 +51,7 @@ pub fn yield(trap: *arch.TrapRegs) void {
 ///mark the previous thread as ready
 fn yieldReadyPrev(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
     if (prev) |prev_thread| {
-        arch.cpuLocal().current_thread = null;
-        prev_thread.trap = trap.*;
+        switchFrom(trap, prev_thread);
 
         switch (prev_thread.status) {
             .ready => unreachable,
@@ -74,14 +73,31 @@ pub fn switchNow(trap: *arch.TrapRegs) void {
 /// does **NOT** save the previous context or set its status
 pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
+    std.debug.assert(local.current_thread == null);
     local.current_thread = thread;
     trap.* = thread.trap;
+    thread.fx.restore();
     thread.status = .running;
 
     thread.proc.vmem.switchTo();
 
     if (conf.LOG_CTX_SWITCHES)
         log.debug("switch to {*}", .{thread});
+}
+
+/// switches away from a thread, but not to another thread
+pub fn switchFrom(trap: *const arch.TrapRegs, thread: *caps.Thread) void {
+    const local = arch.cpuLocal();
+    std.debug.assert(local.current_thread != null);
+    local.current_thread = null;
+    thread.fx.save();
+    thread.trap = trap.*;
+}
+
+pub fn switchUndo(thread: *caps.Thread) void {
+    const local = arch.cpuLocal();
+    std.debug.assert(local.current_thread == null);
+    local.current_thread = thread;
 }
 
 /// stop the thread and (TODO) interrupt a processor that might be running it

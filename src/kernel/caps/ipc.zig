@@ -77,7 +77,7 @@ pub const Receiver = struct {
         // stop the thread early to hold the lock for a shorter time
         thread.status = .waiting;
         thread.waiting_cause = .ipc_recv;
-        thread.trap = trap.*;
+        proc.switchFrom(trap, thread);
 
         // check if a sender is already waiting
         self.queue_lock.lock();
@@ -98,6 +98,7 @@ pub const Receiver = struct {
 
             // undo stopping the thread
             thread.status = .running;
+            proc.switchUndo(thread);
             return false;
         }
 
@@ -106,7 +107,6 @@ pub const Receiver = struct {
         }
         self.queue_lock.unlock();
 
-        arch.cpuLocal().current_thread = null;
         return true;
     }
 
@@ -212,9 +212,8 @@ pub const Sender = struct {
 
             thread.status = .waiting;
             thread.waiting_cause = .ipc_call1;
-            thread.trap = trap.*;
+            proc.switchFrom(trap, thread);
             thread.trap.writeMessage(msg);
-            arch.cpuLocal().current_thread = null;
 
             self.recv.queue_lock.lock();
             self.recv.queue.pushBack(thread);
@@ -236,7 +235,7 @@ pub const Sender = struct {
         // switch to the listener
         thread.status = .waiting;
         thread.waiting_cause = .ipc_call1;
-        thread.trap = trap.*;
+        proc.switchFrom(trap, thread);
 
         proc.switchTo(trap, listener);
     }
@@ -350,17 +349,19 @@ pub const Notify = struct {
         // save the state and go to sleep
         thread.status = .waiting;
         thread.waiting_cause = .notify_wait;
-        thread.trap = trap.*;
+        proc.switchFrom(trap, thread);
+
         self.queue_lock.lock();
         self.queue.pushBack(thread);
 
         // while holding the lock: if it became active before locking but after the swap, then test it again
         if (self.poll()) {
             self.queue_lock.unlock();
-            // revert
+            // undo
             std.debug.assert(self.queue.popBack() == thread);
             std.debug.assert(thread.status == .waiting);
             thread.status = .running;
+            proc.switchUndo(thread);
             return;
         }
         self.queue_lock.unlock();

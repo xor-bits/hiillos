@@ -1231,6 +1231,7 @@ pub const CpuConfig = struct {
         var cr0 = Cr0.read();
         cr0.emulate_coprocessor = 0;
         cr0.monitor_coprocessor = 1;
+        cr0.task_switched = 0;
         cr0.write();
         log.debug("cr0={}", .{Cr0.read()});
         var cr4 = Cr4.read();
@@ -1439,6 +1440,69 @@ pub const InterruptStackFrame = extern struct {
     rsp: u64,
     /// stack(data) privilege level before the interrupt
     stack_segment_selector: u16,
+};
+
+pub const FxRegs = extern struct {
+    fpu_instruction_pointer_offset: u64 = 0,
+    fpu_opcode: u16 = 0,
+    _reserved0: u8 = 0,
+    fpu_tag: u8 = 0,
+    fpu_status: u16 = 0,
+    fpu_control: u16 = 0,
+    mxcsr_mask: MxCsr = .{},
+    mxcsr: MxCsr = .{
+        .invalid_operation_mask = true,
+        .denormal_mask = true,
+        .divide_by_zero_mask = true,
+        .overflow_mask = true,
+        .underflow_mask = true,
+        .precision_mask = true,
+    },
+    fpu_data_pointer_offset: u64 = 0,
+    mmx_regs: [8]u128 = [_]u128{0} ** 8,
+    xmm_regs: [16]u128 = [_]u128{0} ** 16,
+    _reserved1: [3]u128 = [_]u128{0} ** 3,
+    available: [3]u128 = [_]u128{0} ** 3,
+
+    pub fn restore(self: *@This()) void {
+        asm volatile (
+            \\ fxrstor64 (%[v])
+            :
+            : [v] "X" (self),
+        );
+    }
+
+    pub fn save(self: *@This()) void {
+        return asm volatile (
+            \\ fxsave64 (%[v])
+            :
+            : [v] "X" (self),
+        );
+    }
+};
+
+pub const MxCsr = packed struct {
+    invalid_operation: bool = false,
+    denormal: bool = false,
+    divide_by_zero: bool = false,
+    overflow: bool = false,
+    underflow: bool = false,
+    precision: bool = false,
+    denormals_are_zeros: bool = false,
+    invalid_operation_mask: bool = false,
+    denormal_mask: bool = false,
+    divide_by_zero_mask: bool = false,
+    overflow_mask: bool = false,
+    underflow_mask: bool = false,
+    precision_mask: bool = false,
+    rounding_control: enum(u2) {
+        nearest,
+        negative,
+        positive,
+        zero,
+    } = .nearest,
+    flush_to_zero: bool = false,
+    _: u16 = 0,
 };
 
 pub const TrapRegs = extern struct {
