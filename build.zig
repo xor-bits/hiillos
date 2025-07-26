@@ -4,7 +4,8 @@ const std = @import("std");
 
 const Opts = struct {
     native_target: std.Build.ResolvedTarget,
-    target: std.Build.ResolvedTarget,
+    user_target: std.Build.ResolvedTarget,
+    kernel_target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     display: bool,
     debug: u2,
@@ -17,10 +18,40 @@ const Opts = struct {
     sound: bool,
 };
 
-fn options(b: *std.Build, target: std.Build.ResolvedTarget) Opts {
+fn options(b: *std.Build) Opts {
+    const Feature = std.Target.x86.Feature;
+
+    // kernel mode code cannot use fpu so use software impl instead
+    var enabled_features = std.Target.Cpu.Feature.Set.empty;
+    enabled_features.addFeature(@intFromEnum(Feature.soft_float));
+
+    // kernel mode code cannot use these features (except maybe after they are enabled)
+    var disabled_features = std.Target.Cpu.Feature.Set.empty;
+    disabled_features.addFeature(@intFromEnum(Feature.mmx));
+    disabled_features.addFeature(@intFromEnum(Feature.sse));
+    disabled_features.addFeature(@intFromEnum(Feature.sse2));
+    disabled_features.addFeature(@intFromEnum(Feature.avx));
+    disabled_features.addFeature(@intFromEnum(Feature.avx2));
+    disabled_features.addFeature(@intFromEnum(Feature.mmx));
+
+    const user_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+
+    const kernel_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+        .cpu_features_add = enabled_features,
+        .cpu_features_sub = disabled_features,
+    });
+
     return .{
         .native_target = b.standardTargetOptions(.{}),
-        .target = target,
+        .user_target = user_target,
+        .kernel_target = kernel_target,
         .optimize = b.standardOptimizeOption(.{}),
 
         // QEMU gui true/false
@@ -69,29 +100,7 @@ fn options(b: *std.Build, target: std.Build.ResolvedTarget) Opts {
 //
 
 pub fn build(b: *std.Build) !void {
-    const Target = std.Target;
-    const Feature = Target.x86.Feature;
-
-    // kernel mode code cannot use fpu so use software impl instead
-    var enabled_features = Target.Cpu.Feature.Set.empty;
-    enabled_features.addFeature(@intFromEnum(Feature.soft_float));
-
-    // kernel mode code cannot use these features (except maybe after they are enabled)
-    var disabled_features = Target.Cpu.Feature.Set.empty;
-    disabled_features.addFeature(@intFromEnum(Feature.mmx));
-    disabled_features.addFeature(@intFromEnum(Feature.sse));
-    disabled_features.addFeature(@intFromEnum(Feature.sse2));
-    disabled_features.addFeature(@intFromEnum(Feature.avx));
-    disabled_features.addFeature(@intFromEnum(Feature.avx2));
-    disabled_features.addFeature(@intFromEnum(Feature.mmx));
-
-    const opts = options(b, b.resolveTargetQuery(.{
-        .cpu_arch = .x86_64,
-        .os_tag = .freestanding,
-        .abi = .none,
-        .cpu_features_add = enabled_features,
-        .cpu_features_sub = disabled_features,
-    }));
+    const opts = options(b);
 
     const abi = createAbi(b, &opts);
     const gui = createLibGui(b, abi);
@@ -209,7 +218,7 @@ fn createIso(
     const wrapper = b.addExecutable(.{
         .name = "xorriso_limine_wrapper",
         .root_source_file = b.path("src/tools/xorriso_limine_wrapper.zig"),
-        .target = b.graph.host,
+        .target = opts.native_target,
     });
 
     // create virtual iso root
@@ -323,8 +332,6 @@ fn createInitfsTarZstProcess(
 
     const proc = b.addModule(name, .{
         .root_source_file = b.path(source),
-        .target = opts.target,
-        .optimize = opts.optimize,
         .imports = &.{
             .{ .name = "abi", .module = abi },
             .{ .name = "gui", .module = gui },
@@ -343,7 +350,7 @@ fn createInitfsTarZstProcess(
     const userspace_entry_wrapper = b.addExecutable(.{
         .name = name,
         .root_source_file = userspace_entry_wrapper_zig,
-        .target = opts.target,
+        .target = opts.user_target,
         .optimize = opts.optimize,
         .pic = true,
         .strip = false,
@@ -401,10 +408,7 @@ fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {
     }
 }
 
-fn generateSourcesZig(
-    b: *std.Build,
-    opts: *const Opts,
-) !*std.Build.Module {
+fn generateSourcesZig(b: *std.Build) !*std.Build.Module {
     // collect all kernel source files for the stack tracer
 
     var sources_zig_contents = std.ArrayList(u8).init(b.allocator);
@@ -428,8 +432,6 @@ fn generateSourcesZig(
     );
 
     return b.addModule("sources", .{
-        .target = opts.target,
-        .optimize = opts.optimize,
         .root_source_file = sources_zig,
     });
 }
@@ -449,14 +451,14 @@ fn createKernelElf(
 
     const kernel_module = b.addModule("kernel", .{
         .root_source_file = b.path("src/kernel/main.zig"),
-        .target = opts.target,
+        .target = opts.kernel_target,
         .optimize = opts.optimize,
         .code_model = .kernel,
     });
     kernel_module.addImport("limine", b.dependency("limine", .{}).module("limine"));
     kernel_module.addImport("abi", abi);
     kernel_module.addImport("git-rev", git_rev_mod);
-    kernel_module.addImport("sources", try generateSourcesZig(b, opts));
+    kernel_module.addImport("sources", try generateSourcesZig(b));
 
     if (opts.testing) {
         const testkernel_elf_step = b.addTest(.{
@@ -502,7 +504,7 @@ fn createRootBin(
     const root_elf_step = b.addExecutable(.{
         .name = "root",
         .root_source_file = b.path("src/userspace/root/main.zig"),
-        .target = opts.target,
+        .target = opts.user_target,
         .optimize = opts.optimize,
     });
     root_elf_step.root_module.addImport("abi", abi);
@@ -526,26 +528,24 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     const syscall_generator_tool = b.addExecutable(.{
         .name = "generate_syscall_wrapper",
         .root_source_file = b.path("src/tools/generate_syscall_wrapper.zig"),
-        .target = b.graph.host,
+        .target = opts.native_target,
     });
 
     const syscall_generator_tool_run = b.addRunArtifact(syscall_generator_tool);
     const syscall_zig = syscall_generator_tool_run.addOutputFileArg("syscall.zig");
     syscall_generator_tool_run.has_side_effects = false;
 
-    const font = createFont(b);
+    const font = createFont(b, opts);
 
     const mod = b.addModule("abi", .{
         .root_source_file = b.path("src/abi/lib.zig"),
-        .target = opts.target,
-        .optimize = opts.optimize,
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
     mod.addImport("font", font);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),
-        .target = b.graph.host,
+        .target = opts.native_target,
         .optimize = opts.optimize,
     });
     test_mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
@@ -563,11 +563,11 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 }
 
 // convert the font.bmp into a more usable format
-fn createFont(b: *std.Build) *std.Build.Module {
+fn createFont(b: *std.Build, opts: *const Opts) *std.Build.Module {
     const font_tool = b.addExecutable(.{
         .name = "generate_font",
         .root_source_file = b.path("src/tools/generate_font.zig"),
-        .target = b.graph.host,
+        .target = opts.native_target,
     });
 
     const font_tool_run = b.addRunArtifact(font_tool);
