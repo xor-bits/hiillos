@@ -32,6 +32,7 @@ pub const Stdio = union(enum) {
             .file => |v| .{ .file = .{
                 .frame = v.frame,
                 .cursor = .init(v.cursor),
+                .limit = try v.frame.getSize(),
             } },
             .inherit => {
                 sys.log("tried to open inherit stdio");
@@ -71,6 +72,7 @@ pub const File = union(enum) {
     file: struct {
         frame: caps.Frame,
         cursor: std.atomic.Value(usize),
+        limit: usize,
     },
     /// /dev/null
     none: void,
@@ -83,6 +85,7 @@ pub const File = union(enum) {
             .file => |v| .{ .file = .{
                 .frame = v.frame,
                 .cursor = v.cursor.load(.monotonic),
+                .limit = try v.frame.getSize(),
             } },
             .none => .{ .none = {} },
         };
@@ -110,8 +113,10 @@ pub const File = union(enum) {
                 .file => |*v| {
                     // TODO: read non-zero chunks instead of everything at once
                     const cursor = v.cursor.fetchAdd(buf.len, .monotonic);
-                    try v.frame.read(cursor, buf);
-                    return buf.len;
+                    if (cursor >= v.limit) return 0;
+                    const limit = @min(v.limit - cursor, buf.len);
+                    try v.frame.read(cursor, buf[0..limit]);
+                    return limit;
                 },
                 .none => return 0,
             }
@@ -141,19 +146,24 @@ pub const File = union(enum) {
             try std.fmt.format(self, fmt, args);
         }
 
-        pub fn write(self: @This(), bytes: []const u8) Error!usize {
-            try self.writeAll(bytes);
-            return bytes.len;
+        pub fn write(self: @This(), buf: []const u8) Error!usize {
+            try self.writeAll(buf);
+            return buf.len;
         }
 
-        pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
+        pub fn writeAll(self: @This(), buf: []const u8) Error!void {
             switch (self.self.*) {
                 .ring => |*v| {
-                    try v.writeWait(bytes);
+                    try v.writeWait(buf);
                 },
                 .file => |*v| {
-                    const cursor = v.cursor.fetchAdd(bytes.len, .monotonic);
-                    try v.frame.write(cursor, bytes);
+                    const cursor = v.cursor.fetchAdd(buf.len, .monotonic);
+                    if (cursor >= v.limit) {
+                        // FIXME: resize
+                        return;
+                    }
+                    const limit = @min(v.limit - cursor, buf.len);
+                    try v.frame.write(cursor, buf[0..limit]);
                 },
                 .none => {},
             }
