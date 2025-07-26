@@ -118,6 +118,32 @@ pub const Rect = struct {
     ) bool {
         return self.asAabb().contains(pos);
     }
+
+    pub fn drawLabel(
+        self: @This(),
+        image: anytype,
+        text: []const u8,
+        fg: Colour,
+        bg: Colour,
+    ) void {
+        if (self.size[1] < 16) return;
+
+        var pos = self.pos;
+        for (text) |ch| {
+            const glyph = &abi.font.glyphs[ch];
+            const ch_width: u8 = if (glyph.wide) 16 else 8;
+
+            const ch_rect = Rect{
+                .pos = pos,
+                .size = .{ ch_width, 16 },
+            };
+            pos +|= @as(Pos, .{ ch_width, 0 });
+
+            const ch_image = ch_rect.asAabb().subimage(image) orelse continue;
+            if (ch_image.width < ch_width or ch_image.height < 16) continue;
+            ch_image.fillGlyph(glyph, @bitCast(fg), @bitCast(bg));
+        }
+    }
 };
 
 pub const Aabb = struct {
