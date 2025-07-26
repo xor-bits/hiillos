@@ -96,19 +96,17 @@ pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame
             continue;
         }
 
-        size += 1 + env_var.name.len + env_var.value.len;
+        size += 2 + env_var.name.len + env_var.value.len;
     }
 
     for (insert) |env_var| {
-        size += 1 + env_var.name.len + env_var.value.len;
+        size += 2 + env_var.name.len + env_var.value.len;
     }
-    size -|= 1; // trailing zero is not needed
 
     var derived = try caps.Frame.create(size);
     var derived_stream = derived.stream();
     var derived_buf_stream = std.io.bufferedWriter(derived_stream.writer());
     const derived_writer = derived_buf_stream.writer();
-    var first = true;
 
     it = envs();
     while (it.next()) |env_var| {
@@ -118,20 +116,14 @@ pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame
             continue;
         }
 
-        if (!first) try derived_writer.writeAll("\x00");
-        first = false;
-
-        try derived_writer.print("{s}={s}", .{
+        try derived_writer.print("{s}={s}\x00", .{
             env_var.name,
             env_var.value,
         });
     }
 
     for (insert) |env_var| {
-        if (!first) try derived_writer.writeAll("\x00");
-        first = false;
-
-        try derived_writer.print("{s}={s}", .{
+        try derived_writer.print("{s}={s}\x00", .{
             env_var.name,
             env_var.value,
         });
