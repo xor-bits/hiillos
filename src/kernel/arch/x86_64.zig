@@ -1467,7 +1467,7 @@ pub const FxRegs = extern struct {
         asm volatile (
             \\ fxrstor64 (%[v])
             :
-            : [v] "X" (self),
+            : [v] "r" (self),
         );
     }
 
@@ -1475,7 +1475,7 @@ pub const FxRegs = extern struct {
         return asm volatile (
             \\ fxsave64 (%[v])
             :
-            : [v] "X" (self),
+            : [v] "r" (self),
         );
     }
 };
