@@ -539,7 +539,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 
     const font = createFont(b);
 
-    const mod = b.createModule(.{
+    const mod = b.addModule("abi", .{
         .root_source_file = b.path("src/abi/lib.zig"),
         .target = opts.target,
         .optimize = opts.optimize,
@@ -585,7 +585,7 @@ fn createFont(b: *std.Build) *std.Build.Module {
 }
 
 fn createLibGui(b: *std.Build, abi: *std.Build.Module) *std.Build.Module {
-    return b.createModule(.{
+    return b.addModule("gui", .{
         .root_source_file = b.path("src/gui/lib.zig"),
         .imports = &.{.{
             .name = "abi",
