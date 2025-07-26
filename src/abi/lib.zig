@@ -236,6 +236,9 @@ pub const UnifiedLog = struct {
         sys.log(bytes);
         io.stdout.writer().writeAll(bytes) catch {};
     }
+    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
+        for (0..n) |_| try self.writeAll(bytes);
+    }
     pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
         try std.fmt.format(self, fmt, args);
     }
@@ -250,6 +253,9 @@ pub const SysLog = struct {
     }
     pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
         sys.log(bytes);
+    }
+    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
+        for (0..n) |_| try self.writeAll(bytes);
     }
     pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
         try std.fmt.format(self, fmt, args);

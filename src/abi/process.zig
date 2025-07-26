@@ -27,6 +27,10 @@ pub const ArgIterator = struct {
         }
         return null;
     }
+
+    pub fn rest(self: *const @This()) []const u8 {
+        return self.inner.rest();
+    }
 };
 
 pub fn env(name: []const u8) ?[]const u8 {

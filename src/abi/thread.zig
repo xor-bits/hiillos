@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const loader = @import("loader.zig");
 const sys = @import("sys.zig");
@@ -105,7 +106,7 @@ pub fn callFn(comptime function: anytype, args: anytype) void {
             switch (info.payload) {
                 void, noreturn => {
                     @call(.auto, function, args) catch |err| {
-                        std.log.err("error: {s}", .{@errorName(err)});
+                        abi.UnifiedLog.print(.{}, "error: {s}\n", .{@errorName(err)}) catch {};
                     };
                 },
                 else => {
