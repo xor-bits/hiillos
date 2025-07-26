@@ -16,6 +16,8 @@ const Opts = struct {
     cpus: u8,
     kvm: bool,
     sound: bool,
+    comp_level: u8,
+    comp_threads: u8,
 };
 
 fn options(b: *std.Build) Opts {
@@ -94,6 +96,14 @@ fn options(b: *std.Build) Opts {
         // QEMU virtio-sound device
         .sound = b.option(bool, "sound", "Add virtio-sound device to QEMU") orelse
             true,
+
+        // initfs compression level
+        .comp_level = b.option(u8, "zst_l", "initfs zstd compression level") orelse
+            19,
+
+        // initfs compression parallelism
+        .comp_threads = b.option(u8, "zst_t", "initfs zstd compression parallelism (0 for auto)") orelse
+            0,
     };
 }
 
@@ -265,7 +275,7 @@ fn createInitfsTarZst(
     const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
         "c",
-        "-Izstd -19 -T1",
+        b.fmt("-Izstd -{} -T{}", .{ opts.comp_level, opts.comp_threads }),
         "-f",
     });
     const initfs_tar_zst_file = initfs_tar_zst.addOutputFileArg("initfs.tar.zst");
