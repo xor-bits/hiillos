@@ -7,16 +7,18 @@ const log = std.log.scoped(.coreutils);
 const Error = abi.sys.Error;
 
 pub const Command = enum {
-    coreutils,
     cat,
+    coreutils,
+    echo,
     ls,
     sh,
     sleep,
 };
 
 const commands = .{
-    .coreutils = @import("coreutils.zig"),
     .cat = @import("cat.zig"),
+    .coreutils = @import("coreutils.zig"),
+    .echo = @import("echo.zig"),
     .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
     .sleep = @import("sleep.zig"),
