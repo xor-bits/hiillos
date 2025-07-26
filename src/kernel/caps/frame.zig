@@ -28,6 +28,7 @@ pub const Frame = struct {
     is_physical: bool,
     lock: abi.lock.SpinMutex = .new(),
     pages: []u32,
+    size_bytes: usize,
     mappings: std.ArrayList(*const caps.Mapping),
 
     pub fn init(size_bytes: usize) !*@This() {
@@ -51,6 +52,7 @@ pub const Frame = struct {
             .is_physical = false,
             .lock = .newLocked(),
             .pages = pages,
+            .size_bytes = size_bytes,
             .mappings = .init(caps.slab_allocator.allocator()),
         };
         obj.lock.unlock();

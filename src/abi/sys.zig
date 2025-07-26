@@ -14,7 +14,7 @@ pub const Id = enum(usize) {
 
     /// create a new `Frame` object that can be mapped to one or many `Vmem`s
     frame_create,
-    /// get the `Frame` object's size in pages
+    /// get the `Frame` object's size in bytes
     frame_get_size,
     // TODO:
     // /// resize the `Frame` object
@@ -541,7 +541,9 @@ pub fn frameCreate(size_bytes: usize) Error!u32 {
 }
 
 pub fn frameGetSize(frame: u32) Error!usize {
-    return try syscall(.frame_get_size, .{frame}, .{}) * 0x1000;
+    var size: usize = undefined;
+    _ = try syscall(.frame_get_size, .{frame}, .{&size});
+    return size;
 }
 
 pub fn frameRead(

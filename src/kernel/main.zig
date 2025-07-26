@@ -317,7 +317,8 @@ fn handle_syscall(
             const frame = try thread.proc.getObject(caps.Frame, @truncate(trap.arg0));
             defer frame.deinit();
 
-            trap.syscall_id = abi.sys.encode(@as(u32, @intCast(frame.pages.len)));
+            trap.syscall_id = abi.sys.encode(0);
+            trap.arg0 = frame.size_bytes;
         },
         .frame_read => {
             const offset_bytes = trap.arg1;
