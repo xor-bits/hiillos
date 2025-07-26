@@ -35,12 +35,13 @@ pub fn main() !void {
     defer sh_stdin.deinit();
     const sh_stdout = try abi.ring.Ring(u8).new(0x8000);
     defer sh_stdout.deinit();
-    const sh_stderr = try abi.ring.Ring(u8).new(0x8000);
-    defer sh_stderr.deinit();
+    const sh_stderr = sh_stdout;
+    // const sh_stderr = try abi.ring.Ring(u8).new(0x8000);
+    // defer sh_stderr.deinit();
 
     @memset(sh_stdin.storage(), 0);
     @memset(sh_stdout.storage(), 0);
-    @memset(sh_stderr.storage(), 0);
+    // @memset(sh_stderr.storage(), 0);
 
     try abi.thread.spawn(eventThread, .{
         sh_stdin,

@@ -89,12 +89,13 @@ pub fn main() !void {
     defer stdin.deinit();
     const stdout = try abi.ring.Ring(u8).new(0x8000);
     defer stdout.deinit();
-    const stderr = try abi.ring.Ring(u8).new(0x8000);
-    defer stderr.deinit();
+    const stderr = stdout;
+    // const stderr = try abi.ring.Ring(u8).new(0x8000);
+    // defer stderr.deinit();
 
     @memset(stdin.storage(), 0);
     @memset(stdout.storage(), 0);
-    @memset(stderr.storage(), 0);
+    // @memset(stderr.storage(), 0);
 
     try abi.thread.spawn(kbReader, .{stdin});
 
