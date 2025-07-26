@@ -132,7 +132,7 @@ fn openDir(
 
 fn openDirInner(
     handler: abi.lpc.Handler(abi.VfsProtocol.OpenDirRequest),
-) !abi.VfsProtocol.DirEnts {
+) !abi.fs.Dir {
     const uri = try handler.req.path.getMap();
     defer uri.deinit();
 

@@ -262,15 +262,22 @@ pub const DirEntRawNoName = extern struct {
 };
 
 pub const Dir = struct {
-    pub fn iterator(frame: caps.Frame, count: usize) !Iterator {
+    data: caps.Frame,
+    count: usize,
+
+    pub fn deinit(self: @This()) void {
+        self.data.close();
+    }
+
+    pub fn iterate(self: @This()) !Iterator {
         const vmem = try caps.Vmem.self();
         errdefer vmem.close();
 
         // FIXME: make the frame copy-on-write
 
-        const frame_size = try frame.getSize();
+        const frame_size = try self.data.getSize();
         const addr = try vmem.map(
-            frame,
+            self.data,
             0,
             0,
             0,
@@ -281,7 +288,7 @@ pub const Dir = struct {
         return .{
             .vmem = vmem,
             .entries = @as([*]const u8, @ptrFromInt(addr))[0..frame_size],
-            .count = count,
+            .count = self.count,
             .idx = 0,
         };
     }

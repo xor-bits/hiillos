@@ -67,18 +67,11 @@ pub fn main() !void {
 
     // const init_elf = try open("initfs:///sbin/init");
 
-    const file_resp = try abi.lpc.call(
-        abi.VfsProtocol.OpenFileRequest,
-        .{ .path = comptime abi.fs.Path.new(
-            "initfs:///sbin/init",
-        ) catch unreachable, .open_opts = .{
-            .mode = .read_only,
-            .file_policy = .use_existing,
-            .dir_policy = .use_existing,
-        } },
+    const init_elf_frame = try abi.fs.openFileAbsoluteWith(
+        "initfs:///sbin/init",
+        .{},
         .{ .cap = import_vfs.handle },
     );
-    const init_elf_frame = try file_resp.asErrorUnion();
 
     const init_elf_size = try init_elf_frame.getSize();
     const init_elf_addr = try system.self_vmem.map(
@@ -276,14 +269,8 @@ fn execElf(
             .offs = 0,
             .len = cmd.len,
         } },
-        .open_opts = .{
-            .mode = .read_only,
-            .file_policy = .use_existing,
-            .dir_policy = .use_existing,
-        },
-    }, .{
-        .cap = import_vfs.handle,
-    });
+        .open_opts = .{},
+    }, .{ .cap = import_vfs.handle });
 
     const elf_file = handler.reply.unwrapResult(
         caps.Frame,

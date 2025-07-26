@@ -29,16 +29,12 @@ fn tryLsPath(path: []const u8) !void {
 }
 
 fn lsPath(path: []const u8) !void {
-    const result = try abi.lpc.call(abi.VfsProtocol.OpenDirRequest, .{
-        .path = try abi.fs.Path.new(path),
-        .open_opts = .{ .mode = .read_only },
-    }, .{
-        .cap = 4,
-    });
+    const dir = try abi.fs.openDirAbsolute(path, .{});
+    defer dir.deinit();
 
-    const dir_ents = try result.asErrorUnion();
+    var it = try dir.iterate();
+    defer it.deinit();
 
-    var it = try abi.fs.Dir.iterator(dir_ents.data, dir_ents.count);
     while (it.next()) |entry| {
         try abi.io.stdout.writer().print(
             "{s}\n",

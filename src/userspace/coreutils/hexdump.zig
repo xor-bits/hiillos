@@ -33,7 +33,7 @@ fn tryForwardPath(
     if (std.mem.eql(u8, path, "-")) {
         try forward(path, &abi.io.stdin, row, col);
     } else {
-        const frame = forwardPath(path) catch |err| {
+        const frame = abi.fs.openFileAbsolute(path, .{}) catch |err| {
             try abi.io.stderr.writer().print(
                 "cannot open {s}: {}\n",
                 .{ path, err },
@@ -48,16 +48,6 @@ fn tryForwardPath(
 
         try forward(path, &file, row, col);
     }
-}
-
-fn forwardPath(path: []const u8) !caps.Frame {
-    const result = try abi.lpc.call(abi.VfsProtocol.OpenFileRequest, .{
-        .path = try abi.fs.Path.new(path),
-        .open_opts = .{ .mode = .read_only },
-    }, .{
-        .cap = 4,
-    });
-    return try result.asErrorUnion();
 }
 
 fn forward(

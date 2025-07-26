@@ -33,7 +33,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         return;
     }
 
-    const script_file = try openFile(flag);
+    const script_file = try abi.fs.openFileAbsolute(flag, .{});
     defer script_file.close();
 
     const script_file_len = try script_file.getSize();
@@ -77,21 +77,6 @@ const Prompt = struct {
         }
     }
 };
-
-fn openFile(path: []const u8) !caps.Frame {
-    const file_resp = try abi.lpc.call(
-        abi.VfsProtocol.OpenFileRequest,
-        .{ .path = abi.fs.Path.new(
-            path,
-        ) catch unreachable, .open_opts = .{
-            .mode = .read_only,
-            .file_policy = .use_existing,
-            .dir_policy = .use_existing,
-        } },
-        caps.COMMON_VFS,
-    );
-    return try file_resp.asErrorUnion();
-}
 
 fn runInteractive(
     stdin: abi.io.File.Reader,

@@ -377,13 +377,6 @@ pub const PmProtocol = struct {
 };
 
 pub const VfsProtocol = struct {
-    pub const DirEnt = struct {};
-
-    pub const DirEnts = struct {
-        data: caps.Frame,
-        count: usize,
-    };
-
     pub const OpenFileRequest = struct {
         path: fs.Path,
         open_opts: fs.OpenOptions,
@@ -396,7 +389,7 @@ pub const VfsProtocol = struct {
         path: fs.Path,
         open_opts: fs.OpenOptions,
 
-        pub const Response = Result(DirEnts, sys.ErrorEnum);
+        pub const Response = Result(fs.Dir, sys.ErrorEnum);
         pub const Union = Request;
     };
 
