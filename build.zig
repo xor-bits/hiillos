@@ -369,6 +369,8 @@ fn createInitfsTarZstAssets(
     defer walker.deinit();
 
     while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+
         _ = initfs.addCopyFile(
             try b.path("asset").join(b.allocator, entry.path),
             entry.path,
