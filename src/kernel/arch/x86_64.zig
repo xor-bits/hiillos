@@ -827,6 +827,8 @@ pub const Idt = extern struct {
             fn handler(interrupt_stack_frame: *const InterruptStackFrame) void {
                 if (conf.LOG_EXCEPTIONS) log.debug("invalid opcode interrupt", .{});
 
+                while (conf.DEBUG_UNHANDLED_FAULT) {}
+
                 log.err("invalid opcode\nframe: {any}", .{interrupt_stack_frame});
                 std.debug.panic("unhandled CPU exception", .{});
             }
@@ -909,6 +911,8 @@ pub const Idt = extern struct {
                     trap.rip,
                     trap.rsp,
                 });
+
+                while (conf.DEBUG_UNHANDLED_FAULT) {}
 
                 const thread = cpuLocal().current_thread.?;
                 thread.status = .stopped;

@@ -37,6 +37,8 @@ pub const KERNEL_PANIC_SOURCE_INFO: bool = IS_DEBUG or false;
 pub const KERNEL_PANIC_ON_HIGH_REFCNT: usize = 0;
 pub const ANTI_TLB_MODE: bool = false;
 pub const NO_LAZY_REMAP: bool = false;
+/// freeze the kernel when an unhandled user-space fault happens, for easier debugging with gdb
+pub const DEBUG_UNHANDLED_FAULT: bool = false;
 
 pub const IPC_BENCHMARK: bool = false;
 pub const SCHED_STRESS_TEST: bool = false;

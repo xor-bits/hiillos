@@ -239,6 +239,8 @@ pub const Thread = struct {
 
         self.proc.vmem.dump();
 
+        while (conf.DEBUG_UNHANDLED_FAULT) {}
+
         proc.enter();
     }
 };
