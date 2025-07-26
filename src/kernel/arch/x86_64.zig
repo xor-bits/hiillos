@@ -883,10 +883,9 @@ pub const Idt = extern struct {
         // general protection fault
         entries[13] = Entry.generateTrapWithEc(struct {
             fn handler(trap: *TrapRegs) void {
-                const is_user = trap.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (conf.LOG_EXCEPTIONS) log.debug("general protection fault interrupt", .{});
 
-                if (!is_user or cpuLocal().current_thread == null) std.debug.panic(
+                if (!trap.isUser() or cpuLocal().current_thread == null) std.debug.panic(
                     \\unhandled general protection fault (0x{x})
                     \\ - user: {any}
                     \\ - ip: 0x{x}
@@ -895,7 +894,7 @@ pub const Idt = extern struct {
                     \\{}
                 , .{
                     trap.error_code,
-                    is_user,
+                    trap.isUser(),
                     trap.rip,
                     trap.rsp,
                     logs.Addr2Line{ .addr = trap.rip },
@@ -1553,6 +1552,10 @@ pub const TrapRegs = extern struct {
     rsp: u64 = 0,
     /// stack(data) privilege level before the interrupt
     stack_segment_selector: u16 = GdtDescriptor.user_data_selector,
+
+    fn isUser(self: *const @This()) bool {
+        return self.code_segment_selector == GdtDescriptor.user_code_selector;
+    }
 
     pub fn readMessage(self: *const @This()) abi.sys.Message {
         return @bitCast([6]u64{
