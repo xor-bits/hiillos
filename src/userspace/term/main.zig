@@ -290,6 +290,7 @@ pub const Terminal = struct {
             },
             else => {
                 self.cursor.x += 1;
+                self.wrapCursor();
 
                 if (self.terminal_buf_front.len == 0) return;
                 self.terminal_buf_front[self.cursor.x + self.cursor.y * self.size.width] = byte;
