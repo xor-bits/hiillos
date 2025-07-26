@@ -334,6 +334,11 @@ fn partsFromUri(uri: []const u8) Error!struct {
 } {
     log.debug("partsFromUri({s})", .{uri});
 
+    if (std.mem.startsWith(u8, uri, "/")) return .{
+        .scheme = "fs:///",
+        .path = uri,
+    };
+
     var it = std.mem.splitSequence(u8, uri, "://");
     const scheme = it.next() orelse
         return Error.NotFound;
