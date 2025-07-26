@@ -1,6 +1,10 @@
 const std = @import("std");
 
+const abi = @import("lib.zig");
 const caps = @import("caps.zig");
+const io = @import("io.zig");
+const lpc = @import("lpc.zig");
+const process = @import("process.zig");
 const sys = @import("sys.zig");
 
 const Error = sys.Error;
@@ -84,7 +88,7 @@ pub const path = struct {
 };
 
 pub const OpenOptions = packed struct {
-    mode: Mode = .read_write,
+    mode: Mode = .read_only,
     file_policy: MissingPolicy = .use_existing,
     dir_policy: MissingPolicy = .use_existing,
     _: u2 = 0,
@@ -313,3 +317,58 @@ pub const Dir = struct {
         }
     };
 };
+
+pub fn openFileAbsolute(
+    absolute_path: []const u8,
+    flags: OpenOptions,
+) sys.Error!caps.Frame {
+    return try openFileAbsoluteWith(absolute_path, flags, caps.COMMON_VFS);
+}
+
+pub fn openFileAbsoluteWith(
+    absolute_path: []const u8,
+    flags: OpenOptions,
+    vfs_server: caps.Sender,
+) sys.Error!caps.Frame {
+    const file_resp = try lpc.call(
+        abi.VfsProtocol.OpenFileRequest,
+        .{
+            .path = abi.fs.Path.new(absolute_path) catch unreachable,
+            .open_opts = flags,
+        },
+        vfs_server,
+    );
+    return try file_resp.asErrorUnion();
+}
+
+pub fn openDirAbsolute(
+    absolute_path: []const u8,
+    flags: OpenOptions,
+) sys.Error!Dir {
+    return try openDirAbsoluteWith(absolute_path, flags, caps.COMMON_VFS);
+}
+
+pub fn openDirAbsoluteWith(
+    absolute_path: []const u8,
+    flags: OpenOptions,
+    vfs_server: caps.Sender,
+) sys.Error!Dir {
+    const result = try abi.lpc.call(abi.VfsProtocol.OpenDirRequest, .{
+        .path = try abi.fs.Path.new(absolute_path),
+        .open_opts = flags,
+    }, vfs_server);
+    return try result.asErrorUnion();
+}
+
+pub fn openSelfExe() sys.Error!io.File {
+    return try openSelfExeWith(caps.COMMON_VFS);
+}
+
+pub fn openSelfExeWith(
+    vfs_server: caps.Sender,
+) sys.Error!caps.Frame {
+    var it = process.args();
+    const self_exe_path = it.next().?;
+
+    return openFileAbsoluteWith(self_exe_path, .{}, vfs_server);
+}
