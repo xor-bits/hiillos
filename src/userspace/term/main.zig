@@ -239,7 +239,7 @@ pub const Terminal = struct {
         }
 
         if (old_terminal_buf_size != 0) {
-            abi.mem.server_page_allocator.free(self.terminal_buf_back.ptr[0 .. old_terminal_buf_size * 2]);
+            abi.mem.server_page_allocator.free(self.terminal_buf_front.ptr[0 .. old_terminal_buf_size * 2]);
         }
         self.terminal_buf_front = whole_terminal_buf[0..terminal_buf_size];
         self.terminal_buf_back = whole_terminal_buf[terminal_buf_size..];
