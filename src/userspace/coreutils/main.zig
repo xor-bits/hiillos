@@ -13,6 +13,7 @@ pub const Command = enum {
     ls,
     sh,
     sleep,
+    uptime,
     yes,
 };
 
@@ -23,6 +24,7 @@ const commands = .{
     .ls = @import("ls.zig"),
     .sh = @import("sh.zig"),
     .sleep = @import("sleep.zig"),
+    .uptime = @import("uptime.zig"),
     .yes = @import("yes.zig"),
 };
 
