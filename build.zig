@@ -183,14 +183,6 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         },
     }
 
-    std.debug.print("qemu cmd: '", .{});
-    std.debug.print("{s}", .{qemu_step.argv.items[0].bytes});
-    for (qemu_step.argv.items) |arg| switch (arg) {
-        .bytes => |s| std.debug.print(" {s}", .{s}),
-        else => std.debug.print(" <..>", .{}),
-    };
-    std.debug.print("'\n", .{});
-
     const run_step = b.step("run", "Run in QEMU");
     run_step.dependOn(&qemu_step.step);
     run_step.dependOn(b.getInstallStep());
