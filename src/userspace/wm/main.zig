@@ -37,6 +37,7 @@ const WindowNode = std.DoublyLinkedList(Window).Node;
 pub fn main() !void {
     try abi.process.init();
     try abi.io.init();
+    abi.sys.selfIdentify("wm-main");
 
     log.info("hello from wm", .{});
 
@@ -190,6 +191,7 @@ fn compositorThreadMain() !void {
 }
 
 fn inputThreadMain(input: caps.Sender) !void {
+    abi.sys.selfIdentify("wm-io");
     while (true) {
         const ev_result = try abi.lpc.call(
             abi.Ps2Protocol.Next,
@@ -208,6 +210,7 @@ fn inputThreadMain(input: caps.Sender) !void {
 }
 
 fn connectionThreadMain(rx: caps.Receiver) !void {
+    abi.sys.selfIdentify("wm-listener");
     abi.lpc.daemon(ConnectionContext{
         .recv = rx,
     });

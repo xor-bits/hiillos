@@ -53,6 +53,7 @@ pub const Thread = struct {
     /// controlled by Receiver and Sender
     extra_regs: std.MultiArrayList(CapOrVal) = .{},
     exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
+    identifier: [16]u8 = ("<unknown>" ++ [1]u8{0} ** 7).*,
 
     pub const CapOrVal = union(enum) {
         cap: caps.CapabilitySlot,
@@ -227,12 +228,14 @@ pub const Thread = struct {
     ) void {
         log.warn(
             \\unhandled page fault 0x{x} (user) ({})
+            \\ - thread: {s}
             \\ - caused by: {}
             \\ - ip: 0x{x}
             \\ - sp: 0x{x}
         , .{
             target_addr,
             reason,
+            self.identifier,
             caused_by,
             ip,
             sp,

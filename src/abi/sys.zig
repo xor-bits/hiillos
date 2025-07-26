@@ -141,6 +141,8 @@ pub const Id = enum(usize) {
     selfStop,
     /// print arch.TrapRegs to serial output
     selfDump,
+    /// give an identifier for this thread
+    self_identify,
     /// set an extra IPC register of this thread
     self_set_extra,
     /// get and zero an extra IPC register of this thread
@@ -866,6 +868,13 @@ pub fn selfStop(code: usize) noreturn {
 
 pub fn selfDump() void {
     _ = syscall(.selfDump, .{}, .{}) catch unreachable;
+}
+
+/// names get truncated to a maximum of 16 letters
+pub fn selfIdentify(name: []const u8) void {
+    var data: [2]u64 = .{ 0, 0 };
+    std.mem.copyForwards(u8, std.mem.asBytes(&data), name[0..@min(16, name.len)]);
+    _ = syscall(.self_identify, .{ data[0], data[1] }, .{}) catch unreachable;
 }
 
 pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };

@@ -881,6 +881,13 @@ fn handle_syscall(
         .selfDump => {
             log.info("selfDump: {}", .{trap.*});
         },
+        .self_identify => {
+            thread.identifier = @bitCast([2]u64{
+                trap.arg0,
+                trap.arg1,
+            });
+            trap.syscall_id = abi.sys.encode(0);
+        },
         .self_set_extra => {
             const idx: u7 = @truncate(trap.arg0);
             const val: u64 = @truncate(trap.arg1);
