@@ -105,6 +105,11 @@ fn runInteractive(
             continue;
         }
 
+        // TODO:
+        // if (ch == '\t') { // tab complete
+        //     continue;
+        // }
+
         if (ch != '\n' and command_len < command.len) {
             command[command_len] = ch;
             command_len += 1;
