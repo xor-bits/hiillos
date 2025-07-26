@@ -1062,7 +1062,8 @@ pub const Idt = extern struct {
             fn handler(interrupt_stack_frame: *const InterruptStackFrame) void {
                 if (conf.LOG_EXCEPTIONS) log.debug("simd fp exception interrupt", .{});
 
-                log.err("simd fp exception\nframe: {any}", .{interrupt_stack_frame});
+                const mxcsr = MxCsr.read();
+                log.err("simd fp exception: {}\nframe: {any}", .{ mxcsr, interrupt_stack_frame });
                 std.debug.panic("unhandled CPU exception", .{});
             }
         }).asInt();
@@ -1471,13 +1472,21 @@ pub const InterruptStackFrame = extern struct {
 };
 
 pub const FxRegs = extern struct {
-    fpu_instruction_pointer_offset: u64 = 0,
-    fpu_opcode: u16 = 0,
-    _reserved0: u8 = 0,
-    fpu_tag: u8 = 0,
-    fpu_status: u16 = 0,
     fpu_control: u16 = 0,
-    mxcsr_mask: MxCsr = .{},
+    fpu_status: u16 = 0,
+    fpu_tag: u8 = 0,
+    _reserved0: u8 = 0,
+    fpu_opcode: u16 = 0,
+    fpu_instruction_pointer_offset: u64 = 0,
+    fpu_data_pointer_offset: u64 = 0,
+    mxcsr_mask: MxCsr = .{
+        .invalid_operation_mask = true,
+        .denormal_mask = true,
+        .divide_by_zero_mask = true,
+        .overflow_mask = true,
+        .underflow_mask = true,
+        .precision_mask = true,
+    },
     mxcsr: MxCsr = .{
         .invalid_operation_mask = true,
         .denormal_mask = true,
@@ -1486,7 +1495,6 @@ pub const FxRegs = extern struct {
         .underflow_mask = true,
         .precision_mask = true,
     },
-    fpu_data_pointer_offset: u64 = 0,
     mmx_regs: [8]u128 = [_]u128{0} ** 8,
     xmm_regs: [16]u128 = [_]u128{0} ** 16,
     _reserved1: [3]u128 = [_]u128{0} ** 3,
@@ -1531,6 +1539,27 @@ pub const MxCsr = packed struct {
     } = .nearest,
     flush_to_zero: bool = false,
     _: u16 = 0,
+
+    const Self = @This();
+
+    pub fn write(val: Self) void {
+        const v: u32 = @bitCast(val);
+        asm volatile (
+            \\ ldmxcsr (%[v])
+            :
+            : [v] "m" (v),
+        );
+    }
+
+    pub fn read() Self {
+        var val: u32 = undefined;
+        asm volatile (
+            \\ stmxcsr %[v]
+            :
+            : [v] "m" (&val),
+        );
+        return @bitCast(val);
+    }
 };
 
 pub const TrapRegs = extern struct {
