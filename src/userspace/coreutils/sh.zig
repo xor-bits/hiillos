@@ -166,7 +166,7 @@ fn runLine(
         try stdout.print("could not find command: {s} ({})\n", .{
             cmd, err,
         });
-        return 0;
+        return 1;
     };
 
     const result = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
@@ -181,7 +181,7 @@ fn runLine(
         try stdout.print("unknown command: {s} ({})\n", .{
             cmd, err,
         });
-        return 0;
+        return 1;
     };
 
     return try proc.main_thread.wait();
