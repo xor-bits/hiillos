@@ -578,6 +578,62 @@ pub const Framebuffer = struct {
 
         return try .init(new);
     }
+
+    pub fn image(self: @This(), mapped_fb: []volatile u8) abi.util.Image([]volatile u8) {
+        return .{
+            .width = self.size[0],
+            .height = self.size[1],
+            .pitch = self.pitch,
+            .bits_per_pixel = 32,
+            .pixel_array = mapped_fb,
+        };
+    }
+
+    pub fn map(self: @This(), vmem: caps.Vmem) sys.Error![]volatile u8 {
+        const shmem_size = try self.shmem.getSize(); // less exploitable than using the provided `bytes`
+        const shmem_addr = try vmem.map(
+            self.shmem,
+            0,
+            0,
+            shmem_size,
+            .{ .writable = true },
+            .{},
+        );
+
+        return @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
+    }
+
+    pub fn unmap(self: @This(), vmem: caps.Vmem, fb: []volatile u8) void {
+        _ = self;
+        vmem.unmap(@intFromPtr(fb.ptr), fb.len) catch unreachable;
+    }
+};
+
+pub const MappedFramebuffer = struct {
+    image: abi.util.Image([]volatile u8),
+    fb: Framebuffer,
+
+    pub fn init(fb: Framebuffer, vmem: caps.Vmem) sys.Error!@This() {
+        const pixel_array = try fb.map(vmem);
+        return .{ .image = fb.image(pixel_array), .fb = fb };
+    }
+
+    pub fn deinit(self: @This(), vmem: caps.Vmem) void {
+        self.fb.unmap(vmem, self.image.pixel_array);
+        self.fb.shmem.close();
+    }
+
+    pub fn update(self: *@This(), fb: Framebuffer, vmem: caps.Vmem) sys.Error!void {
+        if (fb.shmem.cap == 0) {
+            const old_shmem = self.fb.shmem;
+            self.fb = fb;
+            self.fb.shmem = old_shmem;
+            self.image = fb.image(self.image.pixel_array);
+        } else {
+            self.deinit(vmem);
+            self.* = try .init(fb, vmem);
+        }
+    }
 };
 
 pub const WindowEvent = struct {
