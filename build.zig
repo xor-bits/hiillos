@@ -385,7 +385,9 @@ fn createInitfsTarZstAssets(
 }
 
 fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {
-    var dir = try std.fs.cwd().openDir(sub_path, .{ .iterate = true });
+    const dir_path = b.path(sub_path).getPath3(b, null);
+
+    var dir = try dir_path.openDir("", .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(b.allocator);
