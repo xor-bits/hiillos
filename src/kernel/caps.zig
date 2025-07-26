@@ -269,18 +269,19 @@ pub const Capability = struct {
             log.warn("slow kernel object refcnt access", .{});
             // FIXME: prevent reordering so that the offset would be same on all objects
             return switch (self.type) {
-                .frame => &self.as(Frame).?.ptr.refcnt,
-                .vmem => &self.as(Vmem).?.ptr.refcnt,
-                .process => &self.as(Process).?.ptr.refcnt,
-                .thread => &self.as(Thread).?.ptr.refcnt,
-                .receiver => &self.as(Receiver).?.ptr.refcnt,
-                .reply => &self.as(Reply).?.ptr.refcnt,
-                .sender => &self.as(Sender).?.ptr.refcnt,
-                .notify => &self.as(Notify).?.ptr.refcnt,
-                .x86_ioport_allocator => &self.as(X86IoPortAllocator).?.ptr.refcnt,
-                .x86_ioport => &self.as(X86IoPort).?.ptr.refcnt,
-                .x86_irq_allocator => &self.as(X86IrqAllocator).?.ptr.refcnt,
-                .x86_irq => &self.as(X86Irq).?.ptr.refcnt,
+                .null => unreachable,
+                .frame => &self.as(Frame).?.refcnt,
+                .vmem => &self.as(Vmem).?.refcnt,
+                .process => &self.as(Process).?.refcnt,
+                .thread => &self.as(Thread).?.refcnt,
+                .receiver => &self.as(Receiver).?.refcnt,
+                .reply => &self.as(Reply).?.refcnt,
+                .sender => &self.as(Sender).?.refcnt,
+                .notify => &self.as(Notify).?.refcnt,
+                .x86_ioport_allocator => &self.as(X86IoPortAllocator).?.refcnt,
+                .x86_ioport => &self.as(X86IoPort).?.refcnt,
+                .x86_irq_allocator => &self.as(X86IrqAllocator).?.refcnt,
+                .x86_irq => &self.as(X86Irq).?.refcnt,
             };
         }
 
