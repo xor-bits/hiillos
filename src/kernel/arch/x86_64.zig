@@ -588,6 +588,8 @@ pub const Tss = extern struct {
         res.privilege_stacks[1] = @sizeOf(Stack) + @intFromPtr(stack);
         stack = try pmem.page_allocator.create(Stack);
         res.interrupt_stacks[0] = @sizeOf(Stack) + @intFromPtr(stack);
+        stack = try pmem.page_allocator.create(Stack);
+        res.interrupt_stacks[1] = @sizeOf(Stack) + @intFromPtr(stack);
 
         return res;
     }
