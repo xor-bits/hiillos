@@ -149,6 +149,7 @@ fn runLine(
     stdout: abi.io.File.Writer,
     raw_cli: []const u8,
 ) !usize {
+    abi.syslog("running '{s}'", .{raw_cli});
     const cli = std.mem.trimRight(u8, raw_cli, " \t\n\r");
 
     if (cli.len == 0) {

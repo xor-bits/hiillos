@@ -106,7 +106,7 @@ pub fn callFn(comptime function: anytype, args: anytype) void {
             switch (info.payload) {
                 void, noreturn => {
                     @call(.auto, function, args) catch |err| {
-                        abi.UnifiedLog.print(.{}, "error: {s}\n", .{@errorName(err)}) catch {};
+                        abi.unilog("error: {s}\n", .{@errorName(err)});
                     };
                 },
                 else => {

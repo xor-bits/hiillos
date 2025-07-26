@@ -226,6 +226,17 @@ pub const BootInfo = extern struct {
 
 //
 
+pub fn unilog(comptime fmt: []const u8, args: anytype) void {
+    var bw = std.io.bufferedWriter(UnifiedLog{});
+    const writer = bw.writer();
+
+    // FIXME: lock the log
+    nosuspend {
+        writer.print(fmt ++ "\n", args) catch return;
+        bw.flush() catch return;
+    }
+}
+
 pub const UnifiedLog = struct {
     pub const Error = error{};
     pub fn write(self: @This(), bytes: []const u8) Error!usize {
@@ -244,6 +255,17 @@ pub const UnifiedLog = struct {
     }
     pub fn flush(_: @This()) Error!void {}
 };
+
+pub fn syslog(comptime fmt: []const u8, args: anytype) void {
+    var bw = std.io.bufferedWriter(SysLog{});
+    const writer = bw.writer();
+
+    // FIXME: lock the log
+    nosuspend {
+        writer.print(fmt ++ "\n", args) catch return;
+        bw.flush() catch return;
+    }
+}
 
 pub const SysLog = struct {
     pub const Error = error{};
