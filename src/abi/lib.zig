@@ -52,17 +52,29 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @branchHint(.cold);
-    const log = std.log.scoped(.panic);
 
     const name = if (@hasDecl(root, "manifest"))
         root.manifest.getName()
     else
         "<unknown>";
-    log.err("{s} panicked: {s}\nstack trace:", .{ name, msg });
-    var iter = std.debug.StackIterator.init(@returnAddress(), @frameAddress());
-    while (iter.next()) |addr| {
-        log.warn("  0x{x}", .{addr});
-    }
+
+    var panic_printer = std.io.bufferedWriter(UnifiedLog{});
+    const writer = panic_printer.writer();
+
+    var iter = std.debug.StackIterator.init(
+        @returnAddress(),
+        @frameAddress(),
+    );
+    debug.printPanic(
+        mem.slab_allocator,
+        writer,
+        name,
+        msg,
+        &iter,
+        getSelfDwarf(),
+        &.{},
+    ) catch {};
+    panic_printer.flush() catch {};
 
     sys.selfStop(0);
 }

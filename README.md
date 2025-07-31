@@ -100,7 +100,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
 
 - [x] user-space
   - [ ] posix abstraction layer, like `open` instead of the manual ipc call
-  - [ ] stack traces with line info
+  - [x] stack traces with line info
 
 - [x] root + initfsd process
   - [x] decompress initfs.tar.zst
