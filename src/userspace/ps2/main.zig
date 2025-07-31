@@ -181,10 +181,8 @@ pub const Controller = struct {
         errdefer self.lock.deinit();
 
         log.debug("disabling keyboard and mouse temporarily", .{});
-        try self.writeCmd(0xa7); // disable mouse
         try self.writeCmd(0xad); // disable keyboard
-
-        log.debug("flushing output", .{});
+        try self.writeCmd(0xa7); // disable mouse
 
         try self.flush();
 
@@ -195,23 +193,27 @@ pub const Controller = struct {
         log.debug("controller config = {}", .{config});
         config.keyboard_translation = .disable;
         config.keyboard_interrupt = .disable;
-        config.keyboard_clock = .enable;
         try self.writeCmd(0x60);
         try self.writeData(@bitCast(config));
 
-        log.debug("checking mouse support", .{});
-        try self.writeCmd(0xa8); // check mouse support
-        try self.writeCmd(0x20);
-        config = @bitCast(try self.readPoll());
-        if (config.mouse_clock == .enable) {
-            log.debug("has mouse", .{});
-            config.mouse_interrupt = .disable;
-            config.mouse_clock = .enable;
-            try self.writeCmd(0xa7);
-            try self.writeCmd(0x60);
-            try self.writeData(@bitCast(config));
-            self.is_dual = true;
-        }
+        self.ackKeyboard() catch {};
+        self.ackMouse() catch {};
+
+        // log.debug("checking mouse support", .{});
+        // try self.writeCmd(0xa8); // check mouse support
+        // try self.writeCmd(0x20);
+        // config = @bitCast(try self.readPoll());
+        // if (config.mouse_clock == .enable) {
+        //     log.debug("has mouse", .{});
+        //     config.mouse_interrupt = .disable;
+        //     config.mouse_clock = .disable;
+        //     try self.writeCmd(0xa7);
+        //     try self.writeCmd(0x60);
+        //     try self.writeData(@bitCast(config));
+        //     self.is_dual = true;
+        // }
+        // the above is too unreliable
+        self.is_dual = true;
 
         log.debug("keyboard self test", .{});
         try self.writeCmd(0xab);
@@ -243,17 +245,20 @@ pub const Controller = struct {
         log.debug("disable output", .{});
         try self.flush();
         try keyboard.Keyboard.disableOutput(&self);
-        try mouse.Mouse.disableOutput(&self);
+        if (self.is_dual)
+            try mouse.Mouse.disableOutput(&self);
 
         log.debug("reset keyboard and mouse", .{});
         try self.flush();
         try keyboard.Keyboard.reset(&self);
-        try mouse.Mouse.reset(&self);
+        if (self.is_dual)
+            try mouse.Mouse.reset(&self);
 
         log.debug("disable output", .{});
         try self.flush();
         try keyboard.Keyboard.disableOutput(&self);
-        try mouse.Mouse.disableOutput(&self);
+        if (self.is_dual)
+            try mouse.Mouse.disableOutput(&self);
 
         try self.flush();
         return self;
@@ -294,6 +299,7 @@ pub const Controller = struct {
 
     /// discard all data output
     pub fn flush(self: *@This()) !void {
+        log.debug("flushing output", .{});
         while (try self.read()) |_| {}
     }
 
