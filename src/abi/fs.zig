@@ -367,7 +367,7 @@ pub fn openDirAbsoluteWith(
     return try result.asErrorUnion();
 }
 
-pub fn openSelfExe() sys.Error!io.File {
+pub fn openSelfExe() sys.Error!caps.Frame {
     return try openSelfExeWith(caps.COMMON_VFS);
 }
 

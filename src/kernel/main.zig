@@ -128,11 +128,6 @@ pub fn main() noreturn {
     };
     for (all_cpu_locals) |*locals| locals.initialized.store(false, .release);
 
-    log.info("initializing DWARF info", .{});
-    logs.init() catch |err| {
-        std.debug.panic("failed to initialize DWARF info: {}", .{err});
-    };
-
     // boot up a few processors
     arch.smpInit();
 

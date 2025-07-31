@@ -5,6 +5,7 @@ const root = @import("root");
 pub const btree = @import("btree.zig");
 pub const caps = @import("caps.zig");
 pub const conf = @import("conf.zig");
+pub const debug = @import("debug.zig");
 pub const epoch = @import("epoch.zig");
 pub const escape = @import("escape.zig");
 pub const font = @import("font");
@@ -64,6 +65,46 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     }
 
     sys.selfStop(0);
+}
+
+var self_exe: sys.Error![]const u8 = undefined;
+var self_exe_once: lock.Once(lock.YieldMutex) = .new();
+
+fn getSelfDwarf() !std.debug.Dwarf {
+    return debug.getSelfDwarf(mem.slab_allocator, try loadSelfExe());
+}
+
+fn loadSelfExe() sys.Error![]const u8 {
+    if (self_exe_once.tryRun()) {
+        self_exe = tryLoadSelfExe();
+        self_exe_once.complete();
+    } else {
+        self_exe_once.wait();
+    }
+
+    return try self_exe;
+}
+
+fn tryLoadSelfExe() sys.Error![]const u8 {
+    if (@hasDecl(root, "manifest"))
+        return sys.Error.NotFound;
+
+    const vmem = try caps.Vmem.self();
+    defer vmem.close();
+
+    const frame = try fs.openSelfExe();
+    const size = try frame.getSize();
+
+    const addr = try vmem.map(
+        frame,
+        0,
+        0,
+        size,
+        .{},
+        .{},
+    );
+
+    return @as([*]const u8, @ptrFromInt(addr))[0..size];
 }
 
 //
