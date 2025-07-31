@@ -7,6 +7,7 @@ const caps = abi.caps;
 
 const log = std.log.scoped(.vfs);
 const Error = abi.sys.Error;
+pub const log_level = .info;
 
 //
 
