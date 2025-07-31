@@ -42,9 +42,7 @@ pub fn main(ctx: Ctx) !void {
     };
 
     const nanos: u128 = @intFromFloat(time_num * factor * 1_000_000_000.0);
-
-    const hpet = abi.HpetProtocol.Client().init(caps.Sender{ .cap = 2 });
-    _ = try hpet.call(.sleep, .{nanos});
+    abi.time.sleep(nanos);
 }
 
 fn help() !void {

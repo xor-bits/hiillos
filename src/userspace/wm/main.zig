@@ -177,15 +177,14 @@ fn exec(path: []const u8) !void {
 
 fn compositorThreadMain() !void {
     const frametime_ns: u32 = 16_666_667;
-    const _nanos = try abi.caps.COMMON_HPET.call(.timestamp, {});
-    var nanos: u128 = _nanos.@"0";
+    var nanos = abi.time.nanoTimestamp();
     while (true) {
         system_lock.lock();
         system.draw();
         system_lock.unlock();
 
         nanos += frametime_ns;
-        _ = abi.caps.COMMON_HPET.call(.sleepDeadline, .{nanos}) catch break;
+        abi.time.sleepDeadline(nanos);
     }
 }
 

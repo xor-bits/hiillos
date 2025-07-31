@@ -134,8 +134,7 @@ fn framebufferSplash(
     const mid_x = width / 2;
     const mid_y = height / 2;
 
-    const _nanos = try abi.caps.COMMON_HPET.call(.timestamp, {});
-    var nanos: u128 = _nanos.@"0";
+    var nanos = abi.time.nanoTimestamp();
     var phase: i128 = 0;
     while (true) {
         drawFrame(
@@ -147,7 +146,7 @@ fn framebufferSplash(
 
         phase += dir.load(.monotonic) * frametime_ns;
         nanos += frametime_ns;
-        _ = abi.caps.COMMON_HPET.call(.sleepDeadline, .{nanos}) catch break;
+        abi.time.sleepDeadline(nanos);
     }
 }
 

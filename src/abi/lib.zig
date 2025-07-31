@@ -17,6 +17,7 @@ pub const lpc = @import("lpc.zig");
 pub const mem = @import("mem.zig");
 pub const process = @import("process.zig");
 pub const ring = @import("ring.zig");
+pub const time = @import("time.zig");
 pub const rt = @import("rt.zig");
 pub const sys = @import("sys.zig");
 pub const thread = @import("thread.zig");

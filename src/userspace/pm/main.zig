@@ -161,7 +161,7 @@ pub const System = struct {
         id = try proc.giveHandle(try caps.Sender.create(system.recv, pid));
         std.debug.assert(id == caps.COMMON_PM.cap);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_hpet.handle }).clone());
-        std.debug.assert(id == caps.COMMON_HPET.tx.cap);
+        std.debug.assert(id == caps.COMMON_HPET.cap);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_ps2.handle }).clone());
         std.debug.assert(id == caps.COMMON_PS2.cap);
 

@@ -13,7 +13,7 @@ pub const ROOT_X86_IOPORT_ALLOCATOR: X86IoPortAllocator = .{ .cap = 5 };
 pub const ROOT_X86_IRQ_ALLOCATOR: X86IrqAllocator = .{ .cap = 6 };
 
 pub const COMMON_PM = Sender{ .cap = 1 };
-pub const COMMON_HPET = abi.HpetProtocol.Client().init(.{ .cap = 2 });
+pub const COMMON_HPET = Sender{ .cap = 2 };
 pub const COMMON_PS2 = Sender{ .cap = 3 };
 pub const COMMON_VFS = Sender{ .cap = 4 };
 pub const COMMON_ARG_MAP = Frame{ .cap = 5 };

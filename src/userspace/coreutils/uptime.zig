@@ -7,9 +7,7 @@ const Ctx = @import("main.zig").Ctx;
 //
 
 pub fn main(_: Ctx) !void {
-    const hpet = abi.HpetProtocol.Client().init(caps.Sender{ .cap = 2 });
-    const result = try hpet.call(.timestamp, {});
-    const nanos = result.@"0";
+    const nanos = abi.time.nanoTimestamp();
 
     const uptime_secs = nanos / 1_000_000_000;
     const uptime_mins = uptime_secs / 60;
