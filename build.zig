@@ -7,6 +7,7 @@ const Opts = struct {
     user_target: std.Build.ResolvedTarget,
     kernel_target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    optimize_root: std.builtin.OptimizeMode,
     display: bool,
     debug: u2,
     use_ovmf: bool,
@@ -50,11 +51,16 @@ fn options(b: *std.Build) Opts {
         .cpu_features_sub = disabled_features,
     });
 
+    const optimize = b.standardOptimizeOption(.{});
+
     return .{
         .native_target = b.standardTargetOptions(.{}),
         .user_target = user_target,
         .kernel_target = kernel_target,
-        .optimize = b.standardOptimizeOption(.{}),
+        .optimize = optimize,
+
+        .optimize_root = b.option(std.builtin.OptimizeMode, "optimize_root", "optimization level for root and initfsd") orelse
+            optimize,
 
         // QEMU gui true/false
         .display = b.option(bool, "display", "QEMU gui true/false") orelse
@@ -515,7 +521,7 @@ fn createRootBin(
         .name = "root",
         .root_source_file = b.path("src/userspace/root/main.zig"),
         .target = opts.user_target,
-        .optimize = opts.optimize,
+        .optimize = opts.optimize_root,
     });
     root_elf_step.root_module.addImport("abi", abi);
     root_elf_step.setLinkerScript(b.path("src/userspace/root/link.ld"));
