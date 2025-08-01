@@ -89,6 +89,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
         - [ ] use a multi-level tree to store the pages, like how hardware page tables do it
         - [ ] custom Frames where the creator provides data on page faults and gets notified when all other handles are closed
         - [ ] set_size
+        - [ ] 2MiB and 1GiB pages
       - [x] Receiver
       - [x] Reply
       - [x] Sender
@@ -99,7 +100,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
     - [x] method call tracker
 
 - [x] user-space
-  - [ ] posix abstraction layer, like `open` instead of the manual ipc call
+  - [x] posix abstraction layer, like `open` instead of the manual ipc call
   - [x] stack traces with line info
 
 - [x] root + initfsd process
@@ -109,14 +110,13 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
     - [x] imports
     - [x] exports
   - [x] execute servers
-  - [ ] grant server imports and exports
-  - [ ] execute initfs:///sbin/init and give it a capability to IPC with the initfs
+  - [x] grant server imports and exports
 
 - [x] initfs:///sbin/pm server process
-  - [ ] handles individual processes and their threads
+  - [x] executes processes and gives them capabilities
 
 - [x] initfs:///sbin/vfs server process
-  - [ ] create fs://
+  - [x] create fs://
   - [ ] exec required root filesystem drivers
   - [ ] read /etc/fstab before mounting root (root= kernel cli arg)
   - [ ] mount everything according to /etc/fstab
@@ -125,7 +125,7 @@ zig build run --prominent-compile-errors --summary none -freference-trace \
 - [x] initfs:///sbin/init process
   - [ ] launch initfs:///sbin/rngd
   - [ ] launch initfs:///sbin/vfsd
-  - [ ] launch services from initfs://
+  - [x] launch services from initfs://
 <!---
   - [ ] launch /bin/wm
 -->
