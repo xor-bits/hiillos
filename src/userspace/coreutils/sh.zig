@@ -88,6 +88,8 @@ fn runInteractive(
     var command: [0x100]u8 = undefined;
     var command_len: usize = 0;
 
+    var has_suggestions = false;
+
     try stdout.print("{}", .{Prompt{}});
 
     const programs, const names = try findAvailPrograms(abi.mem.slab_allocator, path);
@@ -96,6 +98,16 @@ fn runInteractive(
 
     while (true) {
         const ch = try stdin.readSingle();
+
+        if (has_suggestions) {
+            has_suggestions = false;
+            try stdout.print("{}{}{}{}", .{
+                abi.escape.cursorPush(),
+                abi.escape.cursorNextLine(1),
+                abi.escape.eraseInDisplay(.cursor_to_end),
+                abi.escape.cursorPop(),
+            });
+        }
 
         if (std.ascii.isPrint(ch) or ch == '\n') {
             try stdout.writeAll(&.{ch});
@@ -118,15 +130,26 @@ fn runInteractive(
 
             try stdout.print("{}{}", .{
                 abi.escape.cursorPush(),
-                abi.escape.cursorDown(1),
+                abi.escape.cursorNextLine(1),
             });
             for (programs) |avail_program| {
                 if (!std.mem.startsWith(u8, avail_program, cmd_hint)) continue;
-
                 try stdout.print("{s} ", .{avail_program});
             }
             try stdout.print("{}", .{
                 abi.escape.cursorPop(),
+            });
+            has_suggestions = true;
+            if (getPrefix(programs, cmd_hint)) |autocomplete| {
+                const limited_autocomplete = autocomplete[0..@min(autocomplete.len, command.len)];
+                std.mem.copyForwards(u8, command[0..], limited_autocomplete);
+                command_len = limited_autocomplete.len;
+            }
+            try stdout.print("{}{}{}{s}", .{
+                abi.escape.cursorNextLine(1),
+                abi.escape.cursorPrevLine(1),
+                Prompt{},
+                command[0..command_len],
             });
 
             continue;
@@ -145,6 +168,28 @@ fn runInteractive(
 
         try stdout.print("\n{}", .{Prompt{}});
     }
+}
+
+/// find the maximum prefix of all strings that start with (at least) `starts_with`
+/// ex: `getPrefix(&.{ "abc0", "abc", "abc1", "def" }, "ab") -> "abc"`
+fn getPrefix(strings: []const []const u8, starts_with: []const u8) ?[]const u8 {
+    if (strings.len == 0) return null;
+
+    var current: ?[]const u8 = null;
+    for (strings[0..]) |next| {
+        if (!std.mem.startsWith(u8, next, starts_with)) continue;
+
+        const cur = current orelse {
+            current = next;
+            continue;
+        };
+
+        const idx = std.mem.indexOfDiff(u8, cur, next) orelse cur.len;
+        current = cur[0..idx];
+        if (idx == 0) return null;
+    }
+
+    return current;
 }
 
 fn findAvailPrograms(
