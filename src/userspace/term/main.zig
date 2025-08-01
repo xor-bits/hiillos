@@ -83,6 +83,14 @@ pub fn main() !void {
             .cursor_down => term.cursor.y +|= 1,
             .cursor_right => term.cursor.x +|= 1,
             .cursor_left => term.cursor.x -|= 1,
+            .cursor_next_line => |count| {
+                term.cursor.y +|= std.math.lossyCast(u32, count);
+                term.cursor.x = 0;
+            },
+            .cursor_prev_line => |count| {
+                term.cursor.y -|= std.math.lossyCast(u32, count);
+                term.cursor.x = 0;
+            },
             .cursor_push => term.cursor_store = term.cursor,
             .cursor_pop => term.cursor = term.cursor_store,
         }

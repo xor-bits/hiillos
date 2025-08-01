@@ -136,6 +136,14 @@ pub fn main() !void {
             .cursor_down => tty.cursor.y +|= 1,
             .cursor_right => tty.cursor.x +|= 1,
             .cursor_left => tty.cursor.x -|= 1,
+            .cursor_next_line => |count| {
+                tty.cursor.y +|= std.math.lossyCast(u32, count);
+                tty.cursor.x = 0;
+            },
+            .cursor_prev_line => |count| {
+                tty.cursor.y -|= std.math.lossyCast(u32, count);
+                tty.cursor.x = 0;
+            },
             .cursor_push => tty.cursor_store = tty.cursor,
             .cursor_pop => tty.cursor = tty.cursor_store,
         }

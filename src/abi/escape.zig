@@ -69,12 +69,7 @@ pub fn Parser(comptime T: type) type {
                             continue :state .csi;
                         },
                         'm' => continue :state .cmd_sgr,
-                        'A' => continue :state .cmd_cursor,
-                        'B' => continue :state .cmd_cursor,
-                        'C' => continue :state .cmd_cursor,
-                        'D' => continue :state .cmd_cursor,
-                        's' => continue :state .cmd_cursor,
-                        'u' => continue :state .cmd_cursor,
+                        'A'...'F', 's', 'u' => continue :state .cmd_cursor,
                         else => continue :state .restart,
                     }
                 },
@@ -135,6 +130,8 @@ pub fn Parser(comptime T: type) type {
                         'B' => return .{ .cursor_down = count },
                         'C' => return .{ .cursor_right = count },
                         'D' => return .{ .cursor_left = count },
+                        'E' => return .{ .cursor_next_line = count },
+                        'F' => return .{ .cursor_prev_line = count },
                         's' => return .cursor_push,
                         'u' => return .cursor_pop,
                         else => continue :state .restart,
@@ -214,6 +211,14 @@ pub fn cursorLeft(count: usize) Control {
     return .{ .cursor_left = count };
 }
 
+pub fn cursorNextLine(count: usize) Control {
+    return .{ .cursor_next_line = count };
+}
+
+pub fn cursorPrevLine(count: usize) Control {
+    return .{ .cursor_prev_line = count };
+}
+
 pub fn cursorPush() Control {
     return .cursor_push;
 }
@@ -241,6 +246,10 @@ pub const Control = union(enum) {
     cursor_right: usize,
     /// \x1b[<n>D
     cursor_left: usize,
+    /// \x1b[<n>E
+    cursor_next_line: usize,
+    /// \x1b[<n>F
+    cursor_prev_line: usize,
 
     /// \x1b[s
     cursor_push,
@@ -292,6 +301,16 @@ pub const Control = union(enum) {
             .cursor_left => |c| try std.fmt.format(
                 writer,
                 "\x1b[{}D",
+                .{c},
+            ),
+            .cursor_next_line => |c| try std.fmt.format(
+                writer,
+                "\x1b[{}E",
+                .{c},
+            ),
+            .cursor_prev_line => |c| try std.fmt.format(
+                writer,
+                "\x1b[{}F",
                 .{c},
             ),
 
