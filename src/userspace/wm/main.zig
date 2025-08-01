@@ -35,8 +35,7 @@ const WindowNode = std.DoublyLinkedList(Window).Node;
 //
 
 pub fn main() !void {
-    try abi.process.init();
-    try abi.io.init();
+    try abi.rt.init();
 
     log.info("hello from wm", .{});
 

@@ -121,6 +121,10 @@ pub const Thread = extern struct {
     pub fn wait(this: @This()) sys.Error!usize {
         return try sys.threadWait(this.cap);
     }
+
+    pub fn threadSetSigHandler(this: @This(), ip: usize) sys.Error!void {
+        return try sys.threadSetSigHandler(this.cap, ip);
+    }
 };
 
 /// capability to the virtual memory structure

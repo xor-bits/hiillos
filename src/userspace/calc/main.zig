@@ -155,8 +155,7 @@ const Calculator = struct {
 };
 
 pub fn main() !void {
-    try abi.process.init();
-    try abi.io.init();
+    try abi.rt.init();
 
     const vmem = try caps.Vmem.self();
     defer vmem.close();

@@ -197,8 +197,16 @@ pub const Sender = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
+    pub fn clone(self: *@This()) *@This() {
+        if (conf.LOG_OBJ_CALLS)
+            log.info("Sender.clone", .{});
+
+        self.refcnt.inc();
+        return self;
+    }
+
     // block until the receiver is free, then switch to the receiver
-    pub fn call(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs, msg: abi.sys.Message) Error!void {
+    pub fn call(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs, msg: abi.sys.Message) void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Sender.call {}", .{msg});
 

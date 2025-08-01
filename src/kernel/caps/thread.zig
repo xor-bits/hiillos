@@ -38,6 +38,7 @@ pub const Thread = struct {
         ipc_recv,
         ipc_call0,
         ipc_call1,
+        signal,
     } = .none,
     exit_code: usize = 0,
     /// scheduler linked list
@@ -53,6 +54,10 @@ pub const Thread = struct {
     /// controlled by Receiver and Sender
     extra_regs: std.MultiArrayList(CapOrVal) = .{},
     exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
+    /// signal handler instruction pointer
+    signal_handler: usize = 0,
+    /// if a signal handler is running, this is the return address
+    signal: ?abi.sys.Signal = null,
 
     pub const CapOrVal = union(enum) {
         cap: caps.CapabilitySlot,
@@ -225,6 +230,18 @@ pub const Thread = struct {
         reason: anyerror,
         trap: *arch.TrapRegs,
     ) void {
+        if (self.signal_handler != 0) {
+            self.signal = abi.sys.Signal{
+                .ip = ip,
+                .sp = sp,
+                .target_addr = target_addr,
+                .caused_by = caused_by,
+                .signal = .segv,
+            };
+            trap.rip = self.signal_handler;
+            return;
+        }
+
         log.warn(
             \\unhandled page fault 0x{x} (user) ({})
             \\ - caused by: {}

@@ -72,6 +72,8 @@ pub const Id = enum(usize) {
     thread_set_prio,
     /// wait for the exit code from the given `Thread`
     thread_wait,
+    /// set `Thread` signal handler instruction pointer, the handler is like a hardware interrupt handler
+    thread_set_sig_handler,
 
     /// create a new `Receiver` object that is the receiver end of a new IPC queue
     receiver_create,
@@ -145,6 +147,8 @@ pub const Id = enum(usize) {
     self_set_extra,
     /// get and zero an extra IPC register of this thread
     self_get_extra,
+    /// get active signal handler return address
+    self_get_signal,
 };
 
 /// capability or mapping rights
@@ -234,7 +238,7 @@ pub const MapFlags = packed struct {
 };
 
 /// page fault access cause
-pub const FaultCause = enum(u2) {
+pub const FaultCause = enum(u8) {
     read,
     write,
     exec,
@@ -678,6 +682,8 @@ pub fn threadSelf() Error!u32 {
 }
 
 pub fn threadReadRegs(thread: u32, dst: *ThreadRegs) Error!void {
+    // FIXME: this call can fail with Error.Retry
+
     _ = try syscall(.thread_read_regs, .{
         thread,
         @intFromPtr(dst),
@@ -685,6 +691,8 @@ pub fn threadReadRegs(thread: u32, dst: *ThreadRegs) Error!void {
 }
 
 pub fn threadWriteRegs(thread: u32, dst: *const ThreadRegs) Error!void {
+    // FIXME: this call can fail with Error.Retry
+
     _ = try syscall(.thread_write_regs, .{
         thread,
         @intFromPtr(dst),
@@ -714,6 +722,10 @@ pub fn threadWait(proc: u32) Error!usize {
     var exit_code: usize = undefined;
     _ = try syscall(.thread_wait, .{proc}, .{&exit_code});
     return exit_code;
+}
+
+pub fn threadSetSigHandler(thread: u32, ip: usize) !void {
+    _ = try syscall(.thread_set_sig_handler, .{ thread, ip }, .{});
 }
 
 pub fn receiverCreate() Error!u32 {
@@ -898,6 +910,30 @@ pub fn selfGetExtra(idx: u7) Error!ExtraReg {
     });
 
     return .{ .val = val, .is_cap = is_cap != 0 };
+}
+
+pub const Signal = extern struct {
+    ip: usize,
+    sp: usize,
+    target_addr: usize,
+    caused_by: abi.sys.FaultCause,
+    signal: enum(u8) {
+        sigkill = 9,
+        segv = 11,
+        sigterm = 15,
+        _,
+    },
+
+    _0: u16 = 0,
+    _1: u32 = 0,
+};
+
+pub fn selfGetSignal() Error!Signal {
+    // FIXME: this call can fail with Error.Retry
+
+    var sig: Signal = undefined;
+    _ = try syscall(.self_get_signal, .{@intFromPtr(&sig)}, .{});
+    return sig;
 }
 
 //

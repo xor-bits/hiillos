@@ -37,10 +37,8 @@ pub const Ctx = struct {
 //
 
 pub fn main() !void {
+    try abi.rt.init();
     // std.log.info("hello from coreutils", .{});
-
-    try abi.process.init();
-    try abi.io.init();
 
     var args = abi.process.args();
     const cmd_name = std.fs.path.basename(args.next().?);

@@ -8,8 +8,7 @@ const log = std.log.scoped(.term);
 //
 
 pub fn main() !void {
-    try abi.process.init();
-    try abi.io.init();
+    try abi.rt.init();
 
     term_lock = try .new();
     term_lock.lock();

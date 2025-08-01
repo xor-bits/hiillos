@@ -690,6 +690,13 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
             target_thread.waitExit(thread, trap);
         },
+        .thread_set_sig_handler => {
+            const target_thread = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
+            defer target_thread.deinit();
+
+            target_thread.signal_handler = trap.arg1;
+            trap.syscall_id = abi.sys.encode(0);
+        },
 
         .receiver_create => {
             const recv = try caps.Receiver.init();
@@ -763,7 +770,7 @@ fn handle_syscall(
             // log.info("set stamp={}", .{sender.stamp});
 
             msg.cap_or_stamp = sender.stamp;
-            try sender.call(thread, trap, msg);
+            sender.call(thread, trap, msg);
         },
 
         .notify_create => {
@@ -914,6 +921,26 @@ fn handle_syscall(
                     trap.syscall_id = abi.sys.encode(0);
                 },
             }
+        },
+        .self_get_signal => {
+            const sig_ptr = try addr.Virt.fromUser(trap.arg0);
+
+            const sig: abi.sys.Signal = thread.signal orelse return Error.NotMapped;
+            var src = copy.SliceConst.fromSingle(&sig);
+            defer src.deinit();
+            var dst = thread.proc.vmem.data(sig_ptr, true);
+            defer dst.deinit();
+
+            var progress: usize = 0;
+            try copy.tryInterAddressSpaceCopy(
+                &src,
+                &dst,
+                @sizeOf(abi.sys.Signal),
+                &progress,
+            );
+
+            thread.signal = null;
+            trap.syscall_id = abi.sys.encode(0);
         },
     }
 }
