@@ -7,13 +7,14 @@ all written in pure Zig
 
 </div>
 
-The plan is for the kernel to be just a scheduler, IPC relay, a physical memory manager and a small virtual memory manager.
+The plan is for the kernel to be just a scheduler, an IPC relay,
+a physical memory manager and a virtual memory manager.
 
 The system design ~~steals~~ borrows ideas from:
  - Zircon: the reference counted capability model
  - seL4: synchronous IPC endpoints and asynchronous signals
- - Minix3: posix compat services, like process manager
- - Plan9/RedoxOS: filesystem URI to reference different services, like fs:///etc/hosts, initfs:///sbin/init, tcp://10.0.0.1:80 or https://archlinux.org
+ - RedoxOS: optional filesystem schema (URI protocol here) to reference different services,
+like fs:///etc/hosts, initfs:///sbin/init, tcp://10.0.0.1:80 or https://archlinux.org
 
 ## Running in QEMU
 
@@ -28,13 +29,6 @@ zig build run -Dtest=true # include custom unit test runner
 
 ```bash
 zig build # generates the os.iso in zig-out/os.iso
-```
-
-### Development environment run cmd
-
-```bash
-zig build run --prominent-compile-errors --summary none -freference-trace \
- -Doptimize=Debug -Duefi=false -Ddebug=1 -Dgdb=false -Ddisplay=true -Dtest=true -Dcpus=1
 ```
 
 ## Stuff included here
@@ -170,5 +164,3 @@ while (true) {
 ![image](https://github.com/user-attachments/assets/a11dbcd1-6afb-4f2f-ba08-40af514a712b)
 <img width="1284" height="832" alt="image" src="https://github.com/user-attachments/assets/d06fa0ee-0bd6-4de0-974f-b77f3d0c226a" />
 <img width="1284" height="832" alt="image" src="https://github.com/user-attachments/assets/13414bbb-5b2e-4db0-9fc2-3461f0be58b6" />
-
-
