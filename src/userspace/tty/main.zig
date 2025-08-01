@@ -161,6 +161,7 @@ pub fn main() !void {
 
 pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
     var shift = false;
+    var ctrl = false;
     while (true) {
         const ev_result = try abi.lpc.call(
             abi.Ps2Protocol.Next,
@@ -177,21 +178,31 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
             .mouse => continue,
         };
 
-        const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
-        if (kb_ev.state == .press and is_shift) shift = true;
-        if (kb_ev.state == .release and is_shift) shift = false;
+        const is_shift = kb_ev.code == .left_shift or kb_ev.code == .right_shift;
+        const is_ctrl = kb_ev.code == .left_control or kb_ev.code == .right_control;
+        if (is_shift) shift = kb_ev.state != .release;
+        if (is_ctrl) ctrl = kb_ev.state != .release;
 
         if (kb_ev.state == .release) continue;
 
-        if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
-            if (std.ascii.isPrint(ch) or ch == '\n') {
+        const ch = if (!shift and !ctrl)
+            kb_ev.code.toChar()
+        else if (shift and !ctrl)
+            kb_ev.code.toCharShift()
+        else if (!shift and ctrl)
+            kb_ev.code.toCharCtrl()
+        else
+            null;
+
+        if (ch) |byte| {
+            if (std.ascii.isPrint(byte) or byte == '\n') {
                 if (ttys[0]) |*tty| {
-                    tty.writeByte(ch);
+                    tty.writeByte(byte);
                     tty.flush();
                 }
             }
 
-            try stdin.push(ch);
+            try stdin.push(byte);
         }
     }
 }

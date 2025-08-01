@@ -503,4 +503,44 @@ pub const KeyCode = enum(u8) {
             else => null,
         };
     }
+
+    pub fn toCharCtrl(self: @This()) ?u8 {
+        const ctrl = @import("std").ascii.control_code;
+        return switch (self) {
+            .key0 => ctrl.nul,
+            .a => ctrl.soh,
+            .b => ctrl.stx,
+            .c => ctrl.etx,
+            .d => ctrl.eot,
+            .e => ctrl.enq,
+            .f => ctrl.ack,
+            .g => ctrl.bel,
+            .h => ctrl.bs,
+            .i => ctrl.ht,
+            .j => ctrl.lf,
+            .k => ctrl.vt,
+            .l => ctrl.ff,
+            .m => ctrl.cr,
+            .n => ctrl.so,
+            .o => ctrl.si,
+            .p => ctrl.dle,
+            .q => ctrl.xon,
+            .r => ctrl.dc1,
+            .s => ctrl.dc3,
+            .t => ctrl.dc4,
+            .u => ctrl.nak,
+            .v => ctrl.syn,
+            .w => ctrl.etb,
+            .x => ctrl.can,
+            .y => ctrl.em,
+            .z => ctrl.sub,
+            .oem4 => ctrl.esc,
+            .oem5 => ctrl.fs,
+            .oem6 => ctrl.gs,
+            .oem1 => ctrl.rs, // missing
+            .oem3 => ctrl.us, // missing
+            .delete => ctrl.del,
+            else => null,
+        };
+    }
 };

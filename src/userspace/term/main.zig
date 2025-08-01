@@ -125,6 +125,7 @@ fn event(sh_stdin: abi.ring.Ring(u8), ev: gui.Event) !void {
 }
 
 var shift: bool = false;
+var ctrl: bool = false;
 fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: gui.WindowEvent) !void {
     switch (ev.event) {
         .resize => |new_fb| {
@@ -136,22 +137,32 @@ fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: gui.WindowEvent) !void {
             };
         },
         .keyboard_input => |kb_ev| {
-            const is_shift = kb_ev.code == .left_shift or kb_ev.code == .left_shift;
-            if (kb_ev.state == .press and is_shift) shift = true;
-            if (kb_ev.state == .release and is_shift) shift = false;
+            const is_shift = kb_ev.code == .left_shift or kb_ev.code == .right_shift;
+            const is_ctrl = kb_ev.code == .left_control or kb_ev.code == .right_control;
+            if (is_shift) shift = kb_ev.state != .release;
+            if (is_ctrl) ctrl = kb_ev.state != .release;
 
             if (kb_ev.state == .release) return;
 
-            if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
-                if (std.ascii.isPrint(ch) or ch == '\n') {
+            const ch = if (!shift and !ctrl)
+                kb_ev.code.toChar()
+            else if (shift and !ctrl)
+                kb_ev.code.toCharShift()
+            else if (!shift and ctrl)
+                kb_ev.code.toCharCtrl()
+            else
+                null;
+
+            if (ch) |byte| {
+                if (std.ascii.isPrint(byte) or byte == '\n') {
                     term_lock.lock();
                     defer term_lock.lock();
 
-                    term.writeByte(ch);
+                    term.writeByte(byte);
                     term.flush(false);
                 }
 
-                try sh_stdin.push(ch);
+                try sh_stdin.push(byte);
             }
         },
         else => {},

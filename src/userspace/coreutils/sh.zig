@@ -109,13 +109,23 @@ fn runInteractive(
             });
         }
 
-        if (ch == 8) { // backspace
+        if (ch == std.ascii.control_code.bs) { // backspace
             if (command_len == 0) continue;
             command_len -= 1;
             command[command_len] = ' ';
             try stdout.print("{} {}", .{
                 abi.escape.cursorLeft(1),
                 abi.escape.cursorLeft(1),
+            });
+            continue;
+        }
+
+        if (ch == std.ascii.control_code.etx) { // ctrl+c
+            if (command_len == 0) continue;
+            command_len -= 1;
+            command[command_len] = ' ';
+            try stdout.print("\n\n{}", .{
+                Prompt{},
             });
             continue;
         }
@@ -151,7 +161,7 @@ fn runInteractive(
             continue;
         }
 
-        if (ch != '\n' and command_len < command.len) {
+        if (std.ascii.isPrint(ch) and command_len < command.len) {
             command[command_len] = ch;
             command_len += 1;
         }
