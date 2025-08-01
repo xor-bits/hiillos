@@ -289,6 +289,7 @@ pub const Dir = struct {
             .vmem = vmem,
             .entries = @as([*]const u8, @ptrFromInt(addr))[0..frame_size],
             .count = self.count,
+            .initial_count = self.count,
             .idx = 0,
         };
     }
@@ -297,6 +298,7 @@ pub const Dir = struct {
         vmem: caps.Vmem,
         entries: []const u8,
         count: usize,
+        initial_count: usize,
         idx: usize,
 
         pub fn deinit(self: @This()) void {
@@ -305,6 +307,11 @@ pub const Dir = struct {
                 self.entries.len,
             ) catch unreachable;
             self.vmem.close();
+        }
+
+        pub fn reset(self: *@This()) void {
+            self.count = self.initial_count;
+            self.idx = 0;
         }
 
         pub fn next(self: *@This()) ?DirEnt {

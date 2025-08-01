@@ -359,6 +359,7 @@ pub const KeyCode = enum(u8) {
             .numpad_mul => '*',
             .numpad_sub => '-',
 
+            .tab => '\t',
             .q => 'q',
             .w => 'w',
             .e => 'e',
