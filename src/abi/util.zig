@@ -341,7 +341,11 @@ pub fn Image(storage: type) type {
             }
         }
 
-        pub fn blitTo(from: *const Self, to: anytype) error{SizeMismatch}!void {
+        pub fn blitTo(
+            from: *const Self,
+            to: anytype,
+            comptime alpha_blending: bool,
+        ) error{SizeMismatch}!void {
             if (from.width != to.width or from.height != to.height) {
                 return error.SizeMismatch;
             }
@@ -361,7 +365,6 @@ pub fn Image(storage: type) type {
                     //     log.debug("from = {}, to = {}", .{ from_pixel.*, to_pixel.* });
                     // }
 
-                    const alpha_blending = false;
                     if (alpha_blending) {
                         const f255 = @Vector(3, f32){ 255.0, 255.0, 255.0 };
                         const f1 = @Vector(3, f32){ 1.0, 1.0, 1.0 };

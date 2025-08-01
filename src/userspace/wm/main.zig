@@ -802,7 +802,7 @@ const System = struct {
             if (window_aabb.intersect(dmg)) |damaged_window_aabb| {
                 const dst = damaged_window_aabb.subimage(self.fb_backbuf).?;
                 const src = damaged_window_aabb.move(-window.rect.pos).subimage(window_fb).?;
-                src.blitTo(dst) catch {};
+                src.blitTo(dst, false) catch {};
             }
         }
 
@@ -813,7 +813,7 @@ const System = struct {
         }).asAabb())) |damaged_cursor_aabb| {
             const dst = damaged_cursor_aabb.subimage(self.fb_backbuf).?;
             const src = damaged_cursor_aabb.move(-self.cursor).subimage(self.cursor_fb).?;
-            src.blitTo(dst) catch {};
+            src.blitTo(dst, true) catch {};
         }
     }
 };
