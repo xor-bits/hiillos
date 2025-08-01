@@ -139,7 +139,7 @@ pub const Rect = struct {
         };
 
         var allocation = limit;
-        const flexible: u32 = allocation - minimum;
+        const flexible: u32 = allocation -| minimum;
 
         for (constraints, results) |constraint, *result| switch (constraint) {
             .pixels => |px| result.* = allocate(
