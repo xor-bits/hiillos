@@ -24,8 +24,8 @@ pub fn Parser(comptime T: type) type {
                 csi,
                 /// \x1b[..m
                 cmd_sgr,
-                /// \x1b[..A/B/C/D/s/u
-                cmd_cursor,
+                /// \x1b[..A/B/C/D/E/F/J/s/u
+                cmd_simple,
             };
 
             var numbers: NumArrayBuilder = undefined;
@@ -69,7 +69,7 @@ pub fn Parser(comptime T: type) type {
                             continue :state .csi;
                         },
                         'm' => continue :state .cmd_sgr,
-                        'A'...'F', 's', 'u' => continue :state .cmd_cursor,
+                        'A'...'F', 'J', 's', 'u' => continue :state .cmd_simple,
                         else => continue :state .restart,
                     }
                 },
@@ -119,19 +119,22 @@ pub fn Parser(comptime T: type) type {
                         else => continue :state .restart,
                     }
                 },
-                .cmd_cursor => {
+                .cmd_simple => {
                     const args = numbers.all();
                     std.debug.assert(args.len != 0);
 
-                    const count = args[0] orelse 1;
+                    const arg_0_default_1 = args[0] orelse 1;
+                    const arg_0_default_0 = args[0] orelse 0;
 
                     switch (byte) {
-                        'A' => return .{ .cursor_up = count },
-                        'B' => return .{ .cursor_down = count },
-                        'C' => return .{ .cursor_right = count },
-                        'D' => return .{ .cursor_left = count },
-                        'E' => return .{ .cursor_next_line = count },
-                        'F' => return .{ .cursor_prev_line = count },
+                        'A' => return .{ .cursor_up = arg_0_default_1 },
+                        'B' => return .{ .cursor_down = arg_0_default_1 },
+                        'C' => return .{ .cursor_right = arg_0_default_1 },
+                        'D' => return .{ .cursor_left = arg_0_default_1 },
+                        'E' => return .{ .cursor_next_line = arg_0_default_1 },
+                        'F' => return .{ .cursor_prev_line = arg_0_default_1 },
+                        'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch
+                            continue :state .restart },
                         's' => return .cursor_push,
                         'u' => return .cursor_pop,
                         else => continue :state .restart,
@@ -219,6 +222,10 @@ pub fn cursorPrevLine(count: usize) Control {
     return .{ .cursor_prev_line = count };
 }
 
+pub fn eraseInDisplay(mode: EraseInDisplay) Control {
+    return .{ .erase_in_display = mode };
+}
+
 pub fn cursorPush() Control {
     return .cursor_push;
 }
@@ -226,6 +233,12 @@ pub fn cursorPush() Control {
 pub fn cursorPop() Control {
     return .cursor_pop;
 }
+
+pub const EraseInDisplay = enum(u2) {
+    cursor_to_end,
+    start_to_cursor,
+    start_to_end,
+};
 
 pub const Control = union(enum) {
     /// printable ascii character
@@ -250,6 +263,9 @@ pub const Control = union(enum) {
     cursor_next_line: usize,
     /// \x1b[<n>F
     cursor_prev_line: usize,
+
+    /// \x1b[<n>J
+    erase_in_display: EraseInDisplay,
 
     /// \x1b[s
     cursor_push,
@@ -312,6 +328,12 @@ pub const Control = union(enum) {
                 writer,
                 "\x1b[{}F",
                 .{c},
+            ),
+
+            .erase_in_display => |mode| try std.fmt.format(
+                writer,
+                "\x1b[{}J",
+                .{@intFromEnum(mode)},
             ),
 
             .cursor_push => try std.fmt.format(

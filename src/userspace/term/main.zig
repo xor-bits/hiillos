@@ -91,6 +91,15 @@ pub fn main() !void {
                 term.cursor.y -|= std.math.lossyCast(u32, count);
                 term.cursor.x = 0;
             },
+            .erase_in_display => |mode| {
+                term.wrapCursor();
+                const area_to_clear = switch (mode) {
+                    .cursor_to_end => term.terminal_buf_front[term.cursor.x + term.cursor.y * term.size.width ..],
+                    .start_to_cursor => term.terminal_buf_front[0 .. term.cursor.x + term.cursor.y * term.size.width],
+                    .start_to_end => term.terminal_buf_front,
+                };
+                @memset(area_to_clear, ' ');
+            },
             .cursor_push => term.cursor_store = term.cursor,
             .cursor_pop => term.cursor = term.cursor_store,
         }

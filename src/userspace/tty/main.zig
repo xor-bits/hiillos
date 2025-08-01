@@ -144,6 +144,15 @@ pub fn main() !void {
                 tty.cursor.y -|= std.math.lossyCast(u32, count);
                 tty.cursor.x = 0;
             },
+            .erase_in_display => |mode| {
+                tty.wrapCursor();
+                const area_to_clear = switch (mode) {
+                    .cursor_to_end => tty.terminal_buf_front[tty.cursor.x + tty.cursor.y * tty.size.width ..],
+                    .start_to_cursor => tty.terminal_buf_front[0 .. tty.cursor.x + tty.cursor.y * tty.size.width],
+                    .start_to_end => tty.terminal_buf_front,
+                };
+                @memset(area_to_clear, ' ');
+            },
             .cursor_push => tty.cursor_store = tty.cursor,
             .cursor_pop => tty.cursor = tty.cursor_store,
         }
