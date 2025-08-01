@@ -597,11 +597,16 @@ fn createFont(b: *std.Build, opts: *const Opts) *std.Build.Module {
 }
 
 fn createLibGui(b: *std.Build, abi: *std.Build.Module) *std.Build.Module {
+    const qoi = b.dependency("qoi", .{}).module("qoi");
+
     return b.addModule("gui", .{
         .root_source_file = b.path("src/gui/lib.zig"),
-        .imports = &.{.{
+        .imports = &.{ .{
             .name = "abi",
             .module = abi,
-        }},
+        }, .{
+            .name = "qoi",
+            .module = qoi,
+        } },
     });
 }

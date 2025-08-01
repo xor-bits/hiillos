@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi");
+pub const qoi = @import("qoi");
 
 const caps = abi.caps;
 const input = abi.input;
@@ -9,6 +10,57 @@ const sys = abi.sys;
 const log = std.log.scoped(.gui);
 
 //
+
+pub fn openImage(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) !abi.util.Image([]u8) {
+    const vmem = try caps.Vmem.self();
+    defer vmem.close();
+
+    const file = try abi.fs.openFileAbsolute(path, .{});
+    defer file.close();
+
+    const file_size = try file.getSize();
+
+    const addr = try vmem.map(
+        file,
+        0,
+        0,
+        file_size,
+        .{},
+        .{},
+    );
+    defer vmem.unmap(addr, file_size) catch unreachable;
+
+    return try loadImage(allocator, @as([*]const u8, @ptrFromInt(addr))[0..file_size]);
+}
+
+pub fn loadImage(
+    allocator: std.mem.Allocator,
+    data: []const u8,
+) !abi.util.Image([]u8) {
+    const image = try qoi.decode(allocator, data, .rgba);
+
+    const pixel_array: []u8 = @constCast(image.pixels); // it is mutable, allocated with allocator
+
+    // convert RGBA into BGRA
+    for (0..image.desc.width * image.desc.height) |px| {
+        std.mem.swap(
+            u8,
+            &pixel_array[px * 4 + 0],
+            &pixel_array[px * 4 + 2],
+        );
+    }
+
+    return .{
+        .width = image.desc.width,
+        .height = image.desc.height,
+        .pitch = image.desc.width * 4,
+        .bits_per_pixel = 32,
+        .pixel_array = pixel_array,
+    };
+}
 
 pub const Colour = extern struct {
     blue: u8 = 0,

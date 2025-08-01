@@ -10,6 +10,10 @@
             .url = "https://github.com/limine-bootloader/limine/archive/refs/tags/v8.3.2-binary.tar.gz",
             .hash = "1220691d9f8b2dfbc5e2727e3400d983b88db37ad7b2468735932ec12b37d304c90e",
         },
+        .qoi = .{
+            .url = "https://github.com/xor-bits/qoi/archive/ef6a688fbeb294e36c9088286ebefc1b27d7ab71.tar.gz",
+            .hash = "qoi-0.0.1-im2KtYJAAAA2i7rzjql8JqrjY8p5-AKBXRYMRS2XiMsl",
+        },
     },
     .paths = .{"."},
     .fingerprint = 0x85b8bb43b41d4850,

@@ -106,13 +106,10 @@ pub fn main() !void {
         .pixel_array = @ptrFromInt(fb_backbuf_addr),
     };
 
-    const cursor_fb = abi.util.Image([*]const u8){
-        .width = 16,
-        .height = 16,
-        .pitch = 64,
-        .bits_per_pixel = 32,
-        .pixel_array = std.mem.asBytes(&cursor_pixels),
-    };
+    const cursor_fb = try gui.openImage(
+        abi.mem.slab_allocator,
+        "initfs:///cursor.qoi",
+    );
 
     system_lock = try .newLocked();
     system = .{
@@ -132,6 +129,7 @@ pub fn main() !void {
         },
 
         .cursor_fb = cursor_fb,
+        .cursor_size = .{ cursor_fb.width, cursor_fb.height },
     };
     system_lock.unlock();
 
@@ -139,24 +137,6 @@ pub fn main() !void {
     try abi.thread.spawn(inputThreadMain, .{seat.input});
     try compositorThreadMain();
 }
-
-var cursor_pixels = b: {
-    var pixels: [16 * 16]u32 = [1]u32{0} ** (16 * 16);
-
-    for (0..16) |yo| {
-        for (0..16) |xo| {
-            if (xo <= yo and (xo * xo) + (yo * yo) <= 15 * 15 - 1) {
-                if (xo == 0 or xo == yo or (xo * xo) + (yo * yo) >= 14 * 14 + 1) {
-                    pixels[xo + yo * 16] = 0xff_ffffff;
-                } else {
-                    pixels[xo + yo * 16] = 0xff_000000;
-                }
-            }
-        }
-    }
-
-    break :b pixels;
-};
 
 fn exec(path: []const u8) !void {
     const initial_app = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
@@ -524,7 +504,8 @@ const System = struct {
     fb_info: abi.FramebufferInfoFrame,
     display: gui.Aabb,
 
-    cursor_fb: abi.util.Image([*]const u8),
+    cursor_fb: abi.util.Image([]u8),
+    cursor_size: gui.Size,
 
     fn event(self: *@This(), ev: abi.input.Event) !void {
         switch (ev) {
@@ -641,10 +622,10 @@ const System = struct {
     }
 
     fn cursorMoveEvent(self: *@This(), delta_x: i16, delta_y: i16) !void {
-        self.damage.addRect(.{ .pos = self.cursor, .size = .{ 16, 16 } });
+        self.damage.addRect(.{ .pos = self.cursor, .size = self.cursor_size });
         self.cursor +|= gui.Pos{ delta_x, -delta_y };
         self.cursor = gui.clamp(self.cursor, self.display);
-        self.damage.addRect(.{ .pos = self.cursor, .size = .{ 16, 16 } });
+        self.damage.addRect(.{ .pos = self.cursor, .size = self.cursor_size });
 
         switch (self.held_window) {
             .moving => |moving| {
@@ -828,7 +809,7 @@ const System = struct {
         // draw cursor
         if (dmg.intersect((gui.Rect{
             .pos = self.cursor,
-            .size = .{ self.cursor_fb.width, self.cursor_fb.height },
+            .size = self.cursor_size,
         }).asAabb())) |damaged_cursor_aabb| {
             const dst = damaged_cursor_aabb.subimage(self.fb_backbuf).?;
             const src = damaged_cursor_aabb.move(-self.cursor).subimage(self.cursor_fb).?;
