@@ -83,6 +83,8 @@ pub fn main() !void {
             .cursor_down => term.cursor.y +|= 1,
             .cursor_right => term.cursor.x +|= 1,
             .cursor_left => term.cursor.x -|= 1,
+            .cursor_push => term.cursor_store = term.cursor,
+            .cursor_pop => term.cursor = term.cursor_store,
         }
     }
 }
@@ -146,6 +148,11 @@ fn mapFb(vmem: caps.Vmem, fb: gui.Framebuffer) ![]volatile u8 {
     return @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
 }
 
+const Pos = struct {
+    x: u32 = 0,
+    y: u32 = 0,
+};
+
 // TODO: similar code is duplicated in userspace/tty/main.zig and kernel/fb.zig
 pub const Terminal = struct {
     /// currently visible text data
@@ -159,10 +166,8 @@ pub const Terminal = struct {
         height: u32 = 0,
     } = .{},
     /// cursor position
-    cursor: struct {
-        x: u32 = 0,
-        y: u32 = 0,
-    } = .{},
+    cursor: Pos = .{},
+    cursor_store: Pos = .{},
 
     /// cpu accessible pixel buffer
     framebuffer: abi.util.Image([]volatile u8),

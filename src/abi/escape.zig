@@ -24,7 +24,7 @@ pub fn Parser(comptime T: type) type {
                 csi,
                 /// \x1b[..m
                 cmd_sgr,
-                /// \x1b[..A/B/C/D
+                /// \x1b[..A/B/C/D/s/u
                 cmd_cursor,
             };
 
@@ -73,6 +73,8 @@ pub fn Parser(comptime T: type) type {
                         'B' => continue :state .cmd_cursor,
                         'C' => continue :state .cmd_cursor,
                         'D' => continue :state .cmd_cursor,
+                        's' => continue :state .cmd_cursor,
+                        'u' => continue :state .cmd_cursor,
                         else => continue :state .restart,
                     }
                 },
@@ -133,6 +135,8 @@ pub fn Parser(comptime T: type) type {
                         'B' => return .{ .cursor_down = count },
                         'C' => return .{ .cursor_right = count },
                         'D' => return .{ .cursor_left = count },
+                        's' => return .cursor_push,
+                        'u' => return .cursor_pop,
                         else => continue :state .restart,
                     }
                 },
@@ -210,6 +214,14 @@ pub fn cursorLeft(count: usize) Control {
     return .{ .cursor_left = count };
 }
 
+pub fn cursorPush() Control {
+    return .cursor_push;
+}
+
+pub fn cursorPop() Control {
+    return .cursor_pop;
+}
+
 pub const Control = union(enum) {
     /// printable ascii character
     ch: u8,
@@ -219,7 +231,7 @@ pub const Control = union(enum) {
     /// \x1b[48;2;<r>;<g>;<b>m
     bg_colour: util.Pixel,
     /// \x1b[m
-    reset: void,
+    reset,
 
     /// \x1b[<n>A
     cursor_up: usize,
@@ -229,6 +241,11 @@ pub const Control = union(enum) {
     cursor_right: usize,
     /// \x1b[<n>D
     cursor_left: usize,
+
+    /// \x1b[s
+    cursor_push,
+    /// \x1b[u
+    cursor_pop,
 
     // TODO: https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection
 
@@ -276,6 +293,17 @@ pub const Control = union(enum) {
                 writer,
                 "\x1b[{}D",
                 .{c},
+            ),
+
+            .cursor_push => try std.fmt.format(
+                writer,
+                "\x1b[s",
+                .{},
+            ),
+            .cursor_pop => try std.fmt.format(
+                writer,
+                "\x1b[u",
+                .{},
             ),
         }
     }

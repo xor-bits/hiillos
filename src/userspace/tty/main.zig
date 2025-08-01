@@ -136,6 +136,8 @@ pub fn main() !void {
             .cursor_down => tty.cursor.y +|= 1,
             .cursor_right => tty.cursor.x +|= 1,
             .cursor_left => tty.cursor.x -|= 1,
+            .cursor_push => tty.cursor_store = tty.cursor,
+            .cursor_pop => tty.cursor = tty.cursor_store,
         }
     }
 }
@@ -206,6 +208,11 @@ const SeatServer = struct {
     pub const Request = abi.TtyProtocol.Request;
 };
 
+const Pos = struct {
+    x: u32 = 0,
+    y: u32 = 0,
+};
+
 pub const Tty = struct {
     /// currently visible text data
     terminal_buf_front: []u8 = &.{},
@@ -218,10 +225,8 @@ pub const Tty = struct {
         height: u32 = 0,
     } = .{},
     /// cursor position
-    cursor: struct {
-        x: u32 = 0,
-        y: u32 = 0,
-    } = .{},
+    cursor: Pos = .{},
+    cursor_store: Pos = .{},
 
     /// cpu accessible pixel buffer
     framebuffer: abi.util.Image([*]volatile u8),
@@ -294,12 +299,17 @@ pub const Tty = struct {
                 self.cursor.x = std.mem.alignForward(u32, self.cursor.x + 1, 4);
             },
             else => {
+                self.wrapCursor();
                 // uart.print("writing {d} to {d},{d}", .{ byte, cursor_x, cursor_y });
                 self.terminal_buf_front[self.cursor.x + self.cursor.y * self.size.width] = byte;
                 self.cursor.x += 1;
             },
         }
 
+        self.wrapCursor();
+    }
+
+    pub fn wrapCursor(self: *@This()) void {
         if (self.cursor.x >= self.size.width) {
             // wrap back to a new line
             self.cursor.x = 0;
