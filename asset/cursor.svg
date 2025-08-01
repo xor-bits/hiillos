@@ -2,13 +2,16 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="210mm"
-   height="297mm"
-   viewBox="0 0 210 297"
+   width="24"
+   height="24"
+   viewBox="0 0 50.049215 50.049215"
    version="1.1"
    id="svg1"
    inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
    sodipodi:docname="cursor.svg"
+   inkscape:export-filename="cursor.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -23,11 +26,11 @@
      inkscape:pagecheckerboard="1"
      inkscape:deskcolor="#505050"
      inkscape:document-units="mm"
-     inkscape:zoom="1.7478535"
-     inkscape:cx="396.20025"
-     inkscape:cy="632.49007"
-     inkscape:window-width="1569"
-     inkscape:window-height="1178"
+     inkscape:zoom="27.965656"
+     inkscape:cx="9.7798528"
+     inkscape:cy="11.621397"
+     inkscape:window-width="1500"
+     inkscape:window-height="1021"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
@@ -37,10 +40,11 @@
   <g
      inkscape:label="Layer 1"
      inkscape:groupmode="layer"
-     id="layer1">
+     id="layer1"
+     transform="translate(-23.23411,9.2538416)">
     <path
        id="path14"
-       style="fill:#000000;fill-opacity:1;stroke:#ffffff;stroke-width:1.065;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal;stroke-linecap:butt;stroke-linejoin:round"
-       d="M 89.83276 133.33553 L 89.83276 175.8859 A 18.673817 18.607887 0 0 1 108.37375 159.49052 A 18.673817 18.607887 0 0 1 120.15856 163.66391 L 120.16734 163.66443 L 89.83276 133.33553 z " />
+       style="fill:#000000;fill-opacity:1;stroke:#ffffff;stroke-width:2.08538;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:normal"
+       d="M 24.2768,-8.2112989 V 35.289539 a 19.090943,19.02354 0 0 1 18.955149,-16.761611 19.090943,19.02354 0 0 1 12.048052,4.266613 l 0.009,5.31e-4 z" />
   </g>
 </svg>
