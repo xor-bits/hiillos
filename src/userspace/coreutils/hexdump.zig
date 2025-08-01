@@ -85,7 +85,7 @@ fn forward(
                 try out.print("\n", .{});
             }
         }
-    }
 
-    try buf_writer.flush();
+        try buf_writer.flush();
+    }
 }
