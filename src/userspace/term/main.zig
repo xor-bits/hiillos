@@ -143,6 +143,14 @@ fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: gui.WindowEvent) !void {
             if (kb_ev.state == .release) return;
 
             if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
+                if (std.ascii.isPrint(ch) or ch == '\n') {
+                    term_lock.lock();
+                    defer term_lock.lock();
+
+                    term.writeByte(ch);
+                    term.flush(false);
+                }
+
                 try sh_stdin.push(ch);
             }
         },

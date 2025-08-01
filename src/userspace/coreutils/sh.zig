@@ -109,10 +109,6 @@ fn runInteractive(
             });
         }
 
-        if (std.ascii.isPrint(ch) or ch == '\n') {
-            try stdout.writeAll(&.{ch});
-        }
-
         if (ch == 8) { // backspace
             if (command_len == 0) continue;
             command_len -= 1;

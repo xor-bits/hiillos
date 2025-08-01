@@ -184,6 +184,13 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
         if (kb_ev.state == .release) continue;
 
         if (if (shift) kb_ev.code.toCharShift() else kb_ev.code.toChar()) |ch| {
+            if (std.ascii.isPrint(ch) or ch == '\n') {
+                if (ttys[0]) |*tty| {
+                    tty.writeByte(ch);
+                    tty.flush();
+                }
+            }
+
             try stdin.push(ch);
         }
     }
