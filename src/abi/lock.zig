@@ -141,7 +141,7 @@ pub const Futex = extern struct {
         while (true) {
             std.debug.assert(state.locked);
             if (state.waiting != 0)
-                self.unlockSlow(state);
+                return self.unlockSlow(state);
 
             // set the state to unlocked
             if (self.cmpxchg(.strong, state, State{
