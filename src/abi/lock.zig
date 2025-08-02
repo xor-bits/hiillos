@@ -21,7 +21,7 @@ pub const Futex = extern struct {
     const Self = @This();
 
     pub fn locked() Self {
-        return .{ .lock_state = .init(@bitCast(State{ .locked = true })) };
+        return .{ .state = .init(@bitCast(State{ .locked = true })) };
     }
 
     pub fn isLocked(self: *Self) bool {
