@@ -244,7 +244,7 @@ pub const Frame = struct {
         self: *@This(),
         idx: u32,
         is_write: bool,
-    ) Error!u32 {
+    ) error{Retry}!u32 {
         if (self.is_transient) return Error.Retry;
 
         std.debug.assert(idx < self.pages.len);

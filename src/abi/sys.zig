@@ -136,6 +136,15 @@ pub const Id = enum(usize) {
     /// close a handle to some object, might or might not delete the object
     handle_close,
 
+    /// sleep if the stored value at the given address is the given value
+    futex_wait,
+    /// wake up a given count of threads that were waiting on a given address
+    futex_wake,
+    /// if the stored value at the given old address is the given value,
+    /// then wakes up a given count of threads and moves a given count
+    /// of threads to wait for the given new address
+    futex_requeue,
+
     // FIXME: casing
     /// give up the CPU for other tasks
     selfYield,
@@ -865,6 +874,110 @@ pub fn handleDuplicate(cap: u32) Error!u32 {
 pub fn handleClose(cap: u32) void {
     if (builtin.is_test) return;
     _ = syscall(.handle_close, .{cap}, .{}) catch unreachable;
+}
+
+pub const FutexFlags = packed struct {
+    /// bit width of the atomic operation
+    size: enum(u3) {
+        bits8,
+        bits16,
+        bits32,
+        bits64,
+        bits128,
+        _,
+    },
+    /// operate only on the `Vmem` instead of mapped `Frame`s
+    private: bool = false,
+    _: u4 = 0,
+
+    pub fn fromInt(v: u8) @This() {
+        return @bitCast(v);
+    }
+
+    pub fn asInt(self: @This()) u8 {
+        return @bitCast(self);
+    }
+};
+
+/// sleep if the stored value at the given address is the given value
+pub fn futexWait(
+    addr: *anyopaque,
+    value: usize,
+    flags: FutexFlags,
+) Error!void {
+    while (true) {
+        _ = syscall(.futex_wait, .{
+            @intFromPtr(addr),
+            value,
+            flags.asInt(),
+        }, .{}) catch |err| switch (err) {
+            Error.Retry => {
+                @branchHint(.cold);
+                dummyRead(@as([*]const u8, @ptrCast(addr))[0..1]);
+                continue;
+            },
+            else => return err,
+        };
+
+        break;
+    }
+}
+
+/// wake up a given count of threads that were waiting on a given address
+pub fn futexWake(
+    addr: *anyopaque,
+    count: usize,
+    flags: FutexFlags,
+) Error!void {
+    while (true) {
+        _ = syscall(.futex_wake, .{
+            @intFromPtr(addr),
+            count,
+            flags.asInt(),
+        }, .{}) catch |err| switch (err) {
+            Error.Retry => {
+                @branchHint(.cold);
+                dummyRead(@as([*]const u8, @ptrCast(addr))[0..1]);
+                continue;
+            },
+            else => return err,
+        };
+
+        break;
+    }
+}
+
+/// if the stored value at the given old address is the given value,
+/// then wakes up a given count of threads and moves a given count
+/// of threads to wait for the given new address
+pub fn futexRequeue(
+    old_addr: *anyopaque,
+    new_addr: *anyopaque,
+    wake_count: usize,
+    move_count: usize,
+    value: usize,
+    flags: FutexFlags,
+) Error!void {
+    while (true) {
+        _ = syscall(.futex_requeue, .{
+            @intFromPtr(old_addr),
+            @intFromPtr(new_addr),
+            wake_count,
+            move_count,
+            value,
+            flags.asInt(),
+        }, .{}) catch |err| switch (err) {
+            Error.Retry => {
+                @branchHint(.cold);
+                dummyRead(@as([*]const u8, @ptrCast(old_addr))[0..1]);
+                dummyRead(@as([*]const u8, @ptrCast(new_addr))[0..1]);
+                continue;
+            },
+            else => return err,
+        };
+
+        break;
+    }
 }
 
 pub fn selfYield() void {

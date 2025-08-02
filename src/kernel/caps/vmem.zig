@@ -79,8 +79,9 @@ pub const Vmem = struct {
             cur_frame: ?caps.Frame.DataIterator(is_write) = null,
 
             const Slice = if (is_write) []volatile u8 else []const volatile u8;
+            const DataError = error{ InvalidAddress, Retry };
 
-            pub fn next(self: *@This()) !?Slice {
+            pub fn next(self: *@This()) DataError!?Slice {
                 if (self.cur_frame) |*cur_frame| {
                     if (try cur_frame.next()) |chunk| {
                         // log.debug("vmem_{s} chunk.ptr={*} chunk.len={} @0x{x}", .{
@@ -101,7 +102,7 @@ pub const Vmem = struct {
                 return self.next();
             }
 
-            fn fetchFrame(self: *@This()) !?void {
+            fn fetchFrame(self: *@This()) DataError!?void {
                 self.vmem.lock.lock();
                 defer self.vmem.lock.unlock();
 
@@ -114,6 +115,7 @@ pub const Vmem = struct {
                 //     mapping.frame_first_page,
                 // });
 
+                // FIXME: why wouldnt the return be null
                 if (!mapping.overlaps(self.vaddr, 1)) return Error.InvalidAddress;
 
                 self.cur_frame = mapping.frame.data(

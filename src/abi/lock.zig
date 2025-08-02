@@ -10,6 +10,193 @@ const Error = sys.Error;
 
 //
 
+const State = packed struct {
+    waiting: u31 = 0,
+    locked: bool = false,
+};
+
+pub const Futex = extern struct {
+    state: std.atomic.Value(u32) = .init(@bitCast(State{ .locked = false })),
+
+    const Self = @This();
+
+    pub fn locked() Self {
+        return .{ .lock_state = .init(@bitCast(State{ .locked = true })) };
+    }
+
+    pub fn isLocked(self: *Self) bool {
+        return self.load(.monotonic).locked;
+    }
+
+    pub fn tryLock(self: *Self) bool {
+        var state: State = self.load(.monotonic);
+        while (true) {
+            if (state.locked)
+                return Self.tryLockSlow();
+
+            // set the state to locked
+            if (self.cmpxchg(.weak, state, State{
+                .waiting = state.waiting,
+                .locked = true,
+            }, .acquire, .monotonic)) |failed| {
+                // failed to lock, either spuriously or it was locked
+                state = failed;
+                continue;
+            } else {
+                // successfully locked
+                return true;
+            }
+        }
+    }
+
+    fn tryLockSlow() bool {
+        @branchHint(.cold);
+        return false;
+    }
+
+    pub fn lock(self: *Self) void {
+        var state: State = self.load(.monotonic);
+        while (true) {
+            if (state.locked or state.waiting != 0)
+                return self.lockSlow(state);
+
+            // set the state to locked
+            if (self.cmpxchg(.weak, state, State{
+                .waiting = state.waiting,
+                .locked = true,
+            }, .acquire, .monotonic)) |failed| {
+                // failed to lock, either spuriously or it was locked
+                state = failed;
+                continue;
+            } else {
+                // successfully locked
+                return;
+            }
+        }
+    }
+
+    fn lockSlow(self: *Self, _state: State) void {
+        @branchHint(.cold);
+
+        var state = _state;
+        var registered = false;
+        while (true) {
+            if (!state.locked) {
+                // set the state to locked
+                if (self.cmpxchg(.weak, state, State{
+                    .waiting = state.waiting,
+                    .locked = true,
+                }, .acquire, .monotonic)) |failed| {
+                    // failed to lock, either spuriously or it was locked
+                    state = failed;
+                    continue;
+                } else {
+                    // successfully locked
+                    return;
+                }
+            }
+
+            // TODO: could spin a few times before actually waiting
+
+            if (!registered) {
+                if (state.waiting >= std.math.maxInt(u31))
+                    std.debug.panic("too many threads waiting on the same futex", .{});
+
+                if (self.cmpxchg(.weak, state, State{
+                    .waiting = state.waiting + 1,
+                    .locked = state.locked,
+                }, .monotonic, .monotonic)) |failed| {
+                    // failed to increase waiter count
+                    state = failed;
+                    continue;
+                }
+                // successfully incremented the sleeper count
+                registered = true;
+                state.waiting += 1;
+            }
+
+            sys.futexWait(&self.state.raw, @as(u32, @bitCast(state)), .{
+                .size = .bits32,
+            }) catch unreachable;
+
+            state = self.load(.monotonic);
+        }
+    }
+
+    pub fn unlock(self: *Self) void {
+        var state = State{ .waiting = 0, .locked = true };
+        while (true) {
+            std.debug.assert(state.locked);
+            if (state.waiting != 0)
+                self.unlockSlow(state);
+
+            // set the state to unlocked
+            if (self.cmpxchg(.strong, state, State{
+                .waiting = 0,
+                .locked = false,
+            }, .release, .monotonic)) |failed| {
+                // failed to unlock, either spuriously or there were sleepers
+                state = failed;
+                continue;
+            } else {
+                // successfully unlocked
+                return;
+            }
+        }
+    }
+
+    fn unlockSlow(self: *Self, _state: State) void {
+        @branchHint(.cold);
+
+        var state = _state;
+        while (true) {
+            std.debug.assert(state.locked);
+
+            // set the state to unlocked
+            if (self.cmpxchg(.weak, state, State{
+                .waiting = state.waiting -| 1,
+                .locked = false,
+            }, .release, .monotonic)) |failed| {
+                // failed to unlock, either spuriously or there are new sleepers
+                state = failed;
+                continue;
+            } else {
+                sys.futexWake(&self.state.raw, 1, .{
+                    .size = .bits32,
+                }) catch unreachable;
+                return;
+            }
+        }
+    }
+
+    fn cmpxchg(
+        self: *Self,
+        comptime variant: enum { weak, strong },
+        expected: State,
+        new: State,
+        comptime success: std.builtin.AtomicOrder,
+        comptime fail: std.builtin.AtomicOrder,
+    ) ?State {
+        const func = if (variant == .strong) std.atomic.Value(u32).cmpxchgStrong else std.atomic.Value(u32).cmpxchgWeak;
+        if (func(
+            &self.state,
+            @bitCast(expected),
+            @bitCast(new),
+            success,
+            fail,
+        )) |result| {
+            return @bitCast(result);
+        } else {
+            return null;
+        }
+    }
+
+    fn load(self: *Self, comptime order: std.builtin.AtomicOrder) State {
+        return @bitCast(self.state.load(order));
+    }
+};
+
+/// Deprecated; prefer using `Futex`.
 pub const CapMutex = struct {
     inner: SpinMutex = .{},
     notify: caps.Notify,
@@ -74,6 +261,7 @@ pub const CapMutex = struct {
     }
 };
 
+/// Deprecated; prefer using `Futex`.
 pub const YieldMutex = extern struct {
     inner: SpinMutex = .{},
 

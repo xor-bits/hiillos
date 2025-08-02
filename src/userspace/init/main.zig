@@ -33,24 +33,49 @@ pub fn main() !void {
         }
     }
 
+    if (abi.conf.FUTEX_STRESS_TEST) {
+        for (0..100) |i| {
+            try abi.thread.spawn(futexStressTest, .{i});
+        }
+    }
+
     try spinner.spinnerMain();
 }
 
-fn yieldStressTest() void {
+fn yieldStressTest() noreturn {
     while (true) abi.thread.yield();
 }
 
-fn notifyStressTest(notify: caps.Notify) !void {
+fn notifyStressTest(notify: caps.Notify) !noreturn {
     defer notify.close();
     while (true) _ = try notify.notify();
 }
 
-fn notifyWaitStressTest(notify: caps.Notify) !void {
+fn notifyWaitStressTest(notify: caps.Notify) !noreturn {
     defer notify.close();
     while (true) try notify.wait();
 }
 
-fn notifyPollStressTest(notify: caps.Notify) !void {
+fn notifyPollStressTest(notify: caps.Notify) !noreturn {
     defer notify.close();
     while (true) _ = try notify.poll();
+}
+
+var mutex: abi.lock.Futex = .{};
+var check: abi.lock.SpinMutex = .{};
+
+fn futexStressTest(i: usize) noreturn {
+    while (true) {
+        abi.thread.yield();
+        for (0..1_000 * (i + 1)) |_| std.atomic.spinLoopHint();
+
+        mutex.lock();
+        defer mutex.unlock();
+
+        for (0..1_000 * (i + 1)) |_| std.atomic.spinLoopHint();
+
+        log.info("lock acquired by {}", .{i});
+        if (!check.tryLock()) std.debug.panic("fail", .{});
+        check.unlock();
+    }
 }

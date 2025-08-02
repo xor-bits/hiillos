@@ -11,10 +11,10 @@ pub fn printPanic(
     dwarf_info: anyerror!std.debug.Dwarf,
     sources: []const SourceFile,
 ) !void {
-    try writer.print("{s} panicked: {s}\nstack trace:", .{ name, msg });
+    try writer.print("{s} panicked: {s}\nstack trace:\n", .{ name, msg });
 
     var dwarf = dwarf_info catch |err| {
-        try writer.print("failed to open DWARF info: {}", .{err});
+        try writer.print("failed to open DWARF info: {}\n", .{err});
         while (iter.next()) |r_addr| {
             try writer.print("  \x1B[90m0x{x:0>16}\x1B[0m\n", .{r_addr});
         }

@@ -10,6 +10,7 @@ const arch = @import("arch.zig");
 const args = @import("args.zig");
 const caps = @import("caps.zig");
 const copy = @import("copy.zig");
+const futex = @import("futex.zig"); // OCD warning
 const init = @import("init.zig");
 const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
@@ -871,6 +872,10 @@ fn handle_syscall(
 
             trap.syscall_id = abi.sys.encode(0);
         },
+
+        .futex_wait => try futex.wait(trap, thread),
+        .futex_wake => try futex.wake(trap, thread),
+        .futex_requeue => try futex.requeue(trap, thread),
 
         .selfYield => {
             proc.yield(trap);

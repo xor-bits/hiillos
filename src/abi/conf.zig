@@ -40,5 +40,6 @@ pub const DEBUG_UNHANDLED_FAULT: bool = false;
 
 pub const IPC_BENCHMARK: bool = false;
 pub const SCHED_STRESS_TEST: bool = false;
+pub const FUTEX_STRESS_TEST: bool = false;
 
 pub const IS_DEBUG = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;

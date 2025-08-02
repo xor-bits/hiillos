@@ -37,6 +37,7 @@ pub fn enter() noreturn {
     trap.exitNow();
 }
 
+/// TODO: yield that can switch to another thread on the same priority
 /// conditionally yield if there is a higher priority thread ready
 pub fn yield(trap: *arch.TrapRegs) void {
     const prev = arch.cpuLocal().current_thread;

@@ -39,6 +39,7 @@ pub const Thread = struct {
         ipc_call0,
         ipc_call1,
         signal,
+        futex,
     } = .none,
     exit_code: usize = 0,
     /// scheduler linked list
