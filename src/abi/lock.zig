@@ -80,7 +80,15 @@ pub const Futex = extern struct {
 
         var state = _state;
         var registered = false;
+        var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
         while (true) {
+            if (conf.IS_DEBUG) {
+                counter += 1;
+                if (counter % 100 == 0) {
+                    log.warn("possible deadlock", .{});
+                }
+            }
+
             if (!state.locked) {
                 // set the state to locked
                 if (self.cmpxchg(.weak, state, State{
