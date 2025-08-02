@@ -3,6 +3,7 @@ const std = @import("std");
 const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const lock = @import("lock.zig");
+const sys = @import("sys.zig");
 const thread = @import("thread.zig");
 const util = @import("util.zig");
 
@@ -25,20 +26,17 @@ pub const RingError = error{
 };
 
 pub const SharedRing = struct {
-    notify: caps.Notify,
     frame: caps.Frame,
     capacity: usize,
 
     pub fn clone(self: @This()) abi.sys.Error!@This() {
         return .{
-            .notify = try self.notify.clone(),
             .frame = try self.frame.clone(),
             .capacity = self.capacity,
         };
     }
 
     pub fn deinit(self: @This()) void {
-        self.notify.close();
         self.frame.close();
     }
 };
@@ -46,7 +44,6 @@ pub const SharedRing = struct {
 /// single reader and single writer fixed size ring buffer
 pub fn Ring(comptime T: type) type {
     return struct {
-        notify: caps.Notify,
         frame: caps.Frame,
         self_vmem: caps.Vmem,
         capacity: usize,
@@ -59,11 +56,7 @@ pub fn Ring(comptime T: type) type {
             const frame = try caps.Frame.create(size_bytes);
             errdefer frame.close();
 
-            const notify = try caps.Notify.create();
-            errdefer notify.close();
-
             return try fromShared(.{
-                .notify = notify,
                 .frame = frame,
                 .capacity = capacity,
             }, size_bytes);
@@ -88,7 +81,6 @@ pub fn Ring(comptime T: type) type {
             );
 
             return .{
-                .notify = shared.notify,
                 .frame = shared.frame,
                 .self_vmem = self_vmem,
                 .capacity = shared.capacity,
@@ -98,7 +90,6 @@ pub fn Ring(comptime T: type) type {
 
         pub fn share(self: Self) !SharedRing {
             return .{
-                .notify = try self.notify.clone(),
                 .frame = try self.frame.clone(),
                 .capacity = self.capacity,
             };
@@ -162,7 +153,7 @@ pub fn Ring(comptime T: type) type {
 
             volat(&s[slot.first]).* = v;
 
-            try m.produce(slot, self.capacity, self.notify);
+            try m.produce(slot, self.capacity);
         }
 
         pub fn pushWait(self: *const Self, v: T) RingError!void {
@@ -178,7 +169,11 @@ pub fn Ring(comptime T: type) type {
                 res = self.push(v);
                 if (res != RingError.Full) return res;
 
-                self.notify.wait();
+                sys.futexWait(
+                    &m.write_end.val.raw,
+                    m.write_end.val.raw,
+                    .{ .size = .bits32 },
+                ) catch unreachable;
             }
         }
 
@@ -195,7 +190,7 @@ pub fn Ring(comptime T: type) type {
             const val = volat(&s[slot.first]).*;
             volat(&s[slot.first]).* = undefined; // debug
 
-            try m.release(slot, self.capacity, self.notify);
+            try m.release(slot, self.capacity);
             return val;
         }
 
@@ -210,7 +205,11 @@ pub fn Ring(comptime T: type) type {
 
                 if (try self.pop()) |result| return result;
 
-                self.notify.wait();
+                sys.futexWait(
+                    &m.read_end.val.raw,
+                    m.read_end.val.raw,
+                    .{ .size = .bits32 },
+                ) catch unreachable;
             }
         }
 
@@ -228,7 +227,7 @@ pub fn Ring(comptime T: type) type {
             @memcpy(slices[0], buf[0..slices[0].len]);
             @memcpy(slices[1], buf[slices[0].len..][0..slices[1].len]);
 
-            try m.produce(slot, self.capacity, self.notify);
+            try m.produce(slot, self.capacity);
         }
 
         pub fn writeWait(self: *const Self, buf: []const T) RingError!void {
@@ -244,7 +243,11 @@ pub fn Ring(comptime T: type) type {
                 res = self.write(buf);
                 if (res != RingError.Full) return res;
 
-                self.notify.wait();
+                sys.futexWait(
+                    &m.write_end.val.raw,
+                    m.write_end.val.raw,
+                    .{ .size = .bits32 },
+                ) catch unreachable;
             }
         }
 
@@ -262,7 +265,7 @@ pub fn Ring(comptime T: type) type {
             @memcpy(buf[0..slices[0].len], slices[0]);
             @memcpy(buf[slices[0].len..][0..slices[1].len], slices[1]);
 
-            try m.release(slot, self.capacity, self.notify);
+            try m.release(slot, self.capacity);
             return buf[0..slot.len];
         }
 
@@ -279,7 +282,11 @@ pub fn Ring(comptime T: type) type {
                 result = try self.read(buf);
                 if (result.len != 0) return result;
 
-                self.notify.wait();
+                sys.futexWait(
+                    &m.read_end.val.raw,
+                    m.read_end.val.raw,
+                    .{ .size = .bits32 },
+                ) catch unreachable;
             }
         }
 
@@ -457,14 +464,18 @@ pub const Marker = extern struct {
         return (try self.uninitSlot(capacity)).min(n);
     }
 
-    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize, notify: caps.Notify) RingError!void {
+    pub fn produce(self: *Self, acquired_slot: Slot, capacity: usize) RingError!void {
         const new_write_end = (acquired_slot.first + acquired_slot.len) % capacity;
         const old = self.write_end.val.swap(new_write_end, .release);
         if (old != acquired_slot.first)
             return RingError.InvalidState;
 
         if (self.read_waiter.val.swap(false, .release)) {
-            _ = notify.notify();
+            sys.futexWake(
+                &self.read_end.val.raw,
+                1,
+                .{ .size = .bits32 },
+            ) catch unreachable;
         }
     }
 
@@ -477,14 +488,18 @@ pub const Marker = extern struct {
         return (try self.initSlot(capacity)).min(n);
     }
 
-    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize, notify: caps.Notify) RingError!void {
+    pub fn release(self: *Self, consumed_slot: Slot, capacity: usize) RingError!void {
         const new_read_end = (consumed_slot.first + consumed_slot.len) % capacity;
         const old = self.read_end.val.swap(new_read_end, .release);
         if (old != consumed_slot.first)
             return RingError.InvalidState;
 
         if (self.write_waiter.val.swap(false, .release)) {
-            _ = notify.notify();
+            sys.futexWake(
+                &self.write_end.val.raw,
+                1,
+                .{ .size = .bits32 },
+            ) catch unreachable;
         }
     }
 };
