@@ -570,9 +570,6 @@ pub const TlbShootdown = struct {
             .transient => |frame| {
                 defer frame.deinit();
 
-                frame.lock.lock();
-                defer frame.lock.unlock();
-
                 _ = frame.deinitTlbShootdown();
 
                 return null;
