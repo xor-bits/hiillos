@@ -92,6 +92,7 @@ zig build # generates the os.iso in zig-out/os.iso
     - [x] move all object methods to be syscalls
     - [x] syscall tracker
     - [x] method call tracker
+    - [x] futex
 
 - [x] user-space
   - [x] posix abstraction layer, like `open` instead of the manual ipc call
