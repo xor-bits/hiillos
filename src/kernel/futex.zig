@@ -7,6 +7,7 @@ const caps = @import("caps.zig");
 const proc = @import("proc.zig");
 
 const util = abi.util;
+const conf = abi.conf;
 const Error = abi.sys.Error;
 
 //
@@ -51,6 +52,8 @@ pub fn wait(
     if (!queue.found_existing) queue.value_ptr.* = .{};
     thread.status = .waiting;
     thread.waiting_cause = .futex;
+    if (conf.LOG_FUTEX)
+        std.log.debug("futex wait {*}", .{thread});
     queue.value_ptr.pushBack(thread);
 
     // switch to a new thread
@@ -88,6 +91,8 @@ pub fn wake(
             std.debug.assert(futex_queue.real_queues.remove(futex));
             break;
         };
+        if (conf.LOG_FUTEX)
+            std.log.debug("futex wake {*}", .{thread_to_wake_up});
         proc.ready(thread_to_wake_up);
     }
 
