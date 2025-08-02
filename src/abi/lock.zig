@@ -84,7 +84,8 @@ pub const Futex = extern struct {
             if (!state.locked) {
                 // set the state to locked
                 if (self.cmpxchg(.weak, state, State{
-                    .waiting = state.waiting,
+                    // `- registered`, because it removes this waiter if the locking works
+                    .waiting = state.waiting - @intFromBool(registered),
                     .locked = true,
                 }, .acquire, .monotonic)) |failed| {
                     // failed to lock, either spuriously or it was locked
@@ -102,17 +103,21 @@ pub const Futex = extern struct {
                 if (state.waiting >= std.math.maxInt(u31))
                     std.debug.panic("too many threads waiting on the same futex", .{});
 
-                if (self.cmpxchg(.weak, state, State{
-                    .waiting = state.waiting + 1,
-                    .locked = state.locked,
-                }, .monotonic, .monotonic)) |failed| {
+                const prev_state = state;
+                state.waiting += 1;
+                if (self.cmpxchg(
+                    .weak,
+                    prev_state,
+                    state,
+                    .monotonic,
+                    .monotonic,
+                )) |failed| {
                     // failed to increase waiter count
                     state = failed;
                     continue;
                 }
                 // successfully incremented the sleeper count
                 registered = true;
-                state.waiting += 1;
             }
 
             sys.futexWait(&self.state.raw, @as(u32, @bitCast(state)), .{
@@ -154,7 +159,7 @@ pub const Futex = extern struct {
 
             // set the state to unlocked
             if (self.cmpxchg(.weak, state, State{
-                .waiting = state.waiting -| 1,
+                .waiting = state.waiting,
                 .locked = false,
             }, .release, .monotonic)) |failed| {
                 // failed to unlock, either spuriously or there are new sleepers
