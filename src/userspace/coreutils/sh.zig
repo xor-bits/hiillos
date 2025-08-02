@@ -122,8 +122,7 @@ fn runInteractive(
 
         if (ch == std.ascii.control_code.etx) { // ctrl+c
             if (command_len == 0) continue;
-            command_len -= 1;
-            command[command_len] = ' ';
+            command_len = 0;
             try stdout.print("\n\n{}", .{
                 Prompt{},
             });
