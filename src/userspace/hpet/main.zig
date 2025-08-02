@@ -285,7 +285,7 @@ const Timer = struct {
     _: void align(std.atomic.cache_line) = {},
 
     /// null means the timer is off, non null means the current comparator value (for faster read)
-    lock: abi.lock.YieldMutex = .{},
+    lock: abi.thread.Mutex = .{},
     current: ?Deadline = null,
     deadlines: std.PriorityQueue(Deadline, void, struct {
         fn inner(_: void, a: Deadline, b: Deadline) std.math.Order {

@@ -20,7 +20,7 @@ pub const Thread = struct {
 
     proc: *caps.Process,
     // lock for modifying / executing the thread
-    lock: abi.lock.SpinMutex = .newLocked(),
+    lock: abi.lock.SpinMutex = .locked(),
     /// all context data, except fx
     trap: arch.TrapRegs = .{},
     /// fx context data, switched lazily

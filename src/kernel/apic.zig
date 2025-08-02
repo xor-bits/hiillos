@@ -70,7 +70,7 @@ pub const Locals = struct {
     // receives an ACK, but doesnt send an EOI. Then the high priority interrupt
     // receives an ACK and sends 2 EOIs: one for itself and one for the lower priority
     // interrupt that was already ACK'd)
-    lock: abi.lock.SpinMutex = .new(),
+    lock: abi.lock.SpinMutex = .{},
     in_flight_interrupts: u256 = 0,
     acknowledged_interrupts: u256 = 0,
 

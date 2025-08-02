@@ -26,7 +26,7 @@ pub const Frame = struct {
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,
-    lock: abi.lock.SpinMutex = .new(),
+    lock: abi.lock.SpinMutex = .locked(),
     pages: []u32,
     size_bytes: usize,
     mappings: std.ArrayList(*const caps.Mapping),
@@ -50,7 +50,6 @@ pub const Frame = struct {
 
         obj.* = .{
             .is_physical = false,
-            .lock = .newLocked(),
             .pages = pages,
             .size_bytes = size_bytes,
             .mappings = .init(caps.slab_allocator.allocator()),

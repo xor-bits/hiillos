@@ -57,8 +57,6 @@ pub export var import_ps2_status_port = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     log.info("hello from ps2", .{});
-    waiting_lock = try .newLocked();
-    waiting_lock.unlock();
     controller = try Controller.init();
 
     log.info("spawning keyboard thread", .{});
@@ -72,7 +70,7 @@ pub fn main() !void {
     });
 }
 
-var waiting_lock: abi.lock.CapMutex = undefined;
+var waiting_lock: abi.thread.Mutex = .{};
 var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .init(abi.mem.slab_allocator);
 var event_queue: std.fifo.LinearFifo(abi.input.Event, .Dynamic) = .init(abi.mem.slab_allocator);
 
@@ -151,7 +149,7 @@ pub const Controller = struct {
     secondary_irq: caps.X86Irq,
     secondary_notify: caps.Notify,
 
-    lock: abi.lock.CapMutex,
+    lock: abi.thread.Mutex = .{},
 
     pub fn init() !@This() {
         const data = caps.X86IoPort{ .cap = import_ps2_data_port.handle };
@@ -176,9 +174,7 @@ pub const Controller = struct {
             .primary_notify = primary_notify,
             .secondary_irq = secondary_irq,
             .secondary_notify = secondary_notify,
-            .lock = try abi.lock.CapMutex.new(),
         };
-        errdefer self.lock.deinit();
 
         log.debug("disabling keyboard and mouse temporarily", .{});
         try self.writeCmd(0xad); // disable keyboard

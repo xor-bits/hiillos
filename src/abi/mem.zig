@@ -80,7 +80,7 @@ pub const SlabAllocator = struct {
     slabs: [9]FreeList = .{FreeList{}} ** 9,
 
     // // bigger chunks
-    // chunk_locks: [18]abi.lock.YieldMutex = .{abi.lock.YieldMutex{}} ** 18,
+    // chunk_locks: [18]abi.thread.Mutex = .{abi.thread.Mutex{}} ** 18,
     // chunks: [18]FreeList = .{FreeList{}} ** 18,
 
     const Self = @This();

@@ -23,7 +23,7 @@ pub const Receiver = struct {
     receiver: std.atomic.Value(?*caps.Thread) = .init(null),
 
     /// a linked list of waiting callers
-    queue_lock: abi.lock.SpinMutex = .newLocked(),
+    queue_lock: abi.lock.SpinMutex = .locked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {
@@ -308,7 +308,7 @@ pub const Notify = struct {
     notified: std.atomic.Value(bool) = .init(false),
 
     // waiter queue
-    queue_lock: abi.lock.SpinMutex = .newLocked(),
+    queue_lock: abi.lock.SpinMutex = .locked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
     pub fn init() !*@This() {

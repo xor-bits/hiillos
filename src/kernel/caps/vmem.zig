@@ -19,7 +19,7 @@ pub const Vmem = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    lock: abi.lock.SpinMutex = .new(),
+    lock: abi.lock.SpinMutex = .{},
     cr3: u32,
     mappings: std.ArrayList(*caps.Mapping),
     // bitset of all cpus that have used this vmem
@@ -33,7 +33,7 @@ pub const Vmem = struct {
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{
-            .lock = .newLocked(),
+            .lock = .locked(),
             .cr3 = 0,
             .mappings = .init(caps.slab_allocator.allocator()),
         };

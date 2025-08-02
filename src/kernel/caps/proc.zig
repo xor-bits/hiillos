@@ -16,7 +16,7 @@ pub const Process = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     vmem: *caps.Vmem,
-    lock: abi.lock.SpinMutex = .newLocked(),
+    lock: abi.lock.SpinMutex = .locked(),
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
     free: u32 = 0,
 

@@ -3,6 +3,7 @@ const std = @import("std");
 const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const lock = @import("lock.zig");
+const thread = @import("thread.zig");
 const util = @import("util.zig");
 
 //
@@ -360,8 +361,8 @@ pub const Slot = struct {
 pub const Marker = extern struct {
     // well behaved apps should use the locks,
     // but nothing bad should happen if the other end misbehaves
-    read_lock: CachePadded(lock.YieldMutex) = .{ .val = .new() },
-    write_lock: CachePadded(lock.YieldMutex) = .{ .val = .new() },
+    read_lock: CachePadded(thread.Mutex) = .{ .val = .{} },
+    write_lock: CachePadded(thread.Mutex) = .{ .val = .{} },
 
     read_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },
     write_end: CachePadded(std.atomic.Value(usize)) = .{ .val = .{ .raw = 0 } },

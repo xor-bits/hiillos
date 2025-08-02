@@ -80,7 +80,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 }
 
 var self_exe: sys.Error![]const u8 = undefined;
-var self_exe_once: lock.Once(lock.YieldMutex) = .new();
+var self_exe_once: lock.Once(thread.Mutex) = .{};
 
 fn getSelfDwarf() !std.debug.Dwarf {
     return debug.getSelfDwarf(mem.slab_allocator, try loadSelfExe());

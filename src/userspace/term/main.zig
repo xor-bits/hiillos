@@ -10,7 +10,6 @@ const log = std.log.scoped(.term);
 pub fn main() !void {
     try abi.rt.init();
 
-    term_lock = try .new();
     term_lock.lock();
 
     const vmem = try caps.Vmem.self();
@@ -63,15 +62,16 @@ pub fn main() !void {
 
     while (try stdout_reader.next()) |_token| {
         const token: abi.escape.Control = _token;
+
+        term_lock.lock();
+        defer term_lock.unlock();
+
         // std.log.debug("token '{token}' ({})", .{
         //     token,
         //     std.meta.activeTag(token),
         // });
         switch (token) {
             .ch => |byte| {
-                term_lock.lock();
-                defer term_lock.unlock();
-
                 term.writeByte(byte);
                 term.flush(false);
             },
@@ -106,7 +106,7 @@ pub fn main() !void {
 }
 
 var term: Terminal = undefined;
-var term_lock: abi.lock.CapMutex = undefined;
+var term_lock: abi.thread.Mutex = .{};
 
 fn eventThread(sh_stdin: abi.ring.Ring(u8), wm_display: gui.WmDisplay) !void {
     defer wm_display.deinit();
@@ -156,7 +156,7 @@ fn windowEvent(sh_stdin: abi.ring.Ring(u8), ev: gui.WindowEvent) !void {
             if (ch) |byte| {
                 if (std.ascii.isPrint(byte) or byte == '\n') {
                     term_lock.lock();
-                    defer term_lock.lock();
+                    defer term_lock.unlock();
 
                     term.writeByte(byte);
                     term.flush(false);

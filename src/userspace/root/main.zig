@@ -22,8 +22,8 @@ pub const STACK_SIZE = 0x40000;
 
 //
 
-pub var self_memory_lock: abi.lock.YieldMutex = .new();
-pub var self_vmem_lock: abi.lock.YieldMutex = .new();
+pub var self_memory_lock: abi.thread.Mutex = .new();
+pub var self_vmem_lock: abi.thread.Mutex = .new();
 
 //
 

@@ -209,137 +209,12 @@ pub const Futex = extern struct {
     }
 };
 
-/// Deprecated; prefer using `Futex`.
-pub const CapMutex = struct {
-    inner: SpinMutex = .{},
-    notify: caps.Notify,
-    sleepers: std.atomic.Value(bool) = .init(false),
-
-    const Self = @This();
-
-    pub fn new() Error!Self {
-        return .{ .inner = .new(), .notify = try caps.Notify.create() };
-    }
-
-    pub fn newLocked() Error!Self {
-        return .{ .inner = .newLocked(), .notify = try caps.Notify.create() };
-    }
-
-    pub fn deinit(self: Self) void {
-        self.notify.close();
-    }
-
-    pub fn tryLock(self: *Self) bool {
-        return self.inner.tryLock();
-    }
-
-    pub fn lockAttempts(self: *Self, attempts: usize) bool {
-        std.debug.assert(attempts != 0);
-
-        if (self.tryLock()) return true;
-
-        for (0..attempts - 1) |_| {
-            self.sleepers.store(true, .seq_cst);
-            self.notify.wait();
-            if (self.tryLock()) return true;
-        }
-        return false;
-    }
-
-    pub fn lock(self: *Self) void {
-        if (self.tryLock()) return;
-
-        var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
-        while (true) {
-            if (conf.IS_DEBUG) {
-                counter += 1;
-                if (counter % 2_000 == 0) {
-                    log.warn("possible deadlock", .{});
-                }
-            }
-
-            self.sleepers.store(true, .seq_cst);
-            self.notify.wait();
-            if (self.tryLock()) return;
-        }
-    }
-
-    pub fn isLocked(self: *Self) bool {
-        return self.inner.isLocked();
-    }
-
-    pub fn unlock(self: *Self) void {
-        self.inner.unlock();
-        _ = self.notify.notify();
-    }
-};
-
-/// Deprecated; prefer using `Futex`.
-pub const YieldMutex = extern struct {
-    inner: SpinMutex = .{},
-
-    const Self = @This();
-
-    pub fn new() Self {
-        return .{ .inner = .new() };
-    }
-
-    pub fn newLocked() Self {
-        return .{ .inner = .newLocked() };
-    }
-
-    pub fn tryLock(self: *Self) bool {
-        return self.inner.tryLock();
-    }
-
-    pub fn lockAttempts(self: *Self, attempts: usize) bool {
-        std.debug.assert(attempts != 0);
-
-        if (self.tryLock()) return true;
-
-        for (0..attempts - 1) |_| {
-            sys.selfYield();
-            if (self.tryLock()) return true;
-        }
-        return false;
-    }
-
-    pub fn lock(self: *Self) void {
-        if (self.tryLock()) return;
-
-        var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
-        while (true) {
-            if (conf.IS_DEBUG) {
-                counter += 1;
-                if (counter % 2_000 == 0) {
-                    log.warn("possible deadlock", .{});
-                }
-            }
-
-            sys.selfYield();
-            if (self.tryLock()) return;
-        }
-    }
-
-    pub fn isLocked(self: *Self) bool {
-        return self.inner.isLocked();
-    }
-
-    pub fn unlock(self: *Self) void {
-        self.inner.unlock();
-    }
-};
-
 pub const SpinMutex = extern struct {
     lock_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
 
     const Self = @This();
 
-    pub fn new() Self {
-        return .{ .lock_state = std.atomic.Value(u8).init(0) };
-    }
-
-    pub fn newLocked() Self {
+    pub fn locked() Self {
         return .{ .lock_state = std.atomic.Value(u8).init(1) };
     }
 
@@ -393,8 +268,8 @@ pub const SpinMutex = extern struct {
 
 pub fn Once(comptime Mutex: type) type {
     return struct {
-        entry_mutex: Mutex = .new(),
-        wait_mutex: Mutex = .newLocked(),
+        entry_mutex: Mutex = .{},
+        wait_mutex: Mutex = .locked(),
 
         const Self = @This();
 

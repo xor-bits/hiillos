@@ -3,9 +3,12 @@ const std = @import("std");
 const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const loader = @import("loader.zig");
+const lock = @import("lock.zig");
 const sys = @import("sys.zig");
 
 //
+
+pub const Mutex = lock.Futex;
 
 pub fn spawn(comptime function: anytype, args: anytype) !void {
     try spawnOptions(function, args, .{});

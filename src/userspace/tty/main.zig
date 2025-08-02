@@ -42,14 +42,12 @@ pub export var import_pm = abi.loader.Resource.new(.{
 //
 
 var ttys = [1]?Tty{null};
-var seat_lock: abi.lock.CapMutex = undefined;
+var seat_lock: abi.thread.Mutex = .{};
 
 //
 
 pub fn main() !void {
     log.info("hello from tty", .{});
-
-    seat_lock = try .new();
 
     try abi.thread.spawn(seatListener, .{});
 

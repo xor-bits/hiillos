@@ -599,7 +599,7 @@ const FileNode = struct {
     /// inode of the file in the correct device
     inode: u128,
 
-    cache_lock: abi.lock.YieldMutex = .{},
+    cache_lock: abi.thread.Mutex = .{},
 
     /// all cached pages
     frame: caps.Frame = .{},
@@ -699,7 +699,7 @@ const DirNode = struct {
     /// inode of the directory in the correct device
     inode: u128,
 
-    cache_lock: abi.lock.YieldMutex = .{},
+    cache_lock: abi.thread.Mutex = .{},
 
     /// all cached subdirectories and files in this directory
     entries: std.StringHashMap(DirEntry) = .init(abi.mem.slab_allocator),
@@ -992,8 +992,8 @@ const DirNode = struct {
 };
 
 var socket_node_allocator: std.heap.MemoryPool(SocketNode) = std.heap.MemoryPool(SocketNode).init(abi.mem.server_page_allocator);
-var socket_node_allocator_lock: abi.lock.YieldMutex = .{};
+var socket_node_allocator_lock: abi.thread.Mutex = .{};
 var file_node_allocator: std.heap.MemoryPool(FileNode) = std.heap.MemoryPool(FileNode).init(abi.mem.server_page_allocator);
-var file_node_allocator_lock: abi.lock.YieldMutex = .{};
+var file_node_allocator_lock: abi.thread.Mutex = .{};
 var dir_node_allocator: std.heap.MemoryPool(DirNode) = std.heap.MemoryPool(DirNode).init(abi.mem.server_page_allocator);
-var dir_node_allocator_lock: abi.lock.YieldMutex = .{};
+var dir_node_allocator_lock: abi.thread.Mutex = .{};

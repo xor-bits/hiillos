@@ -111,7 +111,6 @@ pub fn main() !void {
         "initfs:///cursor.qoi",
     );
 
-    system_lock = try .newLocked();
     system = .{
         .fb_backbuf = fb_backbuf,
         .fb = fb,
@@ -309,7 +308,7 @@ const DisplayContext = struct {
 };
 
 var system: System = undefined;
-var system_lock: abi.lock.CapMutex = undefined;
+var system_lock: abi.thread.Mutex = .locked();
 
 const Connection = struct {
     next_client_window_id: usize = 1,

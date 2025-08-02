@@ -1,7 +1,9 @@
 const std = @import("std");
+
 const abi = @import("lib.zig");
 const sys = @import("sys.zig");
 const lock = @import("lock.zig");
+const thread = @import("thread.zig");
 
 // some hardcoded capability handles
 
@@ -132,7 +134,7 @@ pub const Vmem = extern struct {
     cap: u32 = 0,
 
     var global_self: std.atomic.Value(u32) = .init(0);
-    var global_self_init: lock.Once(lock.YieldMutex) = .new();
+    var global_self_init: lock.Once(thread.Mutex) = .new();
 
     pub const Type: abi.ObjectType = .vmem;
 
