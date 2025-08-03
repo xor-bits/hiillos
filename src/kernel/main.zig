@@ -434,7 +434,7 @@ fn handle_syscall(
             );
 
             std.debug.assert(mapped_vaddr.raw < 0x8000_0000_0000);
-            trap.syscall_id = abi.sys.encode(mapped_vaddr.raw);
+            trap.syscall_id = abi.sys.encode(@truncate(mapped_vaddr.raw));
         },
         .vmem_unmap => {
             const pages: u32 = @truncate(std.math.divCeil(usize, trap.arg2, 0x1000) catch unreachable);

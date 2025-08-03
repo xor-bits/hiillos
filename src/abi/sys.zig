@@ -375,15 +375,12 @@ pub fn Result(comptime Ok: type) type {
     return abi.Result(Ok, ErrorEnum);
 }
 
-/// FIXME: should be Error!u32
-pub fn encode(result: Error!usize) usize {
-    const val = result catch |err| {
+pub fn encode(result: Error!u63) usize {
+    if (result) |ok| {
+        return ok;
+    } else |err| {
         return encodeError(err);
-    };
-
-    std.debug.assert(val <= std.math.maxInt(isize));
-
-    return val;
+    }
 }
 
 pub fn encodeVoid(result: Error!void) usize {
