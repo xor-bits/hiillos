@@ -134,7 +134,7 @@ pub fn main() !void {
 
     try abi.thread.spawn(connectionThreadMain, .{wm_socket_rx});
     try abi.thread.spawn(inputThreadMain, .{seat.input});
-    try compositorThreadMain();
+    compositorThreadMain();
 }
 
 fn exec(path: []const u8) !void {
@@ -153,7 +153,7 @@ fn exec(path: []const u8) !void {
     _ = try initial_app.asErrorUnion();
 }
 
-fn compositorThreadMain() !void {
+fn compositorThreadMain() noreturn {
     const frametime_ns: u32 = 16_666_667;
     var nanos = abi.time.nanoTimestamp();
     while (true) {
