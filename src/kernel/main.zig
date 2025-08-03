@@ -877,15 +877,15 @@ fn handle_syscall(
         .futex_wake => try futex.wake(trap, thread),
         .futex_requeue => try futex.requeue(trap, thread),
 
-        .selfYield => {
+        .self_yield => {
             proc.yield(trap);
         },
-        .selfStop => {
+        .self_stop => {
             proc.switchFrom(trap, thread);
             thread.exit(trap.arg0);
             proc.switchNow(trap);
         },
-        .selfDump => {
+        .self_dump => {
             log.info("selfDump: {}", .{trap.*});
         },
         .self_set_extra => {

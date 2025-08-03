@@ -145,13 +145,12 @@ pub const Id = enum(usize) {
     /// of threads to wait for the given new address
     futex_requeue,
 
-    // FIXME: casing
     /// give up the CPU for other tasks
-    selfYield,
+    self_yield,
     /// stop the active thread
-    selfStop,
+    self_stop,
     /// print arch.TrapRegs to serial output
-    selfDump,
+    self_dump,
     /// set an extra IPC register of this thread
     self_set_extra,
     /// get and zero an extra IPC register of this thread
@@ -981,16 +980,16 @@ pub fn futexRequeue(
 }
 
 pub fn selfYield() void {
-    _ = syscall(.selfYield, .{}, .{}) catch unreachable;
+    _ = syscall(.self_yield, .{}, .{}) catch unreachable;
 }
 
 pub fn selfStop(code: usize) noreturn {
-    _ = syscall(.selfStop, .{code}, .{}) catch {};
+    _ = syscall(.self_stop, .{code}, .{}) catch {};
     unreachable;
 }
 
 pub fn selfDump() void {
-    _ = syscall(.selfDump, .{}, .{}) catch unreachable;
+    _ = syscall(.self_dump, .{}, .{}) catch unreachable;
 }
 
 pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };
