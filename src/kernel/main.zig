@@ -226,7 +226,9 @@ pub fn syscall(trap: *arch.TrapRegs) void {
 
     if (conf.LOG_SYSCALL_STATS) {
         _ = syscall_stats.getPtr(id).fetchAdd(1, .monotonic);
+    }
 
+    if (conf.LOG_SYSCALL_STATS and id == .log) {
         log.debug("syscalls:", .{});
         var it = syscall_stats.iterator();
         while (it.next()) |e| {
