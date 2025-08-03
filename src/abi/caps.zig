@@ -341,7 +341,6 @@ pub const Frame = extern struct {
 
             return;
         }
-        return try sys.frameWrite(this.cap, offset_byte, src);
     }
 
     pub const Stream = struct {
