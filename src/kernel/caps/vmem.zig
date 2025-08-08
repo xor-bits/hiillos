@@ -53,7 +53,7 @@ pub const Vmem = struct {
             caps.decCount(.vmem);
 
         for (self.mappings.items) |mapping| {
-            mapping.frame.deinit();
+            mapping.deinit();
         }
 
         self.mappings.deinit();
