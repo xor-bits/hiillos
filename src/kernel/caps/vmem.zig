@@ -472,6 +472,9 @@ pub const Vmem = struct {
                 cloned.frame.lock.unlock();
                 self.mappings.insert(idx + 1, cloned) catch unreachable;
 
+                std.debug.assert(cloned.pages != 0);
+                std.debug.assert(mapping.pages != 0);
+
                 break;
             }
 
@@ -755,22 +758,33 @@ pub const Vmem = struct {
     }
 
     pub fn check(self: *@This()) bool {
+        return self.checkInner(false);
+    }
+
+    fn checkInner(self: *@This(), comptime print: bool) bool {
         if (!conf.IS_DEBUG) return true;
 
         var ok = true;
 
         var prev: usize = 0;
-        // log.debug("checking vmem", .{});
+        if (print) log.debug("checking vmem", .{});
         for (self.mappings.items) |mapping| {
+            // make sure mappings are ordered
             if (mapping.getVaddr().raw < prev) ok = false;
             prev = mapping.getVaddr().raw + mapping.pages * 0x1000;
 
-            // log.debug("[ 0x{x:0>16} .. 0x{x:0>16} ] {s}", .{
-            //     mapping.getVaddr().raw,
-            //     mapping.getVaddr().raw + mapping.pages * 0x1000,
-            //     if (ok) "ok" else "err",
-            // });
+            // make sure mappings are non-zero length
+            if (mapping.pages == 0) ok = false;
+
+            if (print) log.debug("[ 0x{x:0>16} .. 0x{x:0>16} ] {s}", .{
+                mapping.getVaddr().raw,
+                mapping.getVaddr().raw + mapping.pages * 0x1000,
+                if (ok) "ok" else "err",
+            });
         }
+
+        if (!print and !ok)
+            _ = self.checkInner(true);
 
         return ok;
     }
@@ -781,6 +795,7 @@ pub const Vmem = struct {
             vaddr.raw,
             @as(usize, pages) * 0x1000,
         ) catch return Error.OutOfBounds;
+
         if (upper_bound > 0x8000_0000_0000) {
             return Error.OutOfBounds;
         }
