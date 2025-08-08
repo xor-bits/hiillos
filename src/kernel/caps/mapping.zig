@@ -50,6 +50,8 @@ pub const Mapping = struct {
         rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) !*@This() {
+        std.debug.assert(pages != 0);
+
         const mapping = try caps.slab_allocator.allocator().create(@This());
         mapping.* = .{
             .frame = frame,
