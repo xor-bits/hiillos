@@ -39,8 +39,9 @@ fn options(b: *std.Build) Opts {
 
     const user_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
-        .os_tag = .freestanding,
+        .os_tag = .other,
         .abi = .none,
+        .dynamic_linker = .init("initfs:///sbin/pm"),
     });
 
     const kernel_target = b.resolveTargetQuery(.{
