@@ -430,7 +430,6 @@ pub const Vmem = struct {
                 mapping.setVaddr(addr.Virt.fromInt(b_end));
                 mapping.pages -= shift;
                 mapping.frame_first_page += shift;
-                break;
             } else if (a_beg >= b_beg and a_end <= a_end) {
                 // case 2:
                 // b: |---------------------|
