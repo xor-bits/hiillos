@@ -470,8 +470,8 @@ pub const Vmem = struct {
             }
 
             if (mapping.pages == 0) {
-                self.orderedRemoveMappingLocked(idx);
                 // TODO: batch remove
+                self.mappings.orderedRemove(idx).deinit();
             } else {
                 idx += 1;
             }
@@ -609,25 +609,6 @@ pub const Vmem = struct {
                 ipi_bitmap.* |= @as(u256, 1) << @as(u8, @intCast(i));
             }
         }
-    }
-
-    fn orderedRemoveMappingLocked(self: *@This(), idx: usize) void {
-        const mapping = self.mappings.orderedRemove(idx);
-
-        // remove the mapping from the mapped frame also
-        mapping.frame.lock.lock();
-        for (mapping.frame.mappings.items, 0..) |same, i| {
-            if (same == mapping) {
-                _ = mapping.frame.mappings.swapRemove(i);
-                break;
-            }
-        }
-        for (mapping.frame.mappings.items) |same| {
-            std.debug.assert(same != mapping); // no duplicates
-        }
-        mapping.frame.lock.unlock();
-
-        mapping.deinit();
     }
 
     pub fn pageFault(

@@ -65,6 +65,19 @@ pub const Mapping = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        // remove the mapping from the list of mappings tracked by the frame
+        self.frame.lock.lock();
+        for (self.frame.mappings.items, 0..) |same, i| {
+            if (same == self) {
+                _ = self.frame.mappings.swapRemove(i);
+                break;
+            }
+        }
+        for (self.frame.mappings.items) |same| {
+            std.debug.assert(same != self); // no duplicates
+        }
+        self.frame.lock.unlock();
+
         self.frame.deinit();
         caps.slab_allocator.allocator().destroy(self);
     }
