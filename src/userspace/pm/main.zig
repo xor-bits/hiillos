@@ -19,6 +19,11 @@ pub export var export_pm = abi.loader.Resource.new(.{
     .ty = .receiver,
 });
 
+pub export var import_pm = abi.loader.Resource.new(.{
+    .name = "hiillos.pm.ipc",
+    .ty = .sender,
+});
+
 pub export var import_vfs = abi.loader.Resource.new(.{
     .name = "hiillos.vfs.ipc",
     .ty = .sender,
@@ -157,7 +162,7 @@ pub const System = struct {
         try abi.loader.prepareSpawn(vmem, thread, entry);
 
         var id: u32 = 0;
-        id = try proc.giveHandle(try caps.Sender.create(system.recv, pid));
+        id = try proc.giveHandle(try (caps.Sender{ .cap = import_pm.handle }).stampFinal(pid));
         std.debug.assert(id == caps.COMMON_PM.cap);
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_hpet.handle }).clone());
         std.debug.assert(id == caps.COMMON_HPET.cap);
@@ -308,6 +313,11 @@ fn getStdio(
     handler: abi.lpc.Handler(abi.PmProtocol.GetStdioRequest),
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
+
+    if (daemon.stamp == 0) {
+        handler.reply.send(.{ .err = .permission_denied });
+        return;
+    }
 
     const proc = &daemon.ctx.processes.items[daemon.stamp - 1].?;
     handler.reply.send(.{ .ok = try proc.self_stdio.clone() });

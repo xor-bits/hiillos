@@ -14,9 +14,11 @@ const Error = abi.sys.Error;
 
 //
 
-pub const Receiver = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
+pub const Channel = struct {
     refcnt: abi.epoch.RefCnt = .{},
+
+    // receiver_closed: std.atomic.Value(bool) = .init(false),
+    // sender_closed: std.atomic.Value(bool) = .init(false),
 
     // TODO: remove a thread from here if gets stopped
     /// the currently waiting receiver thread
@@ -26,28 +28,42 @@ pub const Receiver = struct {
     queue_lock: abi.lock.SpinMutex = .locked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
-    pub const UserHandle = abi.caps.Receiver;
+    pub fn init() !struct { *Receiver, *Sender } {
+        const allocator = caps.slab_allocator.allocator();
 
-    pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)
-            log.info("Receiver.init", .{});
-        if (conf.LOG_OBJ_STATS)
+            log.info("Channel.init", .{});
+        if (conf.LOG_OBJ_STATS) {
             caps.incCount(.receiver);
+            caps.incCount(.sender);
+        }
 
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{};
+        errdefer if (conf.LOG_OBJ_STATS) {
+            caps.decCount(.receiver);
+            caps.decCount(.sender);
+        };
+
+        const obj: *@This() = try allocator.create(@This());
+        errdefer allocator.destroy(obj);
+        obj.* = .{ .refcnt = .{ .refcnt = .init(2) } };
         obj.queue_lock.unlock();
 
-        return obj;
+        const receiver = try allocator.create(Receiver);
+        errdefer allocator.destroy(receiver);
+        receiver.* = .{ .channel = obj };
+
+        const sender = try allocator.create(Sender);
+        errdefer allocator.destroy(sender);
+        sender.* = .{ .channel = obj };
+
+        return .{ receiver, sender };
     }
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
 
         if (conf.LOG_OBJ_CALLS)
-            log.info("Receiver.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.receiver);
+            log.info("Channel.deinit", .{});
 
         if (self.receiver.load(.monotonic)) |receiver| {
             receiver.deinit();
@@ -57,6 +73,28 @@ pub const Receiver = struct {
         }
 
         caps.slab_allocator.allocator().destroy(self);
+    }
+};
+
+pub const Receiver = struct {
+    // FIXME: prevent reordering so that the offset would be same on all objects
+    refcnt: abi.epoch.RefCnt = .{},
+
+    // TODO: useless double indirection
+    channel: *Channel,
+
+    pub const UserHandle = abi.caps.Receiver;
+
+    pub fn deinit(self: *@This()) void {
+        if (!self.refcnt.dec()) return;
+
+        if (conf.LOG_OBJ_CALLS)
+            log.info("Receiver.deinit", .{});
+        if (conf.LOG_OBJ_STATS)
+            caps.decCount(.receiver);
+
+        // self.channel.receiver_closed.store(true, .release);
+        self.channel.deinit();
     }
 
     /// block until something sends
@@ -82,9 +120,9 @@ pub const Receiver = struct {
         proc.switchFrom(trap, thread);
 
         // check if a sender is already waiting
-        self.queue_lock.lock();
-        if (self.queue.popFront()) |immediate| {
-            self.queue_lock.unlock();
+        self.channel.queue_lock.lock();
+        if (self.channel.queue.popFront()) |immediate| {
+            self.channel.queue_lock.unlock();
 
             if (conf.LOG_WAITING)
                 log.debug("IPC wake {*}", .{immediate});
@@ -104,10 +142,10 @@ pub const Receiver = struct {
             return false;
         }
 
-        if (null != self.receiver.cmpxchgStrong(null, thread, .seq_cst, .monotonic)) {
+        if (null != self.channel.receiver.cmpxchgStrong(null, thread, .seq_cst, .monotonic)) {
             unreachable; // the receiver cannot be cloned ... _yet_
         }
-        self.queue_lock.unlock();
+        self.channel.queue_lock.unlock();
 
         return true;
     }
@@ -166,27 +204,10 @@ pub const Sender = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    recv: *Receiver,
-    stamp: u32,
+    channel: *Channel,
+    stamp: u32 = 0,
 
     pub const UserHandle = abi.caps.Sender;
-
-    pub fn init(recv: *Receiver, stamp: u32) !*@This() {
-        errdefer recv.deinit(); // FIXME: errdefer in the caller instead
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Sender.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.sender);
-
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{
-            .recv = recv,
-            .stamp = stamp,
-        };
-
-        return obj;
-    }
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
@@ -196,7 +217,7 @@ pub const Sender = struct {
         if (conf.LOG_OBJ_STATS)
             caps.decCount(.sender);
 
-        self.recv.deinit();
+        self.channel.deinit();
 
         caps.slab_allocator.allocator().destroy(self);
     }
@@ -215,7 +236,7 @@ pub const Sender = struct {
             log.debug("Sender.call {}", .{msg});
 
         // acquire a listener or switch threads
-        const listener = self.recv.receiver.swap(null, .seq_cst) orelse {
+        const listener = self.channel.receiver.swap(null, .seq_cst) orelse {
             @branchHint(.cold);
 
             // first push the thread into the sleep queue
@@ -227,9 +248,9 @@ pub const Sender = struct {
             proc.switchFrom(trap, thread);
             thread.trap.writeMessage(msg);
 
-            self.recv.queue_lock.lock();
-            self.recv.queue.pushBack(thread);
-            self.recv.queue_lock.unlock();
+            self.channel.queue_lock.lock();
+            self.channel.queue.pushBack(thread);
+            self.channel.queue_lock.unlock();
 
             proc.switchNow(trap);
             return;

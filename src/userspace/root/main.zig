@@ -64,8 +64,8 @@ pub fn main() !void {
 
     const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ .{0} ** 80).*);
     initfsd_entry.value_ptr.* = .{
-        .handle = (try initfsd.getReceiver()).cap,
-        .type = .receiver,
+        .handle = (try initfsd.getSender()).cap,
+        .type = .sender,
         .given = 1,
     };
     const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ .{0} ** 82).*);
@@ -214,9 +214,12 @@ fn createAllExports(
             // FIXME: validate the data
             switch (exp.val.ty) {
                 .receiver => {
+                    const rx, const tx = try caps.channel();
                     result.value_ptr.* = Resource{
-                        .handle = (try caps.Receiver.create()).cap,
+                        .handle = tx.cap,
+                        .receiver = rx.cap,
                         .type = .receiver,
+                        .owner = server,
                     };
                 },
                 .notify => {
@@ -317,6 +320,15 @@ fn grantAllExports(
                 log.warn("unresolved export resource: '{s}'", .{exp.val.getName()});
                 continue;
             };
+
+            const new_handle: u32 = switch (exp.val.ty) {
+                .receiver => try abi.sys.handleDuplicate(res.receiver),
+                .notify => try abi.sys.handleDuplicate(res.handle),
+                else => {
+                    log.warn("invalid resource export: '{s}'", .{exp.name});
+                    continue;
+                },
+            };
             std.debug.assert(res.given == 0);
             res.given += 1;
 
@@ -324,11 +336,7 @@ fn grantAllExports(
                 exp.val.getName(), server_manifest.getName(),
             });
 
-            // TODO: lower the root server privileges on the resource
-            // to allow only creating new senders
-
-            const dupe = try abi.sys.handleDuplicate(res.handle);
-            const their_handle = try server.proc.giveCap(dupe);
+            const their_handle = try server.proc.giveCap(new_handle);
             try server.vmem.write(
                 exp.addr + @offsetOf(abi.loader.Resource, "handle"),
                 std.mem.asBytes(&their_handle)[0..],
@@ -357,7 +365,17 @@ fn grantAllImports(
             // FIXME: validate the data
             const new_handle: u32 = switch (imp.val.ty) {
                 .sender,
-                => (try caps.Sender.create(caps.Receiver{ .cap = res.handle }, 0)).cap,
+                => b: {
+                    const new_handle = try abi.sys.handleDuplicate(res.handle);
+                    if (res.owner != server) {
+                        // the receiver owner is allowed get the real sender
+                        try abi.sys.handleRestrict(new_handle, .{
+                            .clone = true,
+                            .transfer = true,
+                        });
+                    }
+                    break :b new_handle;
+                },
 
                 .notify,
                 .x86_irq_allocator,
@@ -389,8 +407,12 @@ fn grantAllImports(
 
 const Resource = packed struct {
     handle: u32,
+    /// If handle is a sender, this is the optional receiver end.
+    /// Not used with other types
+    receiver: u32 = 0,
     given: u24 = 0,
     type: abi.ObjectType,
+    owner: ?*Server = null,
 };
 
 const StringContext = struct {

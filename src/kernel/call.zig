@@ -545,12 +545,16 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
         },
 
-        .receiver_create => {
-            const recv = try caps.Receiver.init();
-            errdefer recv.deinit();
+        .channel_create => {
+            const rx, const tx = try caps.Channel.init();
+            errdefer rx.deinit();
+            errdefer tx.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(recv, null));
-            trap.syscall_id = abi.sys.encode(handle);
+            const rx_handle = try thread.proc.pushCapability(caps.Capability.init(rx, null));
+            const tx_handle = try thread.proc.pushCapability(caps.Capability.init(tx, null));
+
+            trap.arg0 = tx_handle;
+            trap.syscall_id = abi.sys.encode(rx_handle);
         },
         .receiver_recv => {
             const recv, _ = try thread.proc.getObject(caps.Receiver, @truncate(trap.arg0));
@@ -598,13 +602,15 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
         },
 
-        .sender_create => {
-            const recv, _ = try thread.proc.getObject(caps.Receiver, @truncate(trap.arg0));
-            defer recv.deinit();
+        .sender_stamp => {
+            const send, const rights = try thread.proc.getObject(caps.Sender, @truncate(trap.arg0));
+            defer send.deinit();
 
-            const sender = try caps.Sender.init(recv, @truncate(trap.arg1));
-            const handle = try thread.proc.pushCapability(caps.Capability.init(sender, null));
-            trap.syscall_id = abi.sys.encode(handle);
+            if (!rights.tag)
+                return Error.PermissionDenied;
+
+            send.stamp = @truncate(trap.arg1);
+            trap.syscall_id = abi.sys.encode(0);
         },
         .sender_call => {
             @branchHint(.likely);

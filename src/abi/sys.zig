@@ -75,9 +75,9 @@ pub const Id = enum(usize) {
     /// set `Thread` signal handler instruction pointer, the handler is like a hardware interrupt handler
     thread_set_sig_handler,
 
-    /// create a new `Receiver` object that is the receiver end of a new IPC queue
-    receiver_create,
-    // receiver_subscribe,
+    /// create a new IPC queue and a `Receiver`-`Sender` object pair for it
+    channel_create,
+
     /// wait until a matching `Sender.call` is called and return the message
     receiver_recv,
     /// non-blocking reply to the last caller with a message
@@ -90,8 +90,8 @@ pub const Id = enum(usize) {
     /// non-blocking reply to the last caller with a message
     reply_reply,
 
-    /// create a new `Sender` object that is the sender end of some already existing IPC queue
-    sender_create,
+    /// set a new stamp for the `Sender` that the `Receiver` gets on each recv
+    sender_stamp,
     // sender_send, // TODO: non-blocking call
     /// wait until a matching `Receiver.recv` is called and switch to that thread
     /// with a provided message, and return the reply message
@@ -808,8 +808,10 @@ pub fn threadSetSigHandler(thread: u32, ip: usize) !void {
     _ = try syscall(.thread_set_sig_handler, .{ thread, ip }, .{});
 }
 
-pub fn receiverCreate() Error!u32 {
-    return @intCast(try syscall(.receiver_create, .{}, .{}));
+pub fn channelCreate() Error![2]u32 {
+    var tx: u64 = undefined;
+    const rx: u32 = @intCast(try syscall(.channel_create, .{}, .{&tx}));
+    return .{ rx, @truncate(tx) };
 }
 
 pub fn receiverRecv(recv: u32) Error!Message {
@@ -870,13 +872,13 @@ pub fn replyReply(reply: u32, msg: Message) Error!void {
     );
 }
 
-pub fn senderCreate(recv: u32, stamp: u32) Error!u32 {
-    return @intCast(try syscall(.sender_create, .{ recv, stamp }, .{}));
+pub fn senderStamp(send: u32, stamp: u32) Error!void {
+    _ = try syscall(.sender_stamp, .{ send, stamp }, .{});
 }
 
-pub fn senderCall(recv: u32, msg: Message) Error!Message {
+pub fn senderCall(send: u32, msg: Message) Error!Message {
     var _msg = msg;
-    _msg.cap_or_stamp = recv;
+    _msg.cap_or_stamp = send;
     var msg_regs = @as(PackedMessage, @bitCast(_msg));
 
     _ = try syscall(.sender_call, msg_regs, .{

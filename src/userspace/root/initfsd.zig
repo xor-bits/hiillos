@@ -86,8 +86,8 @@ pub fn wait() !void {
     initfs_ready.wait();
 }
 
-pub fn getReceiver() !caps.Receiver {
-    return try initfs_recv.clone();
+pub fn getSender() !caps.Sender {
+    return try initfs_send.clone();
 }
 
 pub fn getBootInfoAddr() *const volatile abi.BootInfo {
@@ -95,7 +95,7 @@ pub fn getBootInfoAddr() *const volatile abi.BootInfo {
 }
 
 var initfs_ready: caps.Notify = .{};
-var initfs_recv: caps.Receiver = .{};
+var initfs_send: caps.Sender = .{};
 pub var boot_info_addr: std.atomic.Value(usize) = .init(0);
 
 fn run() !void {
@@ -108,12 +108,8 @@ fn run() !void {
         .{},
     ), .release);
 
-    @atomicStore(
-        u32,
-        &initfs_recv.cap,
-        (try caps.Receiver.create()).cap,
-        .release,
-    );
+    const initfs_recv, initfs_send = try caps.channel();
+    @atomicStore(u32, &initfs_send.cap, initfs_send.cap, .release);
 
     log.info("decompressing", .{});
     try decompress();

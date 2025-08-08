@@ -20,6 +20,11 @@ pub export var export_vfs = abi.loader.Resource.new(.{
     .ty = .receiver,
 });
 
+pub export var import_vfs = abi.loader.Resource.new(.{
+    .name = "hiillos.vfs.ipc",
+    .ty = .sender,
+});
+
 pub export var import_initfs = abi.loader.Resource.new(.{
     .name = "hiillos.initfsd.ipc",
     .ty = .sender,
@@ -89,11 +94,15 @@ pub fn main() !void {
     // inform the root that vfs is ready
     log.debug("vfs ready", .{});
 
-    abi.lpc.daemon(Server{ .recv = .{ .cap = export_vfs.handle } });
+    abi.lpc.daemon(Server{
+        .recv = .{ .cap = export_vfs.handle },
+        .send = .{ .cap = import_vfs.handle },
+    });
 }
 
 const Server = struct {
     recv: caps.Receiver,
+    send: caps.Sender,
 
     pub const routes = .{
         openFile,
@@ -337,14 +346,12 @@ fn newSender(
         return;
     }
 
-    const sender = caps.Sender.create(
-        daemon.ctx.recv,
-        handler.req.uid,
-    ) catch |err| {
-        log.err("failed to create a sender: {}", .{err});
-        handler.reply.send(.{ .err = .internal });
-        return;
-    };
+    errdefer handler.reply.send(.{ .err = .internal });
+
+    const sender = try daemon.ctx.send.clone();
+    try sender.stamp(handler.req.uid);
+    try sender.handle().restrict(abi.sys.Rights.common);
+
     handler.reply.send(.{ .ok = sender });
 }
 

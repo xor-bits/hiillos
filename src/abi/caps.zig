@@ -466,6 +466,11 @@ pub const Frame = extern struct {
     }
 };
 
+pub fn channel() sys.Error!struct { Receiver, Sender } {
+    const rx, const tx = try abi.sys.channelCreate();
+    return .{ .{ .cap = rx }, .{ .cap = tx } };
+}
+
 /// capability to **the** receiver end of an endpoint,
 /// there can only be a single receiver
 pub const Receiver = extern struct {
@@ -475,13 +480,7 @@ pub const Receiver = extern struct {
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
-        .tag = true,
     };
-
-    pub fn create() sys.Error!@This() {
-        const cap = try sys.receiverCreate();
-        return .{ .cap = cap };
-    }
 
     pub fn clone(this: @This()) sys.Error!@This() {
         const cap = try sys.handleDuplicate(this.cap);
@@ -521,11 +520,6 @@ pub const Sender = extern struct {
         .tag = true,
     };
 
-    pub fn create(recv: Receiver, stamp: u32) sys.Error!@This() {
-        const cap = try sys.senderCreate(recv.cap, stamp);
-        return .{ .cap = cap };
-    }
-
     pub fn clone(this: @This()) sys.Error!@This() {
         const cap = try sys.handleDuplicate(this.cap);
         return .{ .cap = cap };
@@ -533,6 +527,21 @@ pub const Sender = extern struct {
 
     pub fn close(this: @This()) void {
         sys.handleClose(this.cap);
+    }
+
+    pub fn stamp(self: @This(), s: u32) sys.Error!void {
+        try sys.senderStamp(self.cap, s);
+    }
+
+    /// helper to clone, stamp and restrict the sender to create a new sender that cannot be stamped
+    pub fn stampFinal(self: @This(), s: u32) sys.Error!@This() {
+        const new = try self.clone();
+        errdefer new.close();
+
+        try new.stamp(s);
+        try new.handle().restrict(sys.Rights.common);
+
+        return new;
     }
 
     pub fn call(self: @This(), msg: sys.Message) sys.Error!sys.Message {

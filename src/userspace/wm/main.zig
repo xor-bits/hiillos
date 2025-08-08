@@ -33,8 +33,7 @@ pub fn main() !void {
     const seat = try seat_result.asErrorUnion();
     defer seat.deinit();
 
-    const wm_socket_rx = try caps.Receiver.create();
-    const wm_socket_tx = try caps.Sender.create(wm_socket_rx, 0);
+    const wm_socket_rx, const wm_socket_tx = try caps.channel();
 
     const res = try abi.lpc.call(abi.VfsProtocol.LinkRequest, .{
         .path = try abi.fs.Path.new("fs:///wm.sock"),
@@ -181,8 +180,7 @@ fn connectRequest(
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
 
-    const rx = try caps.Receiver.create();
-    const tx = try caps.Sender.create(rx, 0);
+    const rx, const tx = try caps.channel();
 
     try abi.thread.spawn(clientConnectionThreadMain, .{rx});
 

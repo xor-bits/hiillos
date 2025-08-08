@@ -28,6 +28,7 @@ pub const Frame = caps_frame.Frame;
 pub const TlbShootdown = caps_frame.TlbShootdown;
 pub const Vmem = caps_vmem.Vmem;
 pub const Mapping = caps_mapping.Mapping;
+pub const Channel = caps_ipc.Channel;
 pub const Receiver = caps_ipc.Receiver;
 pub const Reply = caps_ipc.Reply;
 pub const Sender = caps_ipc.Sender;
