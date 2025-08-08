@@ -779,11 +779,7 @@ pub const Vmem = struct {
         const upper_bound: usize = std.math.add(
             usize,
             vaddr.raw,
-            std.math.mul(
-                usize,
-                pages,
-                0x1000,
-            ) catch return Error.OutOfBounds,
+            @as(usize, pages) * 0x1000,
         ) catch return Error.OutOfBounds;
         if (upper_bound > 0x8000_0000_0000) {
             return Error.OutOfBounds;
