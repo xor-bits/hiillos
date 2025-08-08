@@ -25,6 +25,11 @@ pub export var import_initfs = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
+pub export var import_hpet = abi.loader.Resource.new(.{
+    .name = "hiillos.hpet.ipc",
+    .ty = .sender,
+});
+
 //
 
 var global_root: *DirNode = undefined;
@@ -38,13 +43,29 @@ pub fn main() !void {
     log.info("hello from vfs", .{});
 
     if (abi.conf.IPC_BENCHMARK) {
+        const start_nanos = abi.time.nanoTimestampWith(.{ .cap = import_hpet.handle });
+
         const recv = caps.Receiver{ .cap = export_vfs.handle };
         var msg = try recv.recv();
-        var i: usize = 0;
+        var i: usize = 1;
         while (true) : (i +%= 1) {
             msg = try recv.replyRecv(msg);
-            if (i % 1_000_000 == 0) {
-                log.info("{} calls", .{i});
+            if (i % 0x80_0000 == 0) {
+                @branchHint(.cold);
+                // nanoTimestampWith is an IPC call itself,
+                // but does a bit more than the normal empty round trip
+                i += 1;
+                const now_nanos = abi.time.nanoTimestampWith(.{ .cap = import_hpet.handle });
+                const elapsed_nanos = now_nanos -| start_nanos;
+                const rtt_nanos = elapsed_nanos / i;
+                const per_second = if (elapsed_nanos == 0) 0 else @as(u128, i) * 1_000_000_000 / elapsed_nanos;
+
+                // log.info("{}", .{i});
+                log.info("{} calls (~{}ns RTT) (~{}Hz)", .{
+                    i,
+                    rtt_nanos,
+                    per_second,
+                });
             }
         }
     }

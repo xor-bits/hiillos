@@ -51,11 +51,13 @@ pub fn NumberPrefix(comptime T: type, comptime base: Base) type {
         pub fn format(self: Self, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             var num = self.num;
             const prec = opts.precision orelse 1;
+            const prec_limit = 1000 *| (std.math.powi(usize, 10, prec) catch std.math.maxInt(usize));
+
             switch (base) {
                 .binary => {
                     const table: [10][]const u8 = .{ "", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi", "Ri" };
                     for (table) |scale| {
-                        if (num < 1024 * prec) {
+                        if (num < prec_limit) {
                             return std.fmt.format(writer, "{d} {s}", .{ num, scale });
                         }
                         num /= 1024;
@@ -65,7 +67,7 @@ pub fn NumberPrefix(comptime T: type, comptime base: Base) type {
                 .decimal => {
                     const table: [10][]const u8 = .{ "", "K", "M", "G", "T", "P", "E", "Z", "Y", "R" };
                     for (table) |scale| {
-                        if (num < 1000 * prec) {
+                        if (num < prec_limit) {
                             return std.fmt.format(writer, "{d} {s}", .{ num, scale });
                         }
                         num /= 1000;
