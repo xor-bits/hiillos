@@ -146,7 +146,7 @@ zig build # generates the os.iso in zig-out/os.iso
 ## IPC performance
 
 Approximate synchronous IPC performance: `call` + `replyRecv`
-loop takes about 323ns (3 091 603 per second) (in QEMU+KVM with Ryzen 9 5950X):
+loop takes about 349ns (2 864 198 per second) (in QEMU+KVM with Ryzen 9 5950X):
 
 ```zig
 // server
