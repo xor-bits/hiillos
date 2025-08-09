@@ -19,6 +19,8 @@ const Opts = struct {
     sound: bool,
     comp_level: u8,
     comp_threads: u8,
+    fb_log: bool,
+    uart_log: bool,
 };
 
 fn options(b: *std.Build) Opts {
@@ -60,57 +62,71 @@ fn options(b: *std.Build) Opts {
         .kernel_target = kernel_target,
         .optimize = optimize,
 
-        .optimize_root = b.option(std.builtin.OptimizeMode, "optimize_root", "optimization level for root and initfsd") orelse
-            optimize,
+        .optimize_root = b.option(std.builtin.OptimizeMode, "optimize_root",
+            \\optimization level for root and initfsd
+        ) orelse optimize,
 
         // QEMU gui true/false
-        .display = b.option(bool, "display", "QEMU gui true/false") orelse
-            true,
+        .display = b.option(bool, "display",
+            \\QEMU gui true/false
+        ) orelse true,
 
         // QEMU debug level
-        .debug = b.option(u2, "debug", "QEMU debug level") orelse
-            1,
+        .debug = b.option(u2, "debug",
+            \\QEMU debug level
+        ) orelse 1,
 
         // use OVMF UEFI to boot in QEMU (OVMF is slower, but has more features)
-        .use_ovmf = b.option(bool, "uefi", "use OVMF UEFI to boot in QEMU (OVMF is slower, but has more features) (default: false)") orelse
-            false,
+        .use_ovmf = b.option(bool, "uefi",
+            \\use OVMF UEFI to boot in QEMU (OVMF is slower, but has more features) (default: false)
+        ) orelse false,
 
         // OVMF.fd path
-        .ovmf_fd = b.option([]const u8, "ovmf", "OVMF.fd path") orelse b: {
-            if (std.posix.getenvZ("OVMF_FD")) |override| {
-                break :b override[0..];
-            } else {
-                break :b "/usr/share/ovmf/x64/OVMF.fd";
-            }
-        },
+        .ovmf_fd = b.option([]const u8, "ovmf",
+            \\OVMF.fd path
+        ) orelse std.posix.getenv("OVMF_FD") orelse "/usr/share/ovmf/x64/OVMF.fd",
 
         // use GDB
-        .gdb = b.option(@TypeOf(@as(Opts, undefined).gdb), "gdb", "use GDB") orelse
-            .false,
+        .gdb = b.option(@TypeOf(@as(Opts, undefined).gdb), "gdb",
+            \\use GDB
+        ) orelse .false,
 
         // include test runner
-        .testing = b.option(bool, "test", "include test runner") orelse
-            true,
+        .testing = b.option(bool, "test",
+            \\include test runner
+        ) orelse true,
 
         // number of SMP processors, 0 means QEMU default
-        .cpus = b.option(u8, "cpus", "number of SMP processors") orelse
-            4,
+        .cpus = b.option(u8, "cpus",
+            \\number of SMP processors
+        ) orelse 4,
 
         // QEMU KVM hardware acceleration
-        .kvm = b.option(bool, "kvm", "QEMU KVM hardware acceleration") orelse
-            true,
+        .kvm = b.option(bool, "kvm",
+            \\QEMU KVM hardware acceleration
+        ) orelse true,
 
         // QEMU virtio-sound device
-        .sound = b.option(bool, "sound", "Add virtio-sound device to QEMU") orelse
-            true,
+        .sound = b.option(bool, "sound",
+            \\Add virtio-sound device to QEMU
+        ) orelse true,
 
         // initfs compression level
-        .comp_level = b.option(u8, "zst_l", "initfs zstd compression level") orelse
-            19,
+        .comp_level = b.option(u8, "zst_l",
+            \\initfs zstd compression level
+        ) orelse 19,
 
         // initfs compression parallelism
-        .comp_threads = b.option(u8, "zst_t", "initfs zstd compression parallelism (0 for auto)") orelse
-            0,
+        .comp_threads = b.option(u8, "zst_t",
+            \\initfs zstd compression parallelism (0 for auto)
+        ) orelse 0,
+
+        .fb_log = b.option(bool, "fb_log",
+            \\print debug logs using the framebuffer
+        ) orelse false,
+        .uart_log = b.option(bool, "uart_log",
+            \\print debug logs using the 16650 UART
+        ) orelse false,
     };
 }
 
@@ -559,6 +575,11 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
     mod.addImport("font", font);
+
+    const config = b.addOptions();
+    config.addOption(bool, "fb_log", opts.fb_log);
+    config.addOption(bool, "uart_log", opts.uart_log);
+    mod.addOptions("config", config);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/abi/lib.zig"),

@@ -1,9 +1,10 @@
 const builtin = @import("builtin");
+const config = @import("config");
 
 // make these into zig build options
 
-pub const ENABLE_FB_LOG: bool = false;
-pub const ENABLE_UART_LOG: bool = true;
+pub const ENABLE_FB_LOG: bool = config.fb_log;
+pub const ENABLE_UART_LOG: bool = config.uart_log;
 
 pub const LOG_EVERYTHING: bool = false;
 pub const LOG_STATS: bool = LOG_EVERYTHING or false;
