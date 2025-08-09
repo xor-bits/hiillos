@@ -4,6 +4,7 @@ const limine = @import("limine");
 
 const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
+const call = @import("../call.zig");
 const logs = @import("../logs.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
@@ -1822,7 +1823,7 @@ fn syscallHandlerWrapper(args: *TrapRegs) callconv(.SysV) void {
         @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
     }
 
-    main.syscall(args);
+    call.syscall(args);
 }
 
 test "structure sizes" {

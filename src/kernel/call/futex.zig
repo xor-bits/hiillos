@@ -1,10 +1,10 @@
 const abi = @import("abi");
 const std = @import("std");
 
-const addr = @import("addr.zig");
-const arch = @import("arch.zig");
-const caps = @import("caps.zig");
-const proc = @import("proc.zig");
+const addr = @import("../addr.zig");
+const arch = @import("../arch.zig");
+const caps = @import("../caps.zig");
+const proc = @import("../proc.zig");
 
 const util = abi.util;
 const conf = abi.conf;
