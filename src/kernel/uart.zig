@@ -2,7 +2,6 @@ const std = @import("std");
 const abi = @import("abi");
 
 const arch = @import("arch.zig");
-const lazy = @import("lazy.zig");
 
 //
 
@@ -12,11 +11,8 @@ const hcf = arch.hcf;
 
 //
 
-var uart_lazy_init = lazy.Lazy(void).new();
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    _ = uart_lazy_init.getOrInit(lazy.fnPtrAsInit(void, init)) orelse {
-        return;
-    };
+    init();
     if (!initialized.load(.acquire)) return;
 
     const UartWriter = struct {
@@ -40,7 +36,14 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
 const PORT: u16 = 0x3f8;
 var initialized: std.atomic.Value(bool) = .init(false);
 
+var once: abi.lock.Once(abi.lock.SpinMutex) = .{};
 fn init() void {
+    if (!once.tryRun()) {
+        once.wait();
+        return;
+    }
+    defer once.complete();
+
     outb(PORT + 1, 0x00);
     outb(PORT + 3, 0x80);
     outb(PORT + 0, 0x03);

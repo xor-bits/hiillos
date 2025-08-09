@@ -4,7 +4,6 @@ const std = @import("std");
 const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const fb = @import("fb.zig");
-const lazy = @import("lazy.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");

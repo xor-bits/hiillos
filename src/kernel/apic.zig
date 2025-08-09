@@ -7,7 +7,6 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const hpet = @import("hpet.zig");
-const lazy = @import("lazy.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
 

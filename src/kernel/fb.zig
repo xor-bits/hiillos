@@ -5,7 +5,6 @@ const std = @import("std");
 const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
-const lazy = @import("lazy.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
 
@@ -62,13 +61,10 @@ const glyphs = font.glyphs;
 
 //
 
-var fb_lazy_init = lazy.Lazy(void).new();
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     if (!pmem.isInitialized()) return;
 
-    _ = fb_lazy_init.getOrInit(lazy.fnPtrAsInit(void, init_fb)) orelse {
-        return;
-    };
+    init_fb();
     if (!initialized) return;
 
     const FbWriter = struct {
@@ -91,9 +87,9 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
 }
 
 pub fn clear() void {
-    _ = fb_lazy_init.getOrInit(lazy.fnPtrAsInit(void, init_fb)) orelse {
-        return;
-    };
+    if (!pmem.isInitialized()) return;
+
+    init_fb();
     if (!initialized) return;
 
     fb.fill(0x880000);
@@ -107,7 +103,14 @@ var terminal_buf_prev: []u8 = &.{};
 var terminal_size: struct { w: u32, h: u32 } = undefined;
 var initialized: bool = false;
 
+var once: abi.lock.Once(abi.lock.SpinMutex) = .{};
 fn init_fb() void {
+    if (!once.tryRun()) {
+        once.wait();
+        return;
+    }
+    defer once.complete();
+
     const framebuffer_response = framebuffer.response orelse {
         uart.print("failed to init fb log: no fb response", .{});
         return;
