@@ -20,7 +20,6 @@ const Opts = struct {
     comp_level: u8,
     comp_threads: u8,
     fb_log: bool,
-    uart_log: bool,
 };
 
 fn options(b: *std.Build) Opts {
@@ -123,9 +122,6 @@ fn options(b: *std.Build) Opts {
 
         .fb_log = b.option(bool, "fb_log",
             \\print debug logs using the framebuffer
-        ) orelse false,
-        .uart_log = b.option(bool, "uart_log",
-            \\print debug logs using the 16650 UART
         ) orelse false,
     };
 }
@@ -578,7 +574,6 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 
     const config = b.addOptions();
     config.addOption(bool, "fb_log", opts.fb_log);
-    config.addOption(bool, "uart_log", opts.uart_log);
     mod.addOptions("config", config);
 
     const test_mod = b.createModule(.{

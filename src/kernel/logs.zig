@@ -21,7 +21,6 @@ pub const std_options: std.Options = .{
 //
 
 pub fn print(
-    comptime force_uart: bool,
     comptime force_fb: bool,
     comptime fmt: []const u8,
     args: anytype,
@@ -29,7 +28,7 @@ pub fn print(
     log_lock.lock();
     defer log_lock.unlock();
 
-    printLocked(force_uart, force_fb, fmt, args);
+    printLocked(force_fb, fmt, args);
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
@@ -86,13 +85,11 @@ pub const Addr2Line = struct {
 //
 
 fn printLocked(
-    comptime force_uart: bool,
     comptime force_fb: bool,
     comptime fmt: []const u8,
     args: anytype,
 ) void {
-    if (abi.conf.ENABLE_UART_LOG or force_uart)
-        uart.print(fmt, args);
+    uart.print(fmt, args);
     if (abi.conf.ENABLE_FB_LOG or force_fb)
         fb.print(fmt, args);
 }
@@ -110,23 +107,22 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     log_lock.lock();
     defer log_lock.unlock();
 
+    const force_fb = conf.KERNEL_PANIC_RSOD and scope == .panic;
+
     if (arch.cpuIdSafe()) |id| {
         printLocked(
-            false,
-            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            force_fb,
             "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #{} ]: \x1B[0m",
             .{id},
         );
         printLocked(
-            false,
-            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            force_fb,
             format ++ "\n",
             args,
         );
     } else {
         printLocked(
-            false,
-            conf.KERNEL_PANIC_RSOD and scope == .panic,
+            force_fb,
             "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #? ]: \x1B[0m" ++ format ++ "\n",
             args,
         );

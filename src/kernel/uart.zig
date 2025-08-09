@@ -51,12 +51,10 @@ fn init() void {
     outb(PORT + 4, 0x1e);
     outb(PORT + 0, 0xae);
 
-    if (inb(PORT + 0) != 0xAE) {
-        hcf();
-    }
+    if (inb(PORT + 0) != 0xAE)
+        return; // serial port unavailable
 
     outb(PORT + 4, 0x0f);
-
     initialized.store(true, .release);
 }
 
