@@ -23,6 +23,19 @@ zig build run # thats it
 
 # read 'Project-Specific Options' from `zig build --help` for more options
 zig build run -Dtest=true # include custom unit test runner
+
+# development cli
+zig build run --prominent-compile-errors --summary none \
+    # one cpu makes debugging more consistent
+    -Dcpus=1 \
+    # run the GDB server silently, useful for debugging if the system freezes
+    -Dgdb=true \
+    # compile faster and with debug info
+    -Doptimize=Debug \
+    # compile root specifically with higher optimization to speed up initfs decompression
+    -Doptimize_root=ReleaseSafe \
+    # less initfs compression for faster builds
+    -Dzst_l=10
 ```
 
 ## Building an ISO
