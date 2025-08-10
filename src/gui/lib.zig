@@ -63,10 +63,10 @@ pub fn loadImage(
 }
 
 pub const Colour = extern struct {
-    blue: u8 = 0,
-    green: u8 = 0,
-    red: u8 = 0,
-    alpha: u8 = 0xff,
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+    a: u8 = 0xff,
 
     pub fn hex(name: []const u8) !@This() {
         if (name.len != 7 and name.len != 9) {
@@ -77,33 +77,27 @@ pub const Colour = extern struct {
         const num = try std.fmt.parseInt(u32, name[1..], 16);
 
         return .{
-            .red = @truncate((num & 0x00_ff_00_00) >> 16),
-            .green = @truncate((num & 0x00_00_ff_00) >> 8),
-            .blue = @truncate(num & 0x00_00_00_ff),
-            .alpha = if (name.len == 7) 255 else @truncate(num >> 24),
+            .r = @truncate((num & 0x00_ff_00_00) >> 16),
+            .g = @truncate((num & 0x00_00_ff_00) >> 8),
+            .b = @truncate(num & 0x00_00_00_ff),
+            .a = if (name.len == 7) 255 else @truncate(num >> 24),
         };
     }
 
     pub fn mono(brightness: u8) @This() {
-        return .{ .red = brightness, .green = brightness, .blue = brightness };
+        return .{ .r = brightness, .g = brightness, .b = brightness };
     }
 
-    pub const white: @This() = .mono(0xff);
-    pub const black: @This() = .mono(0x00);
-};
+    pub const red: Colour = .{ .r = 0xff };
+    pub const green: Colour = .{ .g = 0xff };
+    pub const blue: Colour = .{ .b = 0xff };
+    pub const yellow: Colour = .{ .r = 0xff, .g = 0xff };
+    pub const cyan: Colour = .{ .g = 0xff, .b = 0xff };
+    pub const magenta: Colour = .{ .r = 0xff, .b = 0xff };
 
-pub const colour = struct {
-    // TODO: move to `Colour` and rename the original fields
-    pub const red: Colour = .{ .red = 0xff };
-    pub const green: Colour = .{ .green = 0xff };
-    pub const blue: Colour = .{ .blue = 0xff };
-    pub const yellow: Colour = .{ .red = 0xff, .green = 0xff };
-    pub const cyan: Colour = .{ .green = 0xff, .blue = 0xff };
-    pub const magenta: Colour = .{ .red = 0xff, .blue = 0xff };
-
-    pub const orange: Colour = .{ .red = 0xff, .green = 0x80 };
-    pub const pink: Colour = .{ .red = 0xff, .blue = 0x80 };
-    pub const purple: Colour = .{ .blue = 0xff, .red = 0x80 };
+    pub const orange: Colour = .{ .r = 0xff, .g = 0x80 };
+    pub const pink: Colour = .{ .r = 0xff, .b = 0x80 };
+    pub const purple: Colour = .{ .b = 0xff, .r = 0x80 };
 
     pub const white: Colour = .mono(0xff);
     pub const light_grey: Colour = .mono(0x87);
