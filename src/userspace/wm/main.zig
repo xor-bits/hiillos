@@ -31,9 +31,7 @@ pub fn main() !void {
         abi.caps.COMMON_TTY,
     );
     const seat = try seat_result.asErrorUnion();
-    defer seat.fb.close();
-    defer seat.fb_info.close();
-    defer seat.input.close();
+    defer seat.deinit();
 
     const wm_socket_rx = try caps.Receiver.create();
     const wm_socket_tx = try caps.Sender.create(wm_socket_rx, 0);

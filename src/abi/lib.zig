@@ -484,15 +484,21 @@ pub const VfsProtocol = struct {
 };
 
 pub const TtyProtocol = struct {
-    pub const SeatResponse = struct {
+    pub const Seat = struct {
         fb: caps.Frame,
         fb_info: caps.Frame,
         // input: ring.SharedRing,
         input: caps.Sender,
+
+        pub fn deinit(self: @This()) void {
+            self.fb.close();
+            self.fb_info.close();
+            self.input.close();
+        }
     };
 
     pub const SeatRequest = struct {
-        pub const Response = Result(SeatResponse, sys.ErrorEnum);
+        pub const Response = Result(Seat, sys.ErrorEnum);
         pub const Union = Request;
     };
 
