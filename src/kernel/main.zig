@@ -158,9 +158,10 @@ pub fn main() noreturn {
 
     if (builtin.is_test) {
         log.info("running tests", .{});
-        @import("root").runTests() catch |err| {
-            std.debug.panic("failed to run tests: {}", .{err});
-        };
+        const fail_count = @import("root").runTests();
+        if (fail_count != 0) {
+            log.err("{} test(s) failed", .{fail_count});
+        }
     }
 
     // initialize and execute the root process

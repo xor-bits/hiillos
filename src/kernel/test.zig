@@ -6,43 +6,51 @@ const kernel = @import("kernel");
 
 pub const std_options = kernel.std_options;
 pub const panic = kernel.panic;
-pub const epoch_locals = kernel.epoch_locals;
-pub const epoch_allocator = kernel.epoch_allocator;
 
 const log = std.log.scoped(.@"test");
 
 //
 
-pub fn runTests() !void {
+pub fn runTests() usize {
     // help the LSP
     const test_fns: []const std.builtin.TestFn = builtin.test_functions;
+
+    var errors: usize = 0;
 
     for (test_fns) |test_fn| {
         if (!isBeforeAll(test_fn)) continue;
 
-        log.info("running test '{s}'", .{test_fn.name});
-        test_fn.func() catch |err| {
-            log.err("test '{s}' failed: {}", .{ test_fn.name, err });
-        };
+        errdefer errors += 1;
+        test_fn.func() catch |err|
+            log.err("test '{s}' failed: {}", .{
+                test_fn.name,
+                err,
+            });
     }
 
     for (test_fns) |test_fn| {
         if (isBeforeAll(test_fn) or isAfterAll(test_fn)) continue;
 
-        log.info("running test '{s}'", .{test_fn.name});
-        test_fn.func() catch |err| {
-            log.err("test '{s}' failed: {}", .{ test_fn.name, err });
-        };
+        errdefer errors += 1;
+        test_fn.func() catch |err|
+            log.err("test '{s}' failed: {}", .{
+                test_fn.name,
+                err,
+            });
     }
 
     for (test_fns) |test_fn| {
         if (!isAfterAll(test_fn)) continue;
 
-        log.info("running test '{s}'", .{test_fn.name});
-        test_fn.func() catch |err| {
-            log.err("test '{s}' failed: {}", .{ test_fn.name, err });
-        };
+        errdefer errors += 1;
+        test_fn.func() catch |err|
+            log.err("test '{s}' failed: {}", .{
+                test_fn.name,
+                err,
+            });
     }
+
+    return errors;
 }
 
 fn isBeforeAll(t: std.builtin.TestFn) bool {
