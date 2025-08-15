@@ -206,7 +206,6 @@ pub const Path = union(enum(u8)) {
                     0,
                     v.len,
                     .{},
-                    .{},
                 );
 
                 v.frame.close();
@@ -281,7 +280,6 @@ pub const Dir = struct {
             0,
             0,
             0,
-            .{},
             .{},
         );
 

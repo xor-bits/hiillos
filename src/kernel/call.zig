@@ -232,14 +232,13 @@ fn handle_syscall(
                 @intCast(@max(frame.pages.len, frame_first_page) - frame_first_page)
             else
                 @truncate(std.math.divCeil(usize, trap.arg4, 0x1000) catch unreachable);
-            const rights, const flags = abi.sys.unpackRightsFlags(@truncate(trap.arg5));
+            const flags = abi.sys.MapFlags.decode(@truncate(trap.arg5));
 
             const mapped_vaddr = try vmem.map(
                 frame,
                 frame_first_page,
                 vaddr,
                 pages,
-                rights,
                 flags,
             );
 

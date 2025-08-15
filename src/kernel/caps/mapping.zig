@@ -30,13 +30,11 @@ pub const Mapping = struct {
     /// number of bytes (rounded up to pages) mapped
     pages: u32,
     target: packed struct {
-        /// mapping rights
-        rights: abi.sys.Rights,
         /// mapping flags
         flags: abi.sys.MapFlags,
         /// virtual address destination of the mapping
         /// `Vmem.mappings` is sorted by this
-        page: u40,
+        page: u48,
     },
 
     pub fn init(
@@ -47,7 +45,6 @@ pub const Mapping = struct {
         frame_first_page: u32,
         vaddr: addr.Virt,
         pages: u32,
-        rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) !*@This() {
         std.debug.assert(pages != 0);
@@ -59,7 +56,6 @@ pub const Mapping = struct {
             .frame_first_page = frame_first_page,
             .pages = pages,
             .target = .{
-                .rights = rights,
                 .flags = flags,
                 .page = @truncate(vaddr.raw >> 12),
             },

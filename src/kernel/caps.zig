@@ -91,6 +91,7 @@ var obj_counts: std.EnumArray(abi.ObjectType, std.atomic.Value(usize)) = .initFi
 pub const CapabilitySlot = packed struct {
     ptr: u56 = 0,
     type: abi.ObjectType = .null,
+    // rights: abi.sys.Rights = .{},
 
     pub fn init(cap: Capability) @This() {
         var self = @This(){};
@@ -360,14 +361,12 @@ test "consecutive maps" {
         addr.Virt.fromInt(0x10000),
         0x10,
         .{},
-        .{},
     );
     _ = try vmem.map(
         frame1.clone(),
         0,
         addr.Virt.fromInt(0x20000),
         0x10,
-        .{},
         .{},
     );
 

@@ -49,7 +49,6 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         0,
         0,
         .{},
-        .{},
     );
     defer vmem.unmap(script_file_addr, script_file_len) catch unreachable;
 

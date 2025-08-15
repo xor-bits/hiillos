@@ -56,8 +56,10 @@ pub fn main() !void {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{ .cache = .uncacheable },
+        .{
+            .cache = .uncacheable,
+            .write = true,
+        },
     );
 
     const mcfg_info_addr = try vmem.map(
@@ -65,8 +67,10 @@ pub fn main() !void {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{ .cache = .uncacheable },
+        .{
+            .cache = .uncacheable,
+            .write = true,
+        },
     );
 
     const mcfg_info: *const abi.McfgInfoFrame = @ptrFromInt(mcfg_info_addr);

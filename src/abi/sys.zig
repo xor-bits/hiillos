@@ -161,32 +161,26 @@ pub const Id = enum(usize) {
 
 /// capability or mapping rights
 pub const Rights = packed struct {
+    // TODO: move mapping rights into map flags
+    /// the frame can be read
     readable: bool = true,
+    /// the frame can be written
     writable: bool = false,
+    /// the frame can be executed (only usable with mapping)
     executable: bool = false,
+    // TODO: remove
     user_accessible: bool = true,
-    _: u4 = 0,
+    /// the frame can be mapped
+    frame_map: bool = false,
 
-    pub fn parse(str: []const u8) ?Rights {
-        var rights: Rights = .{};
-        for (str) |b| switch (std.ascii.toLower(b)) {
-            'u' => rights.user_accessible = true,
-            'r' => rights.readable = true,
-            'w' => rights.writable = true,
-            'x', 'e' => rights.executable = true,
-            else => {},
-        };
-        return rights;
-    }
+    /// the handle can be cloned
+    clone: bool = false,
+    /// the handle can be sent via IPC
+    transfer: bool = false,
+    /// the handle tag can be changed (only usable with `Sender`s)
+    tag: bool = false,
 
-    pub fn intersection(self: Rights, other: Rights) Rights {
-        return Rights{
-            .readable = self.readable and other.readable,
-            .writable = self.writable and other.writable,
-            .executable = self.executable and other.executable,
-            .user_accessible = self.user_accessible and other.user_accessible,
-        };
-    }
+    _: u60 = 0,
 
     pub fn asInt(self: Rights) u8 {
         return @as(u8, @bitCast(self));
@@ -241,8 +235,78 @@ pub const MapFlags = packed struct {
     // protection_key: u8 = 0,
     cache: CacheType = .write_back,
     fixed: bool = false,
-    _: u7 = 0,
-    // global: bool = false,
+    /// map as readable
+    ///
+    /// forced to be true if any other mapping modes (write,exec)
+    /// are set to true due to hardware limitations
+    ///
+    /// if read, write and exec are all false, the mapping is a guard mapping
+    read: bool = true,
+    /// map as writable
+    write: bool = false,
+    /// map as executable
+    exec: bool = false,
+    /// map as user accessible
+    user: bool = true,
+
+    _: u3 = 0,
+
+    pub const ur: @This() = .{
+        .read = true,
+        .user = true,
+    };
+    pub const urw: @This() = .{
+        .read = true,
+        .write = true,
+        .user = true,
+    };
+    pub const urwx: @This() = .{
+        .read = true,
+        .write = true,
+        .exec = true,
+        .user = true,
+    };
+    pub const urx: @This() = .{
+        .read = true,
+        .exec = true,
+        .user = true,
+    };
+    pub const kr: @This() = .{
+        .read = true,
+        .user = false,
+    };
+    pub const krw: @This() = .{
+        .read = true,
+        .write = true,
+        .user = false,
+    };
+    pub const krwx: @This() = .{
+        .read = true,
+        .write = true,
+        .exec = true,
+        .user = false,
+    };
+    pub const krx: @This() = .{
+        .read = true,
+        .exec = true,
+        .user = false,
+    };
+
+    pub fn intersection(self: @This(), other: @This()) @This() {
+        var new = self;
+        new.read = new.read and other.read;
+        new.write = new.write and other.write;
+        new.exec = new.exec and other.exec;
+        return new;
+    }
+
+    pub fn encode(self: @This()) u16 {
+        return @bitCast(self);
+    }
+
+    pub fn decode(i: u16) @This() {
+        return @bitCast(i);
+    }
 };
 
 /// page fault access cause
@@ -601,16 +665,6 @@ pub fn vmemSelf() Error!u32 {
     return @intCast(try syscall(.vmem_self, .{}, .{}));
 }
 
-pub fn packRightsFlags(rights: Rights, flags: MapFlags) u24 {
-    const val: packed struct { r: Rights, f: MapFlags } = .{ .r = rights, .f = flags };
-    return @bitCast(val);
-}
-
-pub fn unpackRightsFlags(v: u24) struct { Rights, MapFlags } {
-    const val: packed struct { r: Rights, f: MapFlags } = @bitCast(v);
-    return .{ val.r, val.f };
-}
-
 /// if length is zero, the rest of the frame is mapped
 pub fn vmemMap(
     vmem: u32,
@@ -618,11 +672,10 @@ pub fn vmemMap(
     frame_offset: usize,
     vaddr: usize,
     length: usize,
-    rights: Rights,
     flags: MapFlags,
 ) Error!usize {
     return try syscall(.vmem_map, .{
-        vmem, frame, frame_offset, vaddr, length, packRightsFlags(rights, flags),
+        vmem, frame, frame_offset, vaddr, length, flags.encode(),
     }, .{});
 }
 

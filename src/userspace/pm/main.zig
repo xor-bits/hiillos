@@ -80,7 +80,6 @@ pub fn main() !void {
         0,
         0,
         .{},
-        .{},
     );
 
     var init_elf = try abi.loader.Elf.init(@as(
@@ -256,7 +255,6 @@ fn execElf(
         0,
         0,
         .{},
-        .{},
     );
     const arg_map: []const u8 = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
     const cmd: []const u8 = std.mem.sliceTo(arg_map, 0);
@@ -278,7 +276,13 @@ fn execElf(
     ) orelse return;
 
     const elf_size = try elf_file.getSize();
-    const elf_bytes = try daemon.ctx.self_vmem.map(elf_file, 0, 0, 0, .{}, .{});
+    const elf_bytes = try daemon.ctx.self_vmem.map(
+        elf_file,
+        0,
+        0,
+        0,
+        .{},
+    );
     defer daemon.ctx.self_vmem.unmap(elf_bytes, elf_size) catch unreachable;
 
     var elf = try abi.loader.Elf.init(@as(

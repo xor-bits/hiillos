@@ -63,8 +63,7 @@ fn vmmVectorGrow(top: *usize, n_pages: usize) !void {
             0,
             top.*,
             0x10000,
-            .{ .writable = true },
-            .{ .fixed = true },
+            .{ .fixed = true, .write = true },
         );
         top.* += 0x10000;
     }
@@ -106,7 +105,6 @@ fn run() !void {
         0,
         0,
         0,
-        .{},
         .{},
     ), .release);
 
@@ -233,8 +231,7 @@ fn openDirHandlerInner(path: []const u8) Error!struct { caps.Frame, usize } {
         0,
         0,
         size,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     ) catch unreachable;
 
     const frame_entries = @as([*]abi.Stat, @ptrFromInt(tmp_addr))[0..entries];

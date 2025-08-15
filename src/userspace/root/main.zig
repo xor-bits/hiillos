@@ -450,8 +450,7 @@ fn mapStack() !usize {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
     const stack_top = stack_bottom + 1024 * 256;
 

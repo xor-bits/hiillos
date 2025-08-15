@@ -889,7 +889,6 @@ const DirNode = struct {
             0,
             real_dir_frame_size,
             .{},
-            .{},
         );
         defer vmem.unmap(addr, real_dir_frame_size) catch unreachable;
 

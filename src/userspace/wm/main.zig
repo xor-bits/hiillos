@@ -57,8 +57,10 @@ pub fn main() !void {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{ .cache = .write_combining },
+        .{
+            .cache = .write_combining,
+            .write = true,
+        },
     );
 
     const fb_backbuf_frame = try caps.Frame.create(fb_info.pitch * fb_info.height);
@@ -69,8 +71,7 @@ pub fn main() !void {
         0,
         0,
         fb_info.pitch * fb_info.height,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
     defer vmem.unmap(fb_backbuf_addr, fb_info.pitch * fb_info.height) catch unreachable;
 
@@ -384,7 +385,6 @@ const Framebuffer = struct {
             0,
             0,
             shmem.bytes,
-            .{},
             .{},
         );
 

@@ -113,7 +113,6 @@ fn tryLoadSelfExe() sys.Error![]const u8 {
         0,
         size,
         .{},
-        .{},
     );
 
     return @as([*]const u8, @ptrFromInt(addr))[0..size];

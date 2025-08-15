@@ -31,7 +31,6 @@ pub fn init() !void {
 fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
     if (from.present == 0) return;
 
-    const rights: abi.sys.Rights = from.getRights();
     var tmp: Entry = undefined;
 
     if (level != 1 and from.huge_page_or_pat == 0) {
@@ -49,9 +48,8 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
         tmp = Entry.fromParts(
             false,
             false,
-            rights,
             to_addr,
-            .{ .cache = from.getCacheMode(false) },
+            from.getFlags(false),
         );
     } else if (level == 1) {
         // last level, 4kib frame
@@ -59,9 +57,8 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
         tmp = Entry.fromParts(
             false,
             true,
-            rights,
             from.getAddr(true),
-            .{ .cache = from.getCacheMode(true) },
+            from.getFlags(true),
         );
         tmp.global = 1;
     } else {
@@ -70,9 +67,8 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
         tmp = Entry.fromParts(
             true,
             false,
-            rights,
             from.getAddr(true),
-            .{ .cache = from.getCacheMode(false) },
+            from.getFlags(false),
         );
         tmp.global = 1;
     }
@@ -375,19 +371,19 @@ pub const Vmem = struct {
         return next.entryFrame(vaddr);
     }
 
-    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapGiantFrame(paddr, vaddr, rights, flags);
+        try next.mapGiantFrame(paddr, vaddr, flags);
     }
 
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapHugeFrame(paddr, vaddr, rights, flags);
+        try next.mapHugeFrame(paddr, vaddr, flags);
     }
 
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapFrame(paddr, vaddr, rights, flags);
+        try next.mapFrame(paddr, vaddr, flags);
     }
 
     pub fn canMapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
@@ -460,19 +456,19 @@ pub const PageTableLevel3 = struct {
         return next.entryFrame(vaddr);
     }
 
-    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
-        const entry = Entry.fromParts(true, false, rights, paddr, flags);
+    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
+        const entry = Entry.fromParts(true, false, paddr, flags);
         volat(&self.entries[vaddr.toParts().level3]).* = entry;
     }
 
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        try next.mapHugeFrame(paddr, vaddr, rights, flags);
+        try next.mapHugeFrame(paddr, vaddr, flags);
     }
 
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        try next.mapFrame(paddr, vaddr, rights, flags);
+        try next.mapFrame(paddr, vaddr, flags);
     }
 
     pub fn canMapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
@@ -542,14 +538,14 @@ pub const PageTableLevel2 = struct {
         return next.entryFrame(vaddr);
     }
 
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
-        const entry = Entry.fromParts(true, false, rights, paddr, flags);
+    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
+        const entry = Entry.fromParts(true, false, paddr, flags);
         volat(&self.entries[vaddr.toParts().level2]).* = entry;
     }
 
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) Error!void {
+    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
         const next = (try nextLevel(true, &self.entries, vaddr.toParts().level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        next.mapFrame(paddr, vaddr, rights, flags);
+        next.mapFrame(paddr, vaddr, flags);
     }
 
     pub fn canMapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
@@ -596,8 +592,8 @@ pub const PageTableLevel1 = struct {
         return &self.entries[vaddr.toParts().level1];
     }
 
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, rights: abi.sys.Rights, flags: abi.sys.MapFlags) void {
-        const entry = Entry.fromParts(false, true, rights, paddr, flags);
+    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) void {
+        const entry = Entry.fromParts(false, true, paddr, flags);
         volat(&self.entries[vaddr.toParts().level1]).* = entry;
     }
 
@@ -619,6 +615,7 @@ pub const PageTableLevel1 = struct {
 
 // just x86_64 rn
 pub const Entry = packed struct {
+    // TODO: can be bools instead, they are the same as u1
     present: u1 = 0,
     writable: u1 = 0,
     user_accessible: u1 = 0,
@@ -655,11 +652,15 @@ pub const Entry = packed struct {
         return std.meta.intToEnum(abi.sys.CacheType, idx) catch unreachable;
     }
 
-    pub fn getRights(self: @This()) abi.sys.Rights {
+    pub fn getFlags(
+        self: @This(),
+        comptime is_last_level: bool,
+    ) abi.sys.MapFlags {
         return .{
-            .writable = self.writable != 0,
-            .executable = self.no_execute == 0,
-            .user_accessible = self.user_accessible != 0,
+            .cache = self.getCacheMode(is_last_level),
+            .write = self.writable != 0,
+            .exec = self.no_execute == 0,
+            .user = self.user_accessible != 0,
         };
     }
 
@@ -680,7 +681,6 @@ pub const Entry = packed struct {
     pub fn fromParts(
         comptime is_huge: bool,
         comptime is_last_level: bool,
-        rights: abi.sys.Rights,
         frame: addr.Phys,
         flags: abi.sys.MapFlags,
     ) Entry {
@@ -708,15 +708,15 @@ pub const Entry = packed struct {
 
         return Entry{
             .present = 1,
-            .writable = @intFromBool(rights.writable),
-            .user_accessible = @intFromBool(rights.user_accessible),
+            .writable = @intFromBool(flags.write),
+            .user_accessible = @intFromBool(flags.user),
             .write_through = pwt,
             .cache_disable = pcd,
             .huge_page_or_pat = huge_page_or_pat,
             .global = 0,
             .page_index = page_index,
             .protection_key = 0,
-            .no_execute = @intFromBool(!rights.executable),
+            .no_execute = @intFromBool(!flags.exec),
         };
     }
 };
@@ -753,12 +753,11 @@ fn nextLevelFromEntry(comptime create: bool, entry: *volatile Entry) Error!addr.
         entry.* = Entry.fromParts(
             false,
             false,
-            .{
-                .writable = true,
-                .executable = true,
-            },
             table,
-            .{},
+            .{
+                .write = true,
+                .exec = true,
+            },
         );
         return table;
     } else if (entry_r.present == 0) {

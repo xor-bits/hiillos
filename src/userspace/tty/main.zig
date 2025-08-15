@@ -61,8 +61,10 @@ pub fn main() !void {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{ .cache = .write_combining },
+        .{
+            .cache = .write_combining,
+            .write = true,
+        },
     );
 
     const fb_info_frame = caps.Frame{ .cap = import_fb_info.handle };
@@ -71,7 +73,6 @@ pub fn main() !void {
         0,
         0,
         0,
-        .{},
         .{},
     );
 

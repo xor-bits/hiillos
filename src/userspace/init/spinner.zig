@@ -43,8 +43,10 @@ pub fn spinnerMain() !void {
         0,
         0,
         0,
-        .{ .writable = true },
-        .{ .cache = .write_combining },
+        .{
+            .cache = .write_combining,
+            .write = true,
+        },
     );
 
     const fb_info_addr = try vmem.map(
@@ -52,7 +54,6 @@ pub fn spinnerMain() !void {
         0,
         0,
         0,
-        .{},
         .{},
     );
 
@@ -116,8 +117,7 @@ fn framebufferSplash(
         0,
         0,
         0,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
 
     const fb_info: FbInfo = .{

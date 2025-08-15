@@ -63,8 +63,10 @@ pub fn main() !void {
         0,
         0,
         0x1000,
-        .{ .writable = true },
-        .{ .cache = .uncacheable },
+        .{
+            .cache = .uncacheable,
+            .write = true,
+        },
     );
 
     // disable PIT

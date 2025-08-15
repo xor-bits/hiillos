@@ -176,8 +176,7 @@ fn mapFb(vmem: caps.Vmem, fb: gui.Framebuffer) ![]volatile u8 {
         0,
         0,
         shmem_size,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
 
     return @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];

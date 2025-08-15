@@ -168,7 +168,6 @@ pub fn init() !void {
         0,
         0,
         .{},
-        .{},
     );
     util.volat(&arg_map).* = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
 
@@ -178,7 +177,6 @@ pub fn init() !void {
         0,
         0,
         0,
-        .{},
         .{},
     );
     util.volat(&env_map).* = @as([*]const u8, @ptrFromInt(env_map_addr))[0..env_map_len];

@@ -40,8 +40,7 @@ pub fn prepareSpawn(vmem: caps.Vmem, thread: caps.Thread, entry: u64) !void {
         0,
         0,
         1024 * 256,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
     // FIXME: protect the stack guard region as
     // no read, no write, no exec and prevent mapping
@@ -157,10 +156,11 @@ pub const Elf = struct {
         const seg_top = std.mem.alignForward(usize, phdr.p_vaddr + phdr.p_memsz, 0x1000);
         const seg_size = seg_top - seg_bot;
 
-        const rights = abi.sys.Rights{
-            .readable = phdr.p_flags & std.elf.PF_R != 0,
-            .writable = phdr.p_flags & std.elf.PF_W != 0,
-            .executable = phdr.p_flags & std.elf.PF_X != 0,
+        const flags = abi.sys.MapFlags{
+            .fixed = true,
+            .read = phdr.p_flags & std.elf.PF_R != 0,
+            .write = phdr.p_flags & std.elf.PF_W != 0,
+            .exec = phdr.p_flags & std.elf.PF_X != 0,
         };
 
         const frame = try caps.Frame.create(seg_size);
@@ -178,8 +178,7 @@ pub const Elf = struct {
             0,
             seg_va,
             seg_size,
-            rights,
-            .{ .fixed = true },
+            flags,
         );
         std.debug.assert(real_vaddr == seg_va);
     }

@@ -175,7 +175,6 @@ pub const Vmem = struct {
         frame_first_page: u32,
         vaddr: addr.Virt,
         pages: u32,
-        rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) Error!addr.Virt {
         errdefer frame.deinit();
@@ -189,14 +188,12 @@ pub const Vmem = struct {
                 \\ - frame_first_page={}
                 \\ - vaddr=0x{x}
                 \\ - pages={}
-                \\ - rights={}
                 \\ - flags={}"
             , .{
                 frame,
                 frame_first_page,
                 vaddr.raw,
                 pages,
-                rights,
                 flags,
             });
 
@@ -224,7 +221,6 @@ pub const Vmem = struct {
                 frame_first_page,
                 vaddr,
                 pages,
-                rights,
                 flags,
             );
         } else b: {
@@ -233,7 +229,6 @@ pub const Vmem = struct {
                 frame_first_page,
                 vaddr,
                 pages,
-                rights,
                 flags,
             );
         };
@@ -250,7 +245,6 @@ pub const Vmem = struct {
         frame_first_page: u32,
         fixed_vaddr: addr.Virt,
         pages: u32,
-        rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) Error!addr.Virt {
         if (fixed_vaddr.raw == 0)
@@ -262,7 +256,6 @@ pub const Vmem = struct {
             frame_first_page,
             fixed_vaddr,
             pages,
-            rights,
             flags,
         );
 
@@ -304,7 +297,6 @@ pub const Vmem = struct {
         frame_first_page: u32,
         hint_vaddr: addr.Virt,
         pages: u32,
-        rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) Error!addr.Virt {
         if (self.mappings.items.len == 0) {
@@ -313,7 +305,6 @@ pub const Vmem = struct {
                 frame_first_page,
                 hint_vaddr,
                 pages,
-                rights,
                 flags,
             );
         }
@@ -334,7 +325,6 @@ pub const Vmem = struct {
                 frame_first_page,
                 slot,
                 pages,
-                rights,
                 flags,
             );
         }
@@ -351,7 +341,6 @@ pub const Vmem = struct {
                 frame_first_page,
                 slot,
                 pages,
-                rights,
                 flags,
             );
         }
@@ -680,15 +669,15 @@ pub const Vmem = struct {
         // check if it was user error
         switch (caused_by) {
             .read => {
-                if (!mapping.target.rights.readable)
+                if (!mapping.target.flags.read)
                     return Error.ReadFault;
             },
             .write => {
-                if (!mapping.target.rights.writable)
+                if (!mapping.target.flags.write)
                     return Error.WriteFault;
             },
             .exec => {
-                if (!mapping.target.rights.executable)
+                if (!mapping.target.flags.exec)
                     return Error.ExecFault;
             },
         }
@@ -731,19 +720,18 @@ pub const Vmem = struct {
         // then the cause must be a write after it was already mapped with read
         // and remapping the same page with new rights is fine without TLB shootdown IPIs
 
-        const rights = if (caused_by == .write)
-            mapping.target.rights
+        const flags = if (caused_by == .write)
+            mapping.target.flags
         else
-            mapping.target.rights.intersection(comptime abi.sys.Rights.parse("urx").?);
+            mapping.target.flags.intersection(abi.sys.MapFlags.urx);
 
         if (conf.LOG_PAGE_FAULTS and wanted_page_index == entry.page_index)
-            log.debug("remapping with more rights: {}", .{rights});
+            log.debug("remapping with more rights: {}", .{flags});
 
         try hal_vmem.mapFrame(
             addr.Phys.fromParts(.{ .page = wanted_page_index }),
             vaddr,
-            rights,
-            mapping.target.flags,
+            flags,
         );
         arch.flushTlbAddr(vaddr.raw);
     }

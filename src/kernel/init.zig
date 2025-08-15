@@ -115,12 +115,10 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
         addr.Virt.fromInt(abi.ROOT_EXE),
         @intCast(root_frame.pages.len),
         .{
-            .readable = true,
-            .writable = true,
-            .executable = true,
-            .user_accessible = true,
+            .fixed = true,
+            .write = true,
+            .exec = true,
         },
-        .{ .fixed = true },
     );
 
     arch.flushTlb();

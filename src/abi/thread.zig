@@ -52,8 +52,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
         0,
         0,
         opts.stack_size,
-        .{ .writable = true },
-        .{},
+        .{ .write = true },
     );
     // FIXME: protect the stack guard region as
     // no read, no write, no exec and prevent mapping

@@ -174,7 +174,6 @@ pub const Vmem = extern struct {
         frame_offset: usize,
         vaddr: usize,
         length: usize,
-        rights: abi.sys.Rights,
         flags: abi.sys.MapFlags,
     ) sys.Error!usize {
         return sys.vmemMap(
@@ -183,7 +182,6 @@ pub const Vmem = extern struct {
             frame_offset,
             vaddr,
             length,
-            rights,
             flags,
         );
     }

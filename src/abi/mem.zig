@@ -33,8 +33,10 @@ const ServerPageAllocator = struct {
             0,
             0,
             0,
-            .{ .writable = true },
-            .{ .fixed = false },
+            .{
+                .fixed = false,
+                .write = true,
+            },
         ) catch return null;
 
         if (abi.conf.IS_DEBUG)

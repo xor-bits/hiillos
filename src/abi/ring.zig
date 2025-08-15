@@ -76,8 +76,7 @@ pub fn Ring(comptime T: type) type {
                 0,
                 0,
                 size_bytes,
-                .{ .writable = true },
-                .{},
+                .{ .write = true },
             );
 
             return .{

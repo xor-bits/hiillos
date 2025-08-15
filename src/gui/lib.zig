@@ -29,7 +29,6 @@ pub fn openImage(
         0,
         file_size,
         .{},
-        .{},
     );
     defer vmem.unmap(addr, file_size) catch unreachable;
 
@@ -642,8 +641,7 @@ pub const Framebuffer = struct {
             0,
             0,
             shmem_size,
-            .{ .writable = true },
-            .{},
+            .{ .write = true },
         );
 
         return @as([*]volatile u8, @ptrFromInt(shmem_addr))[0..shmem_size];
