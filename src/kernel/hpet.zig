@@ -53,7 +53,7 @@ pub fn hpetSpinWait(micros: u32, just_before: anytype) void {
 pub fn bootInfoInstallHpet(boot_info: *caps.Frame, thread: *caps.Thread) !void {
     const frame = hpet_frame orelse return;
 
-    const id = try thread.proc.pushCapability(.init(frame.clone()));
+    const id = try thread.proc.pushCapability(.init(frame.clone(), null));
     try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "hpet"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),

@@ -125,12 +125,10 @@ pub const Id = enum(usize) {
 
     /// identify which object type some capability is
     handle_identify,
-    // TODO:
-    // /// query handle rights
-    // handle_rights,
-    // TODO:
-    // /// remove rights from a handle
-    // handle_demote,
+    /// query handle rights
+    handle_rights,
+    /// remove rights from a handle
+    handle_restrict,
     /// create another handle to the same object
     handle_duplicate,
     /// close a handle to some object, might or might not delete the object
@@ -161,15 +159,14 @@ pub const Id = enum(usize) {
 
 /// capability or mapping rights
 pub const Rights = packed struct {
-    // TODO: move mapping rights into map flags
     /// the frame can be read
-    readable: bool = true,
+    read: bool = false,
     /// the frame can be written
-    writable: bool = false,
+    write: bool = false,
     /// the frame can be executed (only usable with mapping)
-    executable: bool = false,
-    // TODO: remove
-    user_accessible: bool = true,
+    exec: bool = false,
+    /// the frame can be user accessible (only usable with mapping)
+    user: bool = false,
     /// the frame can be mapped
     frame_map: bool = false,
 
@@ -180,14 +177,29 @@ pub const Rights = packed struct {
     /// the handle tag can be changed (only usable with `Sender`s)
     tag: bool = false,
 
-    _: u60 = 0,
+    _: u56 = 0,
 
-    pub fn asInt(self: Rights) u8 {
-        return @as(u8, @bitCast(self));
+    pub const Self = @This();
+
+    pub const common: Self = .{
+        .clone = true,
+        .transfer = true,
+    };
+
+    pub fn merge(self: Self, other: Self) Self {
+        return Self.decode(self.encode() | other.encode());
     }
 
-    pub fn fromInt(i: u8) Rights {
-        return @as(Rights, @bitCast(i));
+    pub fn intersect(self: Self, other: Self) Self {
+        return Self.decode(self.encode() & other.encode());
+    }
+
+    pub fn encode(self: Self) u64 {
+        return @bitCast(self);
+    }
+
+    pub fn decode(i: u64) Self {
+        return @bitCast(i);
     }
 };
 
@@ -914,6 +926,16 @@ pub fn handleIdentify(cap: u32) abi.ObjectType {
         abi.ObjectType,
         syscall(.handle_identify, .{cap}, .{}) catch unreachable,
     ) catch .null;
+}
+
+pub fn handleRights(cap: u32) Error!Rights {
+    var rights: u64 = undefined;
+    _ = try syscall(.handle_rights, .{cap}, .{&rights});
+    return .decode(rights);
+}
+
+pub fn handleRestrict(cap: u32, new: Rights) Error!void {
+    _ = try syscall(.handle_restrict, .{ cap, new.encode() }, .{});
 }
 
 pub fn handleDuplicate(cap: u32) Error!u32 {

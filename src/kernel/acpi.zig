@@ -65,13 +65,13 @@ pub fn bootInfoInstallMcfg(boot_info: *caps.Frame, thread: *caps.Thread) !void {
         }));
 
         var id: u32 = undefined;
-        id = try thread.proc.pushCapability(.init(mcfg_obj));
+        id = try thread.proc.pushCapability(.init(mcfg_obj, null));
         try boot_info.initialWrite(
             @offsetOf(abi.BootInfo, "mcfg"),
             std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
         );
 
-        id = try thread.proc.pushCapability(.init(mcfg_info_obj));
+        id = try thread.proc.pushCapability(.init(mcfg_info_obj, null));
         try boot_info.initialWrite(
             @offsetOf(abi.BootInfo, "mcfg_info"),
             std.mem.asBytes(&abi.caps.Frame{ .cap = id }),

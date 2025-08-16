@@ -783,6 +783,12 @@ pub const X86IoPortAllocator = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
+    pub const object_type = abi.ObjectType.x86_ioport_allocator;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
+
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)
             log.info("X86IoPortAllocator.init", .{});
@@ -821,6 +827,12 @@ pub const X86IoPort = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     port: u16,
+
+    pub const object_type = abi.ObjectType.x86_ioport;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     // only borrows the `*X86IoPortAllocator`
     pub fn init(_: *X86IoPortAllocator, port: u16) Error!*@This() {
@@ -884,6 +896,12 @@ pub const X86IrqAllocator = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
+    pub const object_type = abi.ObjectType.x86_irq_allocator;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
+
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)
             log.info("X86IrqAllocator.init", .{});
@@ -927,6 +945,12 @@ pub const X86Irq = struct {
         vector: u8,
         locals: *apic.Locals,
     } = null,
+
+    pub const object_type = abi.ObjectType.x86_irq;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     // only borrows the X86IrqAllocator
     pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {

@@ -14,6 +14,7 @@ const proc = @import("proc.zig");
 
 const log = std.log.scoped(.init);
 const Error = abi.sys.Error;
+const Rights = abi.sys.Rights;
 
 //
 
@@ -43,22 +44,22 @@ pub fn exec(a: args.Args) !void {
 
     var id: u32 = undefined;
 
-    id = try init_proc.pushCapability(.init(init_vmem));
+    id = try init_proc.pushCapability(.init(init_vmem, null));
     std.debug.assert(id == abi.caps.ROOT_SELF_VMEM.cap);
 
-    id = try init_proc.pushCapability(.init(init_thread));
+    id = try init_proc.pushCapability(.init(init_thread, null));
     std.debug.assert(id == abi.caps.ROOT_SELF_THREAD.cap);
 
-    id = try init_proc.pushCapability(.init(init_proc));
+    id = try init_proc.pushCapability(.init(init_proc, null));
     std.debug.assert(id == abi.caps.ROOT_SELF_PROC.cap);
 
-    id = try init_proc.pushCapability(.init(boot_info));
+    id = try init_proc.pushCapability(.init(boot_info, null));
     std.debug.assert(id == abi.caps.ROOT_BOOT_INFO.cap);
 
-    id = try init_proc.pushCapability(.init(x86_ioport_allocator));
+    id = try init_proc.pushCapability(.init(x86_ioport_allocator, null));
     std.debug.assert(id == abi.caps.ROOT_X86_IOPORT_ALLOCATOR.cap);
 
-    id = try init_proc.pushCapability(.init(x86_irq_allocator));
+    id = try init_proc.pushCapability(.init(x86_irq_allocator, null));
     std.debug.assert(id == abi.caps.ROOT_X86_IRQ_ALLOCATOR.cap);
 
     // the handles (init_thread, init_vmem, boot_info) moved, but they are still valid

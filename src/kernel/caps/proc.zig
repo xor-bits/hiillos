@@ -20,6 +20,12 @@ pub const Process = struct {
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
     free: u32 = 0,
 
+    pub const object_type = abi.ObjectType.process;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
+
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
         errdefer from_vmem.deinit();
 
@@ -117,6 +123,19 @@ pub const Process = struct {
         const slot = &self.caps.items[handle - 1];
 
         return slot.get() orelse return Error.BadHandle;
+    }
+
+    pub fn restrictCapability(self: *@This(), handle: u32, new: abi.sys.Rights) Error!void {
+        if (handle == 0) return Error.NullHandle;
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
+        const slot = &self.caps.items[handle - 1];
+
+        _ = slot.getBorrow() orelse return Error.BadHandle;
+        slot.rights = slot.rights.intersect(new);
     }
 
     pub fn takeCapability(self: *@This(), handle: u32) Error!caps.Capability {

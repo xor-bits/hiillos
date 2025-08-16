@@ -60,6 +60,12 @@ pub const Thread = struct {
     /// if a signal handler is running, this is the return address
     signal: ?abi.sys.Signal = null,
 
+    pub const object_type = abi.ObjectType.thread;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
+
     pub const CapOrVal = union(enum) {
         cap: caps.CapabilitySlot,
         val: u64,

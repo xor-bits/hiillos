@@ -17,6 +17,7 @@ const caps_x86 = @import("caps/x86.zig");
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
 const Error = abi.sys.Error;
+const Rights = abi.sys.Rights;
 const RefCnt = abi.epoch.RefCnt;
 
 //
@@ -91,7 +92,7 @@ var obj_counts: std.EnumArray(abi.ObjectType, std.atomic.Value(usize)) = .initFi
 pub const CapabilitySlot = packed struct {
     ptr: u56 = 0,
     type: abi.ObjectType = .null,
-    // rights: abi.sys.Rights = .{},
+    rights: abi.sys.Rights = .{},
 
     pub fn init(cap: Capability) @This() {
         var self = @This(){};
@@ -122,6 +123,7 @@ pub const CapabilitySlot = packed struct {
         return Capability{
             .ptr = @ptrFromInt(@as(u64, self.ptr) | 0xFF00_0000_0000_0000),
             .type = self.type,
+            .rights = self.rights,
         };
     }
 
@@ -144,6 +146,7 @@ pub const CapabilitySlot = packed struct {
         std.debug.assert((@intFromPtr(new.ptr) >> 56) == 0xFF);
         self.ptr = @truncate(@intFromPtr(new.ptr));
         self.type = new.type;
+        self.rights = new.rights;
     }
 
     pub fn unwrap(self: @This()) ?Capability {
@@ -155,59 +158,16 @@ pub const CapabilitySlot = packed struct {
 pub const Capability = struct {
     ptr: *void = @ptrFromInt(0xFFFF_8000_0000_0000),
     type: abi.ObjectType = .null,
-    // rights: abi.sys.Rights = .{},
+    rights: abi.sys.Rights = .{},
 
-    pub fn init(obj: anytype) @This() {
-        return switch (@TypeOf(obj)) {
-            *Frame => .{
-                .ptr = @ptrCast(obj),
-                .type = .frame,
-            },
-            *Vmem => .{
-                .ptr = @ptrCast(obj),
-                .type = .vmem,
-            },
-            *Process => .{
-                .ptr = @ptrCast(obj),
-                .type = .process,
-            },
-            *Thread => .{
-                .ptr = @ptrCast(obj),
-                .type = .thread,
-            },
-            *Receiver => .{
-                .ptr = @ptrCast(obj),
-                .type = .receiver,
-            },
-            *Reply => .{
-                .ptr = @ptrCast(obj),
-                .type = .reply,
-            },
-            *Sender => .{
-                .ptr = @ptrCast(obj),
-                .type = .sender,
-            },
-            *Notify => .{
-                .ptr = @ptrCast(obj),
-                .type = .notify,
-            },
-            *X86IoPortAllocator => .{
-                .ptr = @ptrCast(obj),
-                .type = .x86_ioport_allocator,
-            },
-            *X86IoPort => .{
-                .ptr = @ptrCast(obj),
-                .type = .x86_ioport,
-            },
-            *X86IrqAllocator => .{
-                .ptr = @ptrCast(obj),
-                .type = .x86_irq_allocator,
-            },
-            *X86Irq => .{
-                .ptr = @ptrCast(obj),
-                .type = .x86_irq,
-            },
-            else => @compileError("invalid type"),
+    pub fn init(obj: anytype, rights: ?Rights) @This() {
+        const pointer = @typeInfo(@TypeOf(obj)).pointer;
+        comptime std.debug.assert(!pointer.is_const);
+
+        return .{
+            .ptr = @ptrCast(obj),
+            .type = pointer.child.object_type,
+            .rights = rights orelse pointer.child.default_rights,
         };
     }
 
