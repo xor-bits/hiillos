@@ -50,6 +50,10 @@ zig build # generates the os.iso in zig-out/os.iso
  - kernel/user interface: [src/abi](src/abi)
  - root process: [src/userspace/root](src/userspace/root)
 
+## Stuff not included here
+
+ - DOOM: [xor-bits/hiillos-doomgeneric](https://github.com/xor-bits/hiillos-doomgeneric)
+
 ## IPC performance
 
 Approximate synchronous IPC performance: `call` + `replyRecv`
