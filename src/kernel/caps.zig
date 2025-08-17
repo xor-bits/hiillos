@@ -167,7 +167,7 @@ pub const Capability = struct {
 
         return .{
             .ptr = @ptrCast(obj),
-            .type = UserHandle.Type,
+            .type = UserHandle.object_type,
             .rights = rights orelse UserHandle.default_rights,
         };
     }

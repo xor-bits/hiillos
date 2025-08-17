@@ -59,7 +59,7 @@ pub const Process = extern struct {
     cap: u32 = 0,
 
     // TODO: rename to object_type
-    pub const Type: abi.ObjectType = .process;
+    pub const object_type = abi.ObjectType.process;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -97,7 +97,7 @@ pub const Process = extern struct {
 pub const Thread = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .thread;
+    pub const object_type = abi.ObjectType.thread;
     pub const default_rights = abi.sys.Rights{
         .read = true,
         .write = true,
@@ -160,7 +160,7 @@ pub const Vmem = extern struct {
     var global_self: std.atomic.Value(u32) = .init(0);
     var global_self_init: lock.Once(thread.Mutex) = .new();
 
-    pub const Type: abi.ObjectType = .vmem;
+    pub const object_type = abi.ObjectType.vmem;
     pub const default_rights = abi.sys.Rights{
         .read = true,
         .write = true,
@@ -292,7 +292,7 @@ pub const Vmem = extern struct {
 pub const Frame = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .frame;
+    pub const object_type = abi.ObjectType.frame;
     pub const default_rights = abi.sys.Rights{
         .read = true,
         .write = true,
@@ -455,7 +455,7 @@ pub const Frame = extern struct {
 pub const Receiver = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .receiver;
+    pub const object_type = abi.ObjectType.receiver;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -494,7 +494,7 @@ pub const Receiver = extern struct {
 pub const Sender = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .sender;
+    pub const object_type = abi.ObjectType.sender;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -525,7 +525,7 @@ pub const Sender = extern struct {
 pub const Reply = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .reply;
+    pub const object_type = abi.ObjectType.reply;
     pub const default_rights = abi.sys.Rights{
         .transfer = true,
     };
@@ -554,7 +554,7 @@ pub const Reply = extern struct {
 pub const Notify = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .notify;
+    pub const object_type = abi.ObjectType.notify;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -591,7 +591,7 @@ pub const Notify = extern struct {
 pub const X86IoPortAllocator = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .x86_ioport_allocator;
+    pub const object_type = abi.ObjectType.x86_ioport_allocator;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -611,7 +611,7 @@ pub const X86IoPortAllocator = extern struct {
 pub const X86IoPort = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .x86_ioport;
+    pub const object_type = abi.ObjectType.x86_ioport;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -644,7 +644,7 @@ pub const X86IoPort = extern struct {
 pub const X86IrqAllocator = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .x86_irq_allocator;
+    pub const object_type = abi.ObjectType.x86_irq_allocator;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
@@ -664,7 +664,7 @@ pub const X86IrqAllocator = extern struct {
 pub const X86Irq = extern struct {
     cap: u32 = 0,
 
-    pub const Type: abi.ObjectType = .x86_irq;
+    pub const object_type = abi.ObjectType.x86_irq;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
         .transfer = true,
