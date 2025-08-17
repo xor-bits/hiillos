@@ -942,8 +942,8 @@ pub fn handleRights(cap: u32) Error!Rights {
     return .decode(rights);
 }
 
-pub fn handleRestrict(cap: u32, new: Rights) Error!void {
-    _ = try syscall(.handle_restrict, .{ cap, new.encode() }, .{});
+pub fn handleRestrict(cap: u32, mask: Rights) Error!void {
+    _ = try syscall(.handle_restrict, .{ cap, mask.encode() }, .{});
 }
 
 pub fn handleDuplicate(cap: u32) Error!u32 {

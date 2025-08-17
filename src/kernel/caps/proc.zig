@@ -125,7 +125,7 @@ pub const Process = struct {
         return slot.get() orelse return Error.BadHandle;
     }
 
-    pub fn restrictCapability(self: *@This(), handle: u32, new: abi.sys.Rights) Error!void {
+    pub fn restrictCapability(self: *@This(), handle: u32, mask: abi.sys.Rights) Error!void {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -135,7 +135,7 @@ pub const Process = struct {
         const slot = &self.caps.items[handle - 1];
 
         _ = slot.getBorrow() orelse return Error.BadHandle;
-        slot.rights = slot.rights.intersect(new);
+        slot.rights = slot.rights.intersect(mask);
     }
 
     pub fn takeCapability(self: *@This(), handle: u32, min_rights: ?abi.sys.Rights) Error!caps.Capability {

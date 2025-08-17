@@ -682,11 +682,8 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
         },
         .handle_restrict => {
-            const rights = abi.sys.Rights.decode(trap.arg1);
-            try thread.proc.restrictCapability(
-                @truncate(trap.arg0),
-                rights,
-            );
+            const mask = abi.sys.Rights.decode(trap.arg1);
+            try thread.proc.restrictCapability(@truncate(trap.arg0), mask);
 
             trap.syscall_id = abi.sys.encode(0);
         },
