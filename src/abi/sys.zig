@@ -169,6 +169,8 @@ pub const Rights = packed struct {
     user: bool = false,
     /// the frame can be mapped
     frame_map: bool = false,
+    /// the vmem can have frames mapped into
+    vmem_map: bool = false,
 
     /// the handle can be cloned
     clone: bool = false,
@@ -177,7 +179,7 @@ pub const Rights = packed struct {
     /// the handle tag can be changed (only usable with `Sender`s)
     tag: bool = false,
 
-    _: u56 = 0,
+    _: u55 = 0,
 
     pub const Self = @This();
 

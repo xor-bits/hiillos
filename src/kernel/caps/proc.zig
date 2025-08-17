@@ -170,14 +170,16 @@ pub const Process = struct {
         return old_cap;
     }
 
-    pub fn getObject(self: *@This(), comptime T: type, handle: u32) Error!*T {
+    pub fn getObject(self: *@This(), comptime T: type, handle: u32) Error!struct { *T, abi.sys.Rights } {
         const cap = try self.getCapability(handle);
         errdefer cap.deinit();
 
-        return cap.as(T) orelse return Error.InvalidCapability;
+        const ptr = cap.as(T) orelse return Error.InvalidCapability;
+        const rights = cap.rights;
+        return .{ ptr, rights };
     }
 
-    pub fn takeObject(self: *@This(), comptime T: type, handle: u32) Error!*T {
+    pub fn takeObject(self: *@This(), comptime T: type, handle: u32) Error!struct { *T, abi.sys.Rights } {
         const cap = (try self.replaceCapability(handle, .{})) orelse {
             return Error.BadHandle;
         };
@@ -185,8 +187,9 @@ pub const Process = struct {
         // place it back if an error occurs
         errdefer std.debug.assert(null == self.replaceCapability(handle, cap) catch unreachable);
 
-        const obj = cap.as(caps.Reply) orelse return Error.InvalidCapability;
+        const ptr = cap.as(caps.Reply) orelse return Error.InvalidCapability;
+        const rights = cap.rights;
         self.freeSlotLocked(handle);
-        return obj;
+        return .{ ptr, rights };
     }
 };

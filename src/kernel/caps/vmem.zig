@@ -29,6 +29,9 @@ pub const Vmem = struct {
     pub const default_rights = abi.sys.Rights{
         .read = true,
         .write = true,
+        .exec = true,
+        .user = true,
+        .vmem_map = true,
         .clone = true,
         .transfer = true,
     };

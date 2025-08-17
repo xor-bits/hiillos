@@ -62,6 +62,8 @@ pub const Thread = struct {
 
     pub const object_type = abi.ObjectType.thread;
     pub const default_rights = abi.sys.Rights{
+        .read = true,
+        .write = true,
         .clone = true,
         .transfer = true,
     };
