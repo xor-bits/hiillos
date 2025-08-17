@@ -31,16 +31,7 @@ pub const Frame = struct {
     size_bytes: usize,
     mappings: std.ArrayList(*const caps.Mapping),
 
-    pub const object_type = abi.ObjectType.frame;
-    pub const default_rights = abi.sys.Rights{
-        .read = true,
-        .write = true,
-        .exec = true,
-        .user = true,
-        .frame_map = true,
-        .clone = true,
-        .transfer = true,
-    };
+    pub const UserHandle = abi.caps.Frame;
 
     pub fn init(size_bytes: usize) !*@This() {
         if (conf.LOG_OBJ_CALLS)

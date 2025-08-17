@@ -27,6 +27,11 @@ pub const COMMON_TTY = Sender{ .cap = 7 };
 pub const Handle = extern struct {
     cap: u32 = 0,
 
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
+
     pub fn identify(this: @This()) abi.ObjectType {
         return sys.handleIdentify(this.cap);
     }
@@ -53,7 +58,12 @@ pub const Handle = extern struct {
 pub const Process = extern struct {
     cap: u32 = 0,
 
+    // TODO: rename to object_type
     pub const Type: abi.ObjectType = .process;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create(vmem: Vmem) sys.Error!@This() {
         const cap = try sys.procCreate(vmem.cap);
@@ -88,6 +98,12 @@ pub const Thread = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .thread;
+    pub const default_rights = abi.sys.Rights{
+        .read = true,
+        .write = true,
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create(proc: Process) sys.Error!@This() {
         const cap = try sys.threadCreate(proc.cap);
@@ -145,6 +161,15 @@ pub const Vmem = extern struct {
     var global_self_init: lock.Once(thread.Mutex) = .new();
 
     pub const Type: abi.ObjectType = .vmem;
+    pub const default_rights = abi.sys.Rights{
+        .read = true,
+        .write = true,
+        .exec = true,
+        .user = true,
+        .vmem_map = true,
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create() sys.Error!@This() {
         const cap = try sys.vmemCreate();
@@ -268,6 +293,15 @@ pub const Frame = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .frame;
+    pub const default_rights = abi.sys.Rights{
+        .read = true,
+        .write = true,
+        .exec = true,
+        .user = true,
+        .frame_map = true,
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create(size_bytes: usize) sys.Error!@This() {
         const cap = try sys.frameCreate(size_bytes);
@@ -422,6 +456,11 @@ pub const Receiver = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .receiver;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+        .tag = true,
+    };
 
     pub fn create() sys.Error!@This() {
         const cap = try sys.receiverCreate();
@@ -456,6 +495,11 @@ pub const Sender = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .sender;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+        .tag = true,
+    };
 
     pub fn create(recv: Receiver, stamp: u32) sys.Error!@This() {
         const cap = try sys.senderCreate(recv.cap, stamp);
@@ -482,6 +526,9 @@ pub const Reply = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .reply;
+    pub const default_rights = abi.sys.Rights{
+        .transfer = true,
+    };
 
     pub fn create() sys.Error!@This() {
         const cap = try sys.replyCreate();
@@ -508,6 +555,10 @@ pub const Notify = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .notify;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create() sys.Error!@This() {
         const cap = try sys.notifyCreate();
@@ -541,6 +592,10 @@ pub const X86IoPortAllocator = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .x86_ioport_allocator;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn clone(this: @This()) sys.Error!@This() {
         const cap = try sys.handleDuplicate(this.cap);
@@ -557,6 +612,10 @@ pub const X86IoPort = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .x86_ioport;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create(alloc: X86IoPortAllocator, port: u16) sys.Error!@This() {
         const cap = try sys.x86IoPortCreate(alloc.cap, port);
@@ -586,6 +645,10 @@ pub const X86IrqAllocator = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .x86_irq_allocator;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn clone(this: @This()) sys.Error!@This() {
         const cap = try sys.handleDuplicate(this.cap);
@@ -602,6 +665,10 @@ pub const X86Irq = extern struct {
     cap: u32 = 0,
 
     pub const Type: abi.ObjectType = .x86_irq;
+    pub const default_rights = abi.sys.Rights{
+        .clone = true,
+        .transfer = true,
+    };
 
     pub fn create(alloc: X86IrqAllocator, irq: u8) sys.Error!@This() {
         const cap = try sys.x86IrqCreate(alloc.cap, irq);

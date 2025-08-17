@@ -26,12 +26,7 @@ pub const Receiver = struct {
     queue_lock: abi.lock.SpinMutex = .locked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
-    pub const object_type = abi.ObjectType.receiver;
-    pub const default_rights = abi.sys.Rights{
-        .clone = true,
-        .transfer = true,
-        .tag = true,
-    };
+    pub const UserHandle = abi.caps.Receiver;
 
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)
@@ -174,12 +169,7 @@ pub const Sender = struct {
     recv: *Receiver,
     stamp: u32,
 
-    pub const object_type = abi.ObjectType.sender;
-    pub const default_rights = abi.sys.Rights{
-        .clone = true,
-        .transfer = true,
-        .tag = true,
-    };
+    pub const UserHandle = abi.caps.Sender;
 
     pub fn init(recv: *Receiver, stamp: u32) !*@This() {
         errdefer recv.deinit(); // FIXME: errdefer in the caller instead
@@ -269,10 +259,7 @@ pub const Reply = struct {
     refcnt: abi.epoch.RefCnt = .{},
     sender: std.atomic.Value(?*caps.Thread),
 
-    pub const object_type = abi.ObjectType.reply;
-    pub const default_rights = abi.sys.Rights{
-        .transfer = true,
-    };
+    pub const UserHandle = abi.caps.Reply;
 
     /// only borrows `thread`
     pub fn init(thread: *caps.Thread) !*@This() {
@@ -330,11 +317,7 @@ pub const Notify = struct {
     queue_lock: abi.lock.SpinMutex = .locked(),
     queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
 
-    pub const object_type = abi.ObjectType.notify;
-    pub const default_rights = abi.sys.Rights{
-        .clone = true,
-        .transfer = true,
-    };
+    pub const UserHandle = abi.caps.Notify;
 
     pub fn init() !*@This() {
         if (conf.LOG_OBJ_CALLS)

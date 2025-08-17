@@ -25,16 +25,7 @@ pub const Vmem = struct {
     // bitset of all cpus that have used this vmem
     // cpus: u256 = 0,
 
-    pub const object_type = abi.ObjectType.vmem;
-    pub const default_rights = abi.sys.Rights{
-        .read = true,
-        .write = true,
-        .exec = true,
-        .user = true,
-        .vmem_map = true,
-        .clone = true,
-        .transfer = true,
-    };
+    pub const UserHandle = abi.caps.Vmem;
 
     pub fn init() Error!*@This() {
         if (conf.LOG_OBJ_CALLS)

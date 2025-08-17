@@ -163,11 +163,12 @@ pub const Capability = struct {
     pub fn init(obj: anytype, rights: ?Rights) @This() {
         const pointer = @typeInfo(@TypeOf(obj)).pointer;
         comptime std.debug.assert(!pointer.is_const);
+        const UserHandle = pointer.child.UserHandle;
 
         return .{
             .ptr = @ptrCast(obj),
-            .type = pointer.child.object_type,
-            .rights = rights orelse pointer.child.default_rights,
+            .type = UserHandle.Type,
+            .rights = rights orelse UserHandle.default_rights,
         };
     }
 

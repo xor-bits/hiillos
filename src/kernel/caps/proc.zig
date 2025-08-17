@@ -20,11 +20,7 @@ pub const Process = struct {
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
     free: u32 = 0,
 
-    pub const object_type = abi.ObjectType.process;
-    pub const default_rights = abi.sys.Rights{
-        .clone = true,
-        .transfer = true,
-    };
+    pub const UserHandle = abi.caps.Process;
 
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
         errdefer from_vmem.deinit();
