@@ -84,12 +84,16 @@ pub const Process = extern struct {
         sys.handleClose(this.cap);
     }
 
-    pub fn giveHandle(this: @This(), handle: anytype) sys.Error!u32 {
-        return try this.giveCap(handle.cap);
+    pub fn giveHandle(this: @This(), h: anytype) sys.Error!u32 {
+        return try this.giveCap(h.cap);
     }
 
     pub fn giveCap(this: @This(), cap: u32) sys.Error!u32 {
         return try sys.procGiveCap(this.cap, cap);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -150,6 +154,10 @@ pub const Thread = extern struct {
 
     pub fn threadSetSigHandler(this: @This(), ip: usize) sys.Error!void {
         return try sys.threadSetSigHandler(this.cap, ip);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -285,6 +293,10 @@ pub const Vmem = extern struct {
 
     pub fn dump(this: @This()) sys.Error!void {
         return try sys.vmemDump(this.cap);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -448,6 +460,10 @@ pub const Frame = extern struct {
     pub fn dump(this: @This()) sys.Error!void {
         return try sys.frameDump(this.cap);
     }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
+    }
 };
 
 /// capability to **the** receiver end of an endpoint,
@@ -487,6 +503,10 @@ pub const Receiver = extern struct {
     pub fn replyRecv(self: @This(), msg: sys.Message) sys.Error!sys.Message {
         return try sys.receiverReplyRecv(self.cap, msg);
     }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
+    }
 };
 
 /// capability to **a** sender end of an endpoint,
@@ -518,6 +538,10 @@ pub const Sender = extern struct {
     pub fn call(self: @This(), msg: sys.Message) sys.Error!sys.Message {
         return try sys.senderCall(self.cap, msg);
     }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
+    }
 };
 
 /// capability to **a** reply object
@@ -546,6 +570,10 @@ pub const Reply = extern struct {
 
     pub fn reply(self: @This(), msg: sys.Message) sys.Error!void {
         return sys.replyReply(self.cap, msg);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -585,6 +613,10 @@ pub const Notify = extern struct {
     pub fn notify(self: @This()) bool {
         return sys.notifyNotify(self.cap) catch unreachable;
     }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
+    }
 };
 
 /// x86 specific capability that allows allocating `x86_ioport` capabilities
@@ -604,6 +636,10 @@ pub const X86IoPortAllocator = extern struct {
 
     pub fn close(this: @This()) void {
         sys.handleClose(this.cap);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -638,6 +674,10 @@ pub const X86IoPort = extern struct {
     pub fn outb(self: @This(), byte: u8) sys.Error!void {
         return try sys.x86IoPortOutb(self.cap, byte);
     }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
+    }
 };
 
 /// x86 specific capability that allows allocating `x86_irq` capabilities
@@ -657,6 +697,10 @@ pub const X86IrqAllocator = extern struct {
 
     pub fn close(this: @This()) void {
         sys.handleClose(this.cap);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
 
@@ -691,5 +735,9 @@ pub const X86Irq = extern struct {
 
     pub fn ack(self: @This()) sys.Error!void {
         try sys.x86IrqAck(self.cap);
+    }
+
+    pub fn handle(this: @This()) Handle {
+        return .{ .cap = this.cap };
     }
 };
