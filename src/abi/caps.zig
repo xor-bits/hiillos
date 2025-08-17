@@ -36,6 +36,14 @@ pub const Handle = extern struct {
         return .{ .cap = cap };
     }
 
+    pub fn rights(this: @This()) sys.Error!sys.Rights {
+        return try sys.handleRights(this.cap);
+    }
+
+    pub fn restrict(this: @This(), mask: sys.Rights) sys.Error!void {
+        try sys.handleRestrict(this.cap, mask);
+    }
+
     pub fn close(this: @This()) void {
         sys.handleClose(this.cap);
     }
