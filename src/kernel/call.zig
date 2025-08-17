@@ -372,7 +372,10 @@ fn handle_syscall(
             defer target_proc.deinit();
 
             const handle = try target_proc.pushCapability(.{});
-            const cap = try thread.proc.takeCapability(@truncate(trap.arg1));
+            const cap = try thread.proc.takeCapability(
+                @truncate(trap.arg1),
+                .{ .transfer = true },
+            );
             const null_cap = target_proc.replaceCapability(handle, cap) catch unreachable;
             std.debug.assert(null_cap == null);
 
@@ -700,7 +703,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(handle);
         },
         .handle_close => {
-            const cap = try thread.proc.takeCapability(@truncate(trap.arg0));
+            const cap = try thread.proc.takeCapability(@truncate(trap.arg0), null);
             cap.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
@@ -727,7 +730,10 @@ fn handle_syscall(
             const is_cap: bool = trap.arg2 != 0;
 
             if (is_cap) {
-                const cap = try thread.proc.takeCapability(@truncate(val));
+                const cap = try thread.proc.takeCapability(
+                    @truncate(val),
+                    .{ .transfer = true },
+                );
 
                 thread.setExtra(
                     idx,

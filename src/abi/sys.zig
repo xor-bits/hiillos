@@ -194,6 +194,14 @@ pub const Rights = packed struct {
         return Self.decode(self.encode() & other.encode());
     }
 
+    pub fn contains(self: Self, at_least: Self) bool {
+        return self.intersect(at_least).encode() == at_least.encode();
+    }
+
+    pub fn isEmpty(self: Self) bool {
+        return self.encode() == 0;
+    }
+
     pub fn encode(self: Self) u64 {
         return @bitCast(self);
     }

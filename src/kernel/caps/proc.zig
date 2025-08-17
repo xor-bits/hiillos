@@ -138,7 +138,7 @@ pub const Process = struct {
         slot.rights = slot.rights.intersect(new);
     }
 
-    pub fn takeCapability(self: *@This(), handle: u32) Error!caps.Capability {
+    pub fn takeCapability(self: *@This(), handle: u32, min_rights: ?abi.sys.Rights) Error!caps.Capability {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -146,6 +146,10 @@ pub const Process = struct {
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
+
+        if (min_rights) |_min_rights|
+            if (!slot.rights.contains(_min_rights))
+                return Error.PermissionDenied;
 
         const cap = slot.take() orelse return Error.BadHandle;
         self.freeSlotLocked(handle);
