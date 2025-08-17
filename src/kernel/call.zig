@@ -691,8 +691,6 @@ fn handle_syscall(
             const cap = try thread.proc.getCapability(@truncate(trap.arg0));
             errdefer cap.deinit();
 
-            errdefer log.info("cap={} rights={}", .{ cap.type, cap.rights });
-
             if (!cap.rights.clone)
                 return Error.PermissionDenied;
 
