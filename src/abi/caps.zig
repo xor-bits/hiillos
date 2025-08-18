@@ -58,7 +58,6 @@ pub const Handle = extern struct {
 pub const Process = extern struct {
     cap: u32 = 0,
 
-    // TODO: rename to object_type
     pub const object_type = abi.ObjectType.process;
     pub const default_rights = abi.sys.Rights{
         .clone = true,
@@ -529,18 +528,15 @@ pub const Sender = extern struct {
         sys.handleClose(this.cap);
     }
 
-    pub fn stamp(self: @This(), s: u32) sys.Error!void {
-        try sys.senderStamp(self.cap, s);
+    pub fn stamp(self: @This(), s: u32) sys.Error!@This() {
+        const cap = try sys.senderStamp(self.cap, s);
+        return .{ .cap = cap };
     }
 
-    /// helper to clone, stamp and restrict the sender to create a new sender that cannot be stamped
+    /// helper to stamp and restrict the sender to create a new sender that cannot be stamped
     pub fn stampFinal(self: @This(), s: u32) sys.Error!@This() {
-        const new = try self.clone();
-        errdefer new.close();
-
-        try new.stamp(s);
+        const new = try self.stamp(s);
         try new.handle().restrict(sys.Rights.common);
-
         return new;
     }
 

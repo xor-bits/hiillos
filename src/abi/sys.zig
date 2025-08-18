@@ -377,6 +377,8 @@ pub const Error = error{
     NullHandle,
     BadHandle,
     Retry,
+    /// the other end of the channel closed
+    ChannelClosed,
 
     UnknownError,
 };
@@ -537,6 +539,13 @@ pub const Message = extern struct {
     arg2: usize = 0,
     arg3: usize = 0,
     arg4: usize = 0,
+
+    /// set the stamp from kernel, user-space has to use `.sender_stamp` syscall instead
+    pub fn withStamp(self: @This(), stamp: u32) @This() {
+        var copy = self;
+        copy.cap_or_stamp = stamp;
+        return copy;
+    }
 };
 
 pub const PackedMessage = extern struct {
@@ -872,8 +881,8 @@ pub fn replyReply(reply: u32, msg: Message) Error!void {
     );
 }
 
-pub fn senderStamp(send: u32, stamp: u32) Error!void {
-    _ = try syscall(.sender_stamp, .{ send, stamp }, .{});
+pub fn senderStamp(send: u32, stamp: u32) Error!u32 {
+    return @truncate(try syscall(.sender_stamp, .{ send, stamp }, .{}));
 }
 
 pub fn senderCall(send: u32, msg: Message) Error!Message {

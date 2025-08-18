@@ -348,10 +348,7 @@ fn newSender(
 
     errdefer handler.reply.send(.{ .err = .internal });
 
-    const sender = try daemon.ctx.send.clone();
-    try sender.stamp(handler.req.uid);
-    try sender.handle().restrict(abi.sys.Rights.common);
-
+    const sender = try daemon.ctx.send.stampFinal(handler.req.uid);
     handler.reply.send(.{ .ok = sender });
 }
 

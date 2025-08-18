@@ -609,8 +609,9 @@ fn handle_syscall(
             if (!rights.tag)
                 return Error.PermissionDenied;
 
-            send.stamp = @truncate(trap.arg1);
-            trap.syscall_id = abi.sys.encode(0);
+            const new_send = try send.restamp(@truncate(trap.arg1));
+            const handle = try thread.proc.pushCapability(caps.Capability.init(new_send, null));
+            trap.syscall_id = abi.sys.encode(handle);
         },
         .sender_call => {
             @branchHint(.likely);
@@ -619,8 +620,6 @@ fn handle_syscall(
 
             const sender, _ = try thread.proc.getObject(caps.Sender, @truncate(trap.arg0));
             defer sender.deinit();
-
-            // log.info("set stamp={}", .{sender.stamp});
 
             msg.cap_or_stamp = sender.stamp;
             sender.call(thread, trap, msg);

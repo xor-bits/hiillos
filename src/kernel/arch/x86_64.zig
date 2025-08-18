@@ -471,7 +471,7 @@ pub fn reset() void {
 }
 
 pub const GdtDescriptor = packed struct {
-    raw: u64,
+    raw: u64 = 0,
 
     pub const Self = @This();
 
@@ -530,7 +530,7 @@ pub const DescriptorTablePtr = extern struct {
 
 pub const Gdt = extern struct {
     ptr: DescriptorTablePtr,
-    null_descriptor: GdtDescriptor,
+    null_descriptor: GdtDescriptor = .{},
     descriptors: [6]GdtDescriptor,
 
     pub const Self = @This();
@@ -538,7 +538,6 @@ pub const Gdt = extern struct {
     pub fn new(tss: *const Tss) Self {
         return Self{
             .ptr = undefined,
-            .null_descriptor = .{ .raw = 0 },
             .descriptors = .{
                 GdtDescriptor.kernel_code,
                 GdtDescriptor.kernel_data,
