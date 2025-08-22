@@ -341,7 +341,7 @@ fn newSender(
     daemon: *abi.lpc.Daemon(Server),
     handler: abi.lpc.Handler(abi.VfsProtocol.NewSenderRequest),
 ) !void {
-    if (daemon.stamp != 0) {
+    if (handler.stamp != 0) {
         handler.reply.send(.{ .err = .permission_denied });
         return;
     }

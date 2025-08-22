@@ -235,10 +235,10 @@ fn execElf(
     // log.info("execElf from {}", .{daemon.stamp});
     // log.info("processes {}", .{daemon.ctx.processes.items.len});
 
-    const uid = if (daemon.stamp == 0)
+    const uid = if (handler.stamp == 0)
         0
     else
-        daemon.ctx.processes.items[daemon.stamp - 1].?.uid;
+        daemon.ctx.processes.items[handler.stamp - 1].?.uid;
 
     const stdio = handler.req.stdio;
     // errdefer stdio.deinit();
@@ -314,11 +314,11 @@ fn getStdio(
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
 
-    if (daemon.stamp == 0) {
+    if (handler.stamp == 0) {
         handler.reply.send(.{ .err = .permission_denied });
         return;
     }
 
-    const proc = &daemon.ctx.processes.items[daemon.stamp - 1].?;
+    const proc = &daemon.ctx.processes.items[handler.stamp - 1].?;
     handler.reply.send(.{ .ok = try proc.self_stdio.clone() });
 }

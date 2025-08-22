@@ -40,7 +40,6 @@ pub fn Daemon(comptime Ctx: type) type {
 
     return struct {
         ctx: Ctx,
-        stamp: u32 = 0,
 
         pub fn init(ctx: Ctx) @This() {
             comptime std.debug.assert(@FieldType(Ctx, "recv") == caps.Receiver);
@@ -65,7 +64,6 @@ pub fn Daemon(comptime Ctx: type) type {
                 try self.ctx.recv.recv();
             _sys_msg.* = null;
 
-            self.stamp = sys_msg.cap_or_stamp;
             const msg = try Message(messageInfo(Ctx.Request)).fromSysMessage(sys_msg);
             const request = try deserializeInner(Ctx.Request, msg);
 
@@ -88,7 +86,11 @@ pub fn Daemon(comptime Ctx: type) type {
                     var reply: Reply(Resp) = .{};
                     errdefer if (reply.resp) |r| r.deinit();
 
-                    const res: void = handler(self, .{ .req = v, .reply = &reply }) catch |err| {
+                    const res: void = handler(self, .{
+                        .req = v,
+                        .stamp = sys_msg.cap_or_stamp,
+                        .reply = &reply,
+                    }) catch |err| {
                         log.err("daemon handler error: {}", .{err});
                     };
                     _ = res;
@@ -106,6 +108,7 @@ pub fn Daemon(comptime Ctx: type) type {
 pub fn Handler(comptime T: type) type {
     return struct {
         req: T,
+        stamp: u32,
         reply: *Reply(T.Response),
 
         const Request = T;
