@@ -138,7 +138,26 @@ pub fn build(b: *std.Build) !void {
     const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui);
     const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
+    runQemuProfiler(b, &opts, kernel_elf, os_iso);
     runQemu(b, &opts, os_iso);
+}
+
+fn runQemuProfiler(b: *std.Build, opts: *const Opts, kernel_elf: std.Build.LazyPath, os_iso: std.Build.LazyPath) void {
+    const profiler = b.addExecutable(.{
+        .name = "qemu_profiler",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/qemu_profiler.zig"),
+            .target = opts.native_target,
+            .optimize = opts.optimize,
+        }),
+    });
+
+    const run_profiler = b.addRunArtifact(profiler);
+    run_profiler.addFileArg(os_iso);
+    run_profiler.addFileArg(kernel_elf);
+
+    const profile_step = b.step("profile", "run QEMU profiler tool");
+    profile_step.dependOn(&run_profiler.step);
 }
 
 fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
@@ -151,11 +170,9 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid",
         "-m",
         "1g", // 3m is the absolute minimum right now
-        // "-M",
-        // "smm=off,accel=kvm",
         "-no-reboot",
         "-serial",
-        "stdio",
+        "stdio", // "none",
         "-rtc",
         "base=localtime",
         "-vga",
