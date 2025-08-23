@@ -49,6 +49,8 @@ pub export var import_tty = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
+var system: System = .{ .self_vmem = undefined };
+
 //
 
 pub fn main() !void {
@@ -64,11 +66,7 @@ pub fn main() !void {
         }
     }
 
-    var system: System = .{
-        .recv = .{ .cap = export_pm.handle },
-        .self_vmem = try caps.Vmem.self(),
-    };
-    defer system.self_vmem.close();
+    system = .{ .self_vmem = try caps.Vmem.self() };
 
     // const init_elf = try open("initfs:///sbin/init");
 
@@ -108,11 +106,12 @@ pub fn main() !void {
     std.debug.assert(init_proc.pid == 1);
 
     log.debug("pm ready", .{});
-    try abi.lpc.daemon(system);
+    try abi.lpc.daemon(Context{
+        .recv = .{ .cap = export_pm.handle },
+    });
 }
 
 pub const Process = struct {
-    vmem: caps.Vmem,
     proc: caps.Process,
     thread: caps.Thread,
     uid: u32,
@@ -120,45 +119,52 @@ pub const Process = struct {
     self_stdio: abi.PmProtocol.AllStdio,
 };
 
-pub const System = struct {
+const Context = struct {
     recv: caps.Receiver,
-    self_vmem: caps.Vmem,
-
-    processes: std.ArrayList(?Process) = .init(abi.mem.slab_allocator),
-    // empty process ids into ↑
-    free_slots: std.fifo.LinearFifo(u32, .Dynamic) = .init(abi.mem.slab_allocator),
 
     pub const routes = .{
         execElf,
         getStdio,
     };
     pub const Request = abi.PmProtocol.Request;
+};
+
+pub const System = struct {
+    self_vmem: caps.Vmem,
+
+    lock: abi.lock.Futex = .{},
+    processes: std.ArrayList(?Process) = .init(abi.mem.slab_allocator),
+    // empty process ids into ↑
+    free_slots: std.fifo.LinearFifo(u32, .Dynamic) = .init(abi.mem.slab_allocator),
 
     pub fn exec(
-        system: *System,
+        self: *System,
         elf: *abi.loader.Elf,
         as_uid: u32,
         stdio: abi.PmProtocol.AllStdio,
         args: caps.Frame,
         env: caps.Frame,
     ) !abi.PmProtocol.Process {
-        const pid = try system.allocPid();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const pid = try self.allocPidLocked();
         std.debug.assert(pid != 0);
-        errdefer system.freePid(pid) catch |err| {
+        errdefer self.freePidLocked(pid) catch |err| {
             log.err("could not deallocate PID because another error occurred: {}", .{err});
         };
 
-        const slot = &system.processes.items[pid - 1];
+        const slot = &self.processes.items[pid - 1];
         std.debug.assert(slot.* == null);
 
         const vmem = try caps.Vmem.create();
-        errdefer vmem.close();
+        defer vmem.close();
         const proc = try caps.Process.create(vmem);
         errdefer proc.close();
         const thread = try caps.Thread.create(proc);
         errdefer thread.close();
 
-        const entry = try elf.loadInto(system.self_vmem, vmem);
+        const entry = try elf.loadInto(self.self_vmem, vmem);
         try abi.loader.prepareSpawn(vmem, thread, entry);
 
         var id: u32 = 0;
@@ -185,17 +191,31 @@ pub const System = struct {
         id = try proc.giveHandle(try (caps.Sender{ .cap = import_tty.handle }).clone());
         std.debug.assert(id == caps.COMMON_TTY.cap);
 
-        try thread.start();
+        const _thread = try thread.clone();
+        errdefer _thread.close();
+
+        // TODO: async wait
+        try abi.thread.spawnOptions(struct {
+            fn run(thread_clone: caps.Thread, pid_to_kill: u32) !void {
+                defer thread_clone.close();
+                try thread_clone.start();
+                _ = try thread_clone.wait();
+                try system.kill(pid_to_kill);
+            }
+        }.run, .{ _thread, pid }, .{ .stack_size = 0x40000 });
+
+        const given_proc = try proc.clone();
+        errdefer given_proc.close();
+        const given_thread = try thread.clone();
+        errdefer given_thread.close();
 
         slot.* = .{
-            .vmem = vmem,
-            .proc = proc,
-            .thread = thread,
+            .proc = given_proc,
+            .thread = given_thread,
             .uid = as_uid,
             .self_stdio = stdio,
         };
-
-        vmem.close();
+        // log.debug("create PID={} slot={}", .{ pid, slot.*.? });
 
         return .{
             .process = proc,
@@ -204,26 +224,60 @@ pub const System = struct {
         };
     }
 
-    pub fn allocPid(system: *@This()) !u32 {
-        if (system.free_slots.readItem()) |pid| {
+    pub fn kill(self: *@This(), pid: u32) !void {
+        std.debug.assert(pid != 0);
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const slot = &self.processes.items[pid - 1];
+        std.debug.assert(slot.* != null);
+
+        // log.debug("kill PID={} slot={}", .{ pid, slot.*.? });
+
+        // TODO: send a kill signal
+        slot.*.?.proc.close();
+        slot.*.?.thread.close();
+        slot.* = null;
+
+        try self.freePidLocked(pid);
+    }
+
+    pub fn allocPid(self: *@This()) !u32 {
+        self.lock.lock();
+        defer self.lock.unlock();
+        return try self.allocPidLocked();
+    }
+
+    fn allocPidLocked(self: *@This()) !u32 {
+        if (self.free_slots.readItem()) |pid| {
             return pid;
         } else {
-            const pid = system.processes.items.len + 1;
+            const pid = self.processes.items.len + 1;
             if (pid > std.math.maxInt(u32))
                 return error.TooManyActiveProcesses;
 
-            try system.processes.append(null);
+            try self.processes.append(null);
             return @intCast(pid);
         }
     }
 
-    pub fn freePid(system: *@This(), pid: u32) !void {
-        try system.free_slots.writeItem(pid);
+    pub fn freePid(self: *@This(), pid: u32) !void {
+        std.debug.assert(pid != 0);
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        return try self.freePidLocked(pid);
+    }
+
+    fn freePidLocked(self: *@This(), pid: u32) !void {
+        try self.free_slots.writeItem(pid);
     }
 };
 
 fn execElf(
-    daemon: *abi.lpc.Daemon(System),
+    _: *abi.lpc.Daemon(Context),
     handler: abi.lpc.Handler(abi.PmProtocol.ExecElfRequest),
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
@@ -237,8 +291,11 @@ fn execElf(
 
     const uid = if (handler.stamp == 0)
         0
-    else
-        daemon.ctx.processes.items[handler.stamp - 1].?.uid;
+    else b: {
+        system.lock.lock();
+        defer system.lock.unlock();
+        break :b system.processes.items[handler.stamp - 1].?.uid;
+    };
 
     const stdio = handler.req.stdio;
     // errdefer stdio.deinit();
@@ -254,7 +311,7 @@ fn execElf(
     // FIXME: make the arg_map frame copy-on-write
 
     const arg_map_len = try handler.req.arg_map.getSize();
-    const arg_map_addr = try daemon.ctx.self_vmem.map(
+    const arg_map_addr = try system.self_vmem.map(
         handler.req.arg_map,
         0,
         0,
@@ -281,14 +338,14 @@ fn execElf(
     ) orelse return;
 
     const elf_size = try elf_file.getSize();
-    const elf_bytes = try daemon.ctx.self_vmem.map(
+    const elf_bytes = try system.self_vmem.map(
         elf_file,
         0,
         0,
         0,
         .{},
     );
-    defer daemon.ctx.self_vmem.unmap(elf_bytes, elf_size) catch unreachable;
+    defer system.self_vmem.unmap(elf_bytes, elf_size) catch unreachable;
 
     var elf = try abi.loader.Elf.init(@as(
         [*]const u8,
@@ -297,7 +354,7 @@ fn execElf(
 
     // TODO: get file stats for setuid, exec rights, etc.
 
-    const proc = try daemon.ctx.exec(
+    const proc = try system.exec(
         &elf,
         uid,
         stdio,
@@ -309,7 +366,7 @@ fn execElf(
 }
 
 fn getStdio(
-    daemon: *abi.lpc.Daemon(System),
+    _: *abi.lpc.Daemon(Context),
     handler: abi.lpc.Handler(abi.PmProtocol.GetStdioRequest),
 ) !void {
     errdefer handler.reply.send(.{ .err = .internal });
@@ -319,6 +376,9 @@ fn getStdio(
         return;
     }
 
-    const proc = &daemon.ctx.processes.items[handler.stamp - 1].?;
+    system.lock.lock();
+    defer system.lock.unlock();
+
+    const proc = &system.processes.items[handler.stamp - 1].?;
     handler.reply.send(.{ .ok = try proc.self_stdio.clone() });
 }
