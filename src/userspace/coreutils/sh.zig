@@ -258,13 +258,7 @@ fn runLine(
     abi.syslog("running '{s}'", .{raw_cli});
     const cli = std.mem.trimRight(u8, raw_cli, " \t\n\r");
 
-    if (cli.len == 0) {
-        return 0;
-    }
-
-    if (cli[0] == '#') {
-        return 0;
-    }
+    if (cli.len == 0 or cli[0] == '#') return 0;
 
     var parts = std.mem.splitScalar(u8, cli, ' ');
     const cmd = parts.next().?;
