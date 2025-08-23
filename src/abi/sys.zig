@@ -566,6 +566,9 @@ pub const ThreadStatus = enum {
     ready,
     /// thread is blocked
     waiting,
+    /// thread is permanently killed
+    /// and the exit code is usable
+    dead,
 };
 
 comptime {

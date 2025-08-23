@@ -125,8 +125,9 @@ pub const Thread = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        self.status = .stopped;
+        self.status = .dead;
         self.exit_code = exit_code;
+
         while (self.exit_waiters.popFront()) |waiter| {
             waiter.lock.lock();
             defer waiter.lock.unlock();
@@ -138,7 +139,7 @@ pub const Thread = struct {
     pub fn waitExit(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) void {
         self.lock.lock();
 
-        if (self.status == .stopped) {
+        if (self.status == .dead) {
             self.lock.unlock();
             trap.arg0 = self.exit_code;
             return;
