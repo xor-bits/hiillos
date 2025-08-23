@@ -734,10 +734,13 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(handle);
         },
         .handle_close => {
-            const cap = try thread.proc.takeCapability(@truncate(trap.arg0), null);
-            cap.deinit();
-
             trap.syscall_id = abi.sys.encode(0);
+
+            const cap = thread.proc.takeCapability(
+                @truncate(trap.arg0),
+                null,
+            ) catch return;
+            cap.deinit();
         },
 
         .futex_wait => try futex.wait(trap, thread),
