@@ -473,52 +473,15 @@ fn handle_syscall(
             const target_thread, _ = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
             errdefer target_thread.deinit();
 
-            {
-                target_thread.lock.lock();
-                defer target_thread.lock.unlock();
-                if (target_thread.status != .stopped)
-                    return Error.NotStopped;
-            }
-
-            if (conf.LOG_ENTRYPOINT_CODE) {
-                // dump the entrypoint code
-                var it = target_thread.proc.vmem.data(addr.Virt.fromInt(target_thread.trap.rip), false);
-                defer it.deinit();
-
-                log.info("{}", .{target_thread.trap});
-
-                var len: usize = 200;
-                while (it.next() catch null) |chunk| {
-                    const limit = @min(len, chunk.len);
-                    len -= limit;
-
-                    log.info("{}", .{abi.util.hex(@volatileCast(chunk[0..limit]))});
-                    if (len == 0) break;
-                }
-            }
-
-            try target_thread.proc.vmem.start();
-            proc.start(target_thread);
             trap.syscall_id = abi.sys.encode(0);
+            try target_thread.start();
         },
         .thread_stop => {
             const target_thread, _ = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
             defer target_thread.deinit();
 
-            {
-                target_thread.lock.lock();
-                defer target_thread.lock.unlock();
-                // FIXME: atomic status, because the scheduler might be reading/writing this
-                if (target_thread.status == .stopped)
-                    return Error.IsStopped;
-            }
-
-            proc.stop(target_thread);
             trap.syscall_id = abi.sys.encode(0);
-
-            if (thread.status == .stopped) {
-                proc.switchNow(trap);
-            }
+            try target_thread.stop(thread, trap);
         },
         .thread_set_prio => {
             const target_thread, _ = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));

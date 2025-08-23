@@ -19,6 +19,7 @@ pub const Process = struct {
     lock: abi.lock.SpinMutex = .locked(),
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
     free: u32 = 0,
+    status: abi.sys.ProcessStatus = .stopped,
 
     pub const UserHandle = abi.caps.Process;
 

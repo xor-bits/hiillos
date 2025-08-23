@@ -354,7 +354,7 @@ pub const Error = error{
     // FIXME: remove
     EntryIsHuge,
     NotStopped,
-    IsStopped,
+    NotRunning,
     // FIXME: remove
     NoVmem,
     // FIXME: remove
@@ -567,6 +567,16 @@ pub const ThreadStatus = enum {
     /// thread is blocked
     waiting,
     /// thread is permanently killed
+    /// and the exit code is usable
+    dead,
+};
+
+pub const ProcessStatus = enum {
+    /// process is not yet running
+    stopped,
+    /// process is running
+    running,
+    /// process is permanently killed
     /// and the exit code is usable
     dead,
 };

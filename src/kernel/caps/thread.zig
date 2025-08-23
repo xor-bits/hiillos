@@ -121,6 +121,54 @@ pub const Thread = struct {
         return self;
     }
 
+    pub fn start(self: *@This()) !void {
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            if (self.status != .stopped)
+                return Error.NotStopped;
+        }
+
+        if (conf.LOG_ENTRYPOINT_CODE) {
+            // dump the entrypoint code
+            var it = self.proc.vmem.data(addr.Virt.fromInt(self.trap.rip), false);
+            defer it.deinit();
+
+            log.info("{}", .{self.trap});
+
+            var len: usize = 200;
+            while (it.next() catch null) |chunk| {
+                const limit = @min(len, chunk.len);
+                len -= limit;
+
+                log.info("{}", .{abi.util.hex(@volatileCast(chunk[0..limit]))});
+                if (len == 0) break;
+            }
+        }
+
+        try self.proc.vmem.start();
+        proc.start(self);
+    }
+
+    pub fn stop(
+        self: *@This(),
+        thread: *caps.Thread,
+        trap: *arch.TrapRegs,
+    ) !void {
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            // FIXME: atomic status, because the scheduler might be reading/writing this
+            if (self.status != .ready or self.status != .running)
+                return Error.NotRunning;
+        }
+
+        proc.stop(thread);
+        if (self == thread) {
+            proc.switchNow(trap);
+        }
+    }
+
     pub fn exit(self: *@This(), exit_code: usize) void {
         self.lock.lock();
         defer self.lock.unlock();
@@ -136,7 +184,11 @@ pub const Thread = struct {
         }
     }
 
-    pub fn waitExit(self: *@This(), thread: *caps.Thread, trap: *arch.TrapRegs) void {
+    pub fn waitExit(
+        self: *@This(),
+        thread: *caps.Thread,
+        trap: *arch.TrapRegs,
+    ) void {
         self.lock.lock();
 
         if (self.status == .dead) {
