@@ -55,6 +55,10 @@ pub const Id = enum(usize) {
     proc_self,
     /// move a capability from the current process into the target process
     proc_give_cap,
+    /// wait for the exit code from the given `Process`
+    proc_wait,
+    /// exit the active process
+    proc_exit,
 
     /// create a new `Thread` object that handles a single thread within a single process
     thread_create,
@@ -74,6 +78,8 @@ pub const Id = enum(usize) {
     thread_wait,
     /// set `Thread` signal handler instruction pointer, the handler is like a hardware interrupt handler
     thread_set_sig_handler,
+    /// exit the active thread
+    thread_exit,
 
     /// create a new IPC queue and a `Receiver`-`Sender` object pair for it
     channel_create,
@@ -145,8 +151,6 @@ pub const Id = enum(usize) {
 
     /// give up the CPU for other tasks
     self_yield,
-    /// stop the active thread
-    self_stop,
     /// print arch.TrapRegs to serial output
     self_dump,
     /// set an extra IPC register of this thread
@@ -775,6 +779,11 @@ pub fn procGiveCap(proc: u32, cap: u32) Error!u32 {
     return @intCast(try syscall(.proc_give_cap, .{ proc, cap }, .{}));
 }
 
+pub fn procExit(code: usize) noreturn {
+    _ = syscall(.proc_exit, .{code}, .{}) catch {};
+    unreachable;
+}
+
 pub fn threadCreate(proc: u32) Error!u32 {
     return @intCast(try syscall(.thread_create, .{proc}, .{}));
 }
@@ -828,6 +837,11 @@ pub fn threadWait(proc: u32) Error!usize {
 
 pub fn threadSetSigHandler(thread: u32, ip: usize) !void {
     _ = try syscall(.thread_set_sig_handler, .{ thread, ip }, .{});
+}
+
+pub fn threadExit(code: usize) noreturn {
+    _ = syscall(.thread_exit, .{code}, .{}) catch {};
+    unreachable;
 }
 
 pub fn channelCreate() Error![2]u32 {
@@ -1087,11 +1101,6 @@ pub fn futexRequeue(
 
 pub fn selfYield() void {
     _ = syscall(.self_yield, .{}, .{}) catch unreachable;
-}
-
-pub fn selfStop(code: usize) noreturn {
-    _ = syscall(.self_stop, .{code}, .{}) catch {};
-    unreachable;
 }
 
 pub fn selfDump() void {

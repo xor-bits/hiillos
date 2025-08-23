@@ -503,10 +503,8 @@ pub const WmDisplay = struct {
 
     pub fn connect() !@This() {
         // find the IPC socket address using WM_SOCKET env var
-        const wm_sock_addr = abi.process.env("WM_SOCKET") orelse {
-            log.err("could not find WM_SOCKET", .{});
-            abi.sys.selfStop(1);
-        };
+        const wm_sock_addr = abi.process.env("WM_SOCKET") orelse
+            return error.CouldNotFindWmSocket;
         log.debug("found WM_SOCKET={s}", .{wm_sock_addr});
 
         // open the IPC socket

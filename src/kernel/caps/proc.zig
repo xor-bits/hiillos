@@ -2,8 +2,10 @@ const abi = @import("abi");
 const std = @import("std");
 
 const addr = @import("../addr.zig");
+const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
 const pmem = @import("../pmem.zig");
+const proc = @import("../proc.zig");
 
 const conf = abi.conf;
 const log = std.log.scoped(.caps);
@@ -20,6 +22,8 @@ pub const Process = struct {
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
+    exit_code: usize = 0,
+    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
 
     pub const UserHandle = abi.caps.Process;
 
@@ -65,6 +69,49 @@ pub const Process = struct {
 
         self.refcnt.inc();
         return self;
+    }
+
+    pub fn start(self: *@This()) !void {
+        try self.vmem.start();
+
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.status = .running;
+    }
+
+    pub fn exit(
+        self: *@This(),
+        exit_code: usize,
+    ) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.status = .dead;
+        self.exit_code = exit_code;
+
+        // TODO: exit all threads
+    }
+
+    pub fn waitExit(
+        self: *@This(),
+        thread: *caps.Thread,
+        trap: *arch.TrapRegs,
+    ) void {
+        self.lock.lock();
+
+        if (self.status == .dead) {
+            self.lock.unlock();
+            trap.arg0 = self.exit_code;
+            return;
+        }
+
+        thread.status = .waiting;
+        thread.waiting_cause = .other_process_exit;
+        proc.switchFrom(trap, thread);
+
+        self.exit_waiters.pushBack(thread);
+        self.lock.unlock();
+
+        proc.switchNow(trap);
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {

@@ -109,6 +109,6 @@ fn signalHandlerWrapper(regs: *SignalRegs) callconv(.SysV) void {
 }
 
 fn _start() callconv(.SysV) noreturn {
-    thread.callFn(root.main, .{});
+    thread.callFn(root.main, .process, .{});
     sys.selfStop(0);
 }

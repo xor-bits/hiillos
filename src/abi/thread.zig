@@ -4,6 +4,7 @@ const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const loader = @import("loader.zig");
 const lock = @import("lock.zig");
+const process = @import("process.zig");
 const sys = @import("sys.zig");
 
 //
@@ -11,7 +12,12 @@ const sys = @import("sys.zig");
 pub const Mutex = lock.Futex;
 
 pub fn spawn(comptime function: anytype, args: anytype) !void {
+    // std.process.exit(status: u8);
     try spawnOptions(function, args, .{});
+}
+
+pub fn exit(code: usize) noreturn {
+    sys.threadExit(code);
 }
 
 pub const SpawnOptions = struct {
@@ -39,8 +45,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
 
         fn entryFn(raw_arg: usize) callconv(.SysV) noreturn {
             const self: *volatile @This() = @ptrFromInt(raw_arg);
-            callFn(function, self.*.args);
-            sys.selfStop(0);
+            callFn(function, .thread, self.*.args);
         }
     };
 
@@ -90,34 +95,37 @@ pub fn yield() void {
     sys.selfYield();
 }
 
-pub fn callFn(comptime function: anytype, args: anytype) void {
-    const bad_fn_ret = "expected return type of startFn to be 'u8', 'noreturn', '!noreturn', 'void', or '!void'";
+pub fn callFn(
+    comptime function: anytype,
+    comptime exit_method: enum { thread, process },
+    args: anytype,
+) noreturn {
+    // TODO: process exit in kernel
+    _ = exit_method;
+    // const exit_fn = if (exit_method == .process) process.exit else exit;
+    const exit_fn = exit;
+    const result = @call(.auto, function, args);
+    handleExitResult(exit_fn, result);
+}
 
-    switch (@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?)) {
-        .noreturn => {
-            @call(.auto, function, args);
+fn handleExitResult(
+    comptime exit_fn: fn (code: usize) noreturn,
+    result: anytype,
+) noreturn {
+    const bad_fn_ret = "expected return type of startFn to be u*, 'noreturn', '!noreturn', 'void', or '!void'";
+
+    switch (@typeInfo(@TypeOf(result))) {
+        .noreturn => {},
+        .void => exit_fn(0),
+        .int => |int| {
+            if (int.signedness) @compileError(bad_fn_ret);
+            exit_fn(@truncate(result));
         },
-        .void => {
-            @call(.auto, function, args);
+        .error_union => {
+            const inner = result catch |err|
+                abi.unilog("error: {s}\n", .{@errorName(err)});
+            handleExitResult(exit_fn, inner);
         },
-        .int => {
-            @call(.auto, function, args);
-            // TODO: thread exit status
-        },
-        .error_union => |info| {
-            switch (info.payload) {
-                void, noreturn => {
-                    @call(.auto, function, args) catch |err| {
-                        abi.unilog("error: {s}\n", .{@errorName(err)});
-                    };
-                },
-                else => {
-                    @compileError(bad_fn_ret);
-                },
-            }
-        },
-        else => {
-            @compileError(bad_fn_ret);
-        },
+        else => @compileError(bad_fn_ret),
     }
 }

@@ -236,10 +236,6 @@ pub fn serializeInner(msg: anytype) Message(messageInfo(@TypeOf(msg))) {
         caps.X86Irq,
         => return Message(msg_info).handle(.{ .cap = msg.cap }),
 
-        // use abi.sys.Result for errors and error unions
-        // sys.Error,
-        // => return serializeInner(sys.errorToInt(msg)),
-
         f64,
         f32,
         f16,

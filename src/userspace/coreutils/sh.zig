@@ -18,7 +18,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
 
     if (std.mem.eql(u8, flag, "-c")) {
         const exit_code = try runLine(stdout, path, ctx.args.rest());
-        abi.sys.selfStop(exit_code);
+        abi.process.exit(exit_code);
         return;
     }
 

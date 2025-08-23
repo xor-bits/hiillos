@@ -76,7 +76,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     ) catch {};
     panic_printer.flush() catch {};
 
-    sys.selfStop(0);
+    process.exit(1);
 }
 
 var self_exe: sys.Error![]const u8 = undefined;

@@ -406,6 +406,18 @@ fn handle_syscall(
 
             trap.syscall_id = abi.sys.encode(handle);
         },
+        .proc_wait => {
+            const target_proc, _ = try thread.proc.getObject(caps.Process, @truncate(trap.arg0));
+            defer target_proc.deinit();
+
+            trap.syscall_id = abi.sys.encode(0);
+            target_proc.waitExit(thread, trap);
+        },
+        .proc_exit => {
+            proc.switchFrom(trap, thread);
+            thread.proc.exit(trap.arg0);
+            proc.switchNow(trap);
+        },
 
         .thread_create => {
             const from_proc, _ = try thread.proc.getObject(caps.Process, @truncate(trap.arg0));
@@ -506,6 +518,11 @@ fn handle_syscall(
 
             target_thread.signal_handler = trap.arg1;
             trap.syscall_id = abi.sys.encode(0);
+        },
+        .thread_exit => {
+            proc.switchFrom(trap, thread);
+            thread.exit(trap.arg0);
+            proc.switchNow(trap);
         },
 
         .channel_create => {
@@ -712,11 +729,6 @@ fn handle_syscall(
 
         .self_yield => {
             proc.yield(trap);
-        },
-        .self_stop => {
-            proc.switchFrom(trap, thread);
-            thread.exit(trap.arg0);
-            proc.switchNow(trap);
         },
         .self_dump => {
             log.info("selfDump: {}", .{trap.*});

@@ -67,6 +67,8 @@ pub const Channel = struct {
         self.lock.lock();
         defer self.lock.lock();
 
+        log.info("deinit recv", .{});
+
         std.debug.assert(self.recv_count == 1);
         self.recv_count = 0;
 
@@ -91,6 +93,8 @@ pub const Channel = struct {
     pub fn deinitSend(self: *@This()) bool {
         self.lock.lock();
         defer self.lock.lock();
+
+        log.info("deinit send", .{});
 
         std.debug.assert(self.send_count != 0);
         self.send_count -= 1;

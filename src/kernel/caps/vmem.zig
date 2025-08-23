@@ -162,13 +162,15 @@ pub const Vmem = struct {
     }
 
     pub fn start(self: *@This()) Error!void {
-        if (self.cr3 == 0) {
+        if (self.cr3 != 0) {
+            return;
+        } else {
             @branchHint(.cold);
-
-            const new_cr3 = try caps.HalVmem.alloc(null);
-            caps.HalVmem.init(new_cr3);
-            self.cr3 = new_cr3.toParts().page;
         }
+
+        const new_cr3 = try caps.HalVmem.alloc(null);
+        caps.HalVmem.init(new_cr3);
+        self.cr3 = new_cr3.toParts().page;
     }
 
     pub fn map(

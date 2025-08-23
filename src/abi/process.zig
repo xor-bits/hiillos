@@ -1,9 +1,14 @@
 const std = @import("std");
 
 const caps = @import("caps.zig");
+const sys = @import("sys.zig");
 const util = @import("util.zig");
 
 //
+
+pub fn exit(code: usize) noreturn {
+    sys.procExit(code);
+}
 
 pub fn args() ArgIterator {
     return argsOf(arg_map);

@@ -29,9 +29,12 @@ pub const Thread = struct {
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
+    exit_code: usize = 0,
+    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
     waiting_cause: enum {
         none,
-        other_proc_exit,
+        other_thread_exit,
+        other_process_exit,
         unmap_tlb_shootdown,
         transient_page_fault,
         notify_wait,
@@ -41,7 +44,6 @@ pub const Thread = struct {
         signal,
         futex,
     } = .none,
-    exit_code: usize = 0,
     /// scheduler linked list
     next: ?*Thread = null,
     /// scheduler linked list
@@ -54,7 +56,6 @@ pub const Thread = struct {
     /// extra ipc registers
     /// controlled by Receiver and Sender
     extra_regs: std.MultiArrayList(CapOrVal) = .{},
-    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
     /// signal handler instruction pointer
     signal_handler: usize = 0,
     /// if a signal handler is running, this is the return address
@@ -101,6 +102,8 @@ pub const Thread = struct {
         if (conf.LOG_OBJ_STATS)
             caps.decCount(.thread);
 
+        self.exit(0);
+
         if (self.next) |next| next.deinit();
         if (self.prev) |prev| prev.deinit();
         if (self.reply) |reply| reply.deinit();
@@ -146,7 +149,7 @@ pub const Thread = struct {
             }
         }
 
-        try self.proc.vmem.start();
+        try self.proc.start();
         proc.start(self);
     }
 
@@ -163,13 +166,18 @@ pub const Thread = struct {
                 return Error.NotRunning;
         }
 
+        // TODO: stop the whole process if this makes the last thread stop too
+
         proc.stop(thread);
         if (self == thread) {
             proc.switchNow(trap);
         }
     }
 
-    pub fn exit(self: *@This(), exit_code: usize) void {
+    pub fn exit(
+        self: *@This(),
+        exit_code: usize,
+    ) void {
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -198,7 +206,7 @@ pub const Thread = struct {
         }
 
         thread.status = .waiting;
-        thread.waiting_cause = .other_proc_exit;
+        thread.waiting_cause = .other_thread_exit;
         proc.switchFrom(trap, thread);
 
         self.exit_waiters.pushBack(thread);
