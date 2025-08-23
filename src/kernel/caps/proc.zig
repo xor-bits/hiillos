@@ -103,6 +103,9 @@ pub const Process = struct {
         std.debug.assert(handle != 0);
         const slot = &self.caps.items[handle - 1];
 
+        if (conf.LOG_CAP_CHANGES)
+            log.debug("push {} to {}", .{ cap.type, handle });
+
         std.debug.assert(slot.type == .null);
         slot.* = caps.CapabilitySlot.init(cap);
 
@@ -149,6 +152,8 @@ pub const Process = struct {
 
         const cap = slot.take() orelse return Error.BadHandle;
         self.freeSlotLocked(handle);
+        if (conf.LOG_CAP_CHANGES)
+            log.debug("take {} from {}", .{ cap.type, handle });
         return cap;
     }
 
@@ -163,6 +168,8 @@ pub const Process = struct {
 
         const old_cap = slot.take();
         slot.set(cap);
+        if (conf.LOG_CAP_CHANGES)
+            log.debug("replace {any} with {} in {}", .{ old_cap, cap.type, handle });
         return old_cap;
     }
 

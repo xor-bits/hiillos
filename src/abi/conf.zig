@@ -14,6 +14,7 @@ pub const LOG_SYSCALL_STATS: bool = LOG_STATS or false;
 pub const LOG_OBJ_STATS: bool = LOG_STATS or false;
 pub const LOG_SYSCALLS: bool = LOG_GENERIC or false;
 pub const LOG_OBJ_CALLS: bool = LOG_GENERIC or false;
+pub const LOG_CAP_CHANGES: bool = LOG_GENERIC or false;
 pub const LOG_VMEM: bool = LOG_GENERIC or false;
 pub const LOG_CTX_SWITCHES: bool = LOG_GENERIC or false;
 pub const LOG_WAITING: bool = LOG_GENERIC or false;
