@@ -76,11 +76,13 @@ pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
     std.debug.assert(local.current_thread == null);
     local.current_thread = thread;
-    trap.* = thread.trap;
-    thread.fx.restore();
-    thread.status = .running;
 
-    thread.proc.vmem.switchTo();
+    thread.lock.lock();
+    std.debug.assert(thread.status != .running);
+    thread.status = .running;
+    thread.lock.unlock();
+
+    thread.switchTo(trap);
 
     if (conf.LOG_CTX_SWITCHES)
         log.debug("switch to {*}", .{thread});
@@ -91,22 +93,27 @@ pub fn switchFrom(trap: *const arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
     std.debug.assert(local.current_thread != null);
     local.current_thread = null;
-    thread.fx.save();
-    thread.trap = trap.*;
+
+    thread.switchFrom(trap);
 }
 
 pub fn switchUndo(thread: *caps.Thread) void {
     const local = arch.cpuLocal();
     std.debug.assert(local.current_thread == null);
     local.current_thread = thread;
+
+    thread.exec_lock.lock();
 }
 
 /// stop the thread and (TODO) interrupt a processor that might be running it
 pub fn stop(thread: *caps.Thread) void {
-    std.debug.assert(thread.status != .stopped);
-
-    thread.status = .stopped;
     _ = active_threads.fetchSub(1, .release);
+
+    thread.lock.lock();
+    std.debug.assert(thread.status != .stopped);
+    thread.status = .stopped;
+    thread.lock.unlock();
+
     // FIXME: IPI
     // TODO: stop the processor and take the thread
 }
@@ -114,28 +121,45 @@ pub fn stop(thread: *caps.Thread) void {
 /// takes ownership of the given thread pointer
 /// start the thread, if its not running
 pub fn start(thread: *caps.Thread) void {
-    std.debug.assert(thread.status == .stopped);
-
     _ = active_threads.fetchAdd(1, .acquire);
-    ready(thread);
+
+    thread.lock.lock();
+    const prio = thread.priority;
+    std.debug.assert(thread.status == .stopped);
+    thread.status = .ready;
+    thread.lock.unlock();
+
+    push(thread, prio);
 }
 
 pub fn ready(thread: *caps.Thread) void {
+    thread.lock.lock();
     const prio = thread.priority;
     std.debug.assert(thread.status != .ready and thread.status != .running);
     thread.status = .ready;
+    thread.lock.unlock();
 
+    push(thread, prio);
+}
+
+fn push(thread: *caps.Thread, prio: u2) void {
     queue_locks[prio].lock();
     queues[prio].pushBack(thread);
     queue_locks[prio].unlock();
 
     // notify a single sleeping processor
     for (&waiters) |*w| {
-        const waiter: *const main.CpuLocalStorage = w.swap(null, .acquire) orelse continue;
+        const waiter: *const main.CpuLocalStorage = w.swap(
+            null,
+            .acquire,
+        ) orelse continue;
         if (waiter == arch.cpuLocal()) break;
 
         // log.info("giving thread to {} ({})", .{ waiter.id, waiter.lapic_id });
-        apic.interProcessorInterrupt(waiter.lapic_id, apic.IRQ_IPI_PREEMPT);
+        apic.interProcessorInterrupt(
+            waiter.lapic_id,
+            apic.IRQ_IPI_PREEMPT,
+        );
         break;
     }
 

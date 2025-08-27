@@ -266,6 +266,62 @@ pub const SpinMutex = extern struct {
     }
 };
 
+pub const DummyLock = struct {
+    const Self = @This();
+
+    pub fn locked() Self {
+        return .{};
+    }
+
+    pub fn tryLock(_: *const Self) bool {
+        return true;
+    }
+
+    pub fn lockAttempts(_: *const Self, _: usize) bool {
+        return true;
+    }
+
+    pub fn lock(_: *const Self) void {}
+
+    pub fn isLocked(_: *const Self) bool {
+        return false;
+    }
+
+    pub fn unlock(_: *const Self) void {}
+};
+
+pub const DebugLock = struct {
+    inner: if (conf.IS_DEBUG) SpinMutex else DummyLock = .{},
+
+    const Self = @This();
+
+    pub fn locked() Self {
+        return .{ .inner = .locked() };
+    }
+
+    pub fn tryLock(self: *Self) bool {
+        std.debug.assert(self.inner.tryLock());
+        return true;
+    }
+
+    pub fn lockAttempts(self: *Self, _: usize) bool {
+        std.debug.assert(self.inner.tryLock());
+        return true;
+    }
+
+    pub fn lock(self: *Self) void {
+        std.debug.assert(self.inner.tryLock());
+    }
+
+    pub fn isLocked(self: *Self) bool {
+        return self.inner.isLocked();
+    }
+
+    pub fn unlock(self: *Self) void {
+        return self.inner.unlock();
+    }
+};
+
 pub fn Once(comptime Mutex: type) type {
     return struct {
         entry_mutex: Mutex = .{},

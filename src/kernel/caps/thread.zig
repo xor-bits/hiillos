@@ -19,12 +19,16 @@ pub const Thread = struct {
     refcnt: abi.epoch.RefCnt align(16) = .{},
 
     proc: *caps.Process,
-    // lock for modifying / executing the thread
-    lock: abi.lock.SpinMutex = .locked(),
+
+    // debug lock for executing the thread
+    exec_lock: abi.lock.DebugLock = .locked(),
     /// all context data, except fx
     trap: arch.TrapRegs = .{},
     /// fx context data, switched lazily
     fx: arch.FxRegs = .{},
+
+    // lock for modifying the thread
+    lock: abi.lock.SpinMutex = .locked(),
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
@@ -90,6 +94,7 @@ pub const Thread = struct {
         for (0..128) |i| obj.extra_regs.set(i, .{ .val = 0 });
 
         obj.lock.unlock();
+        obj.exec_lock.unlock();
 
         return obj;
     }
@@ -122,6 +127,26 @@ pub const Thread = struct {
 
         self.refcnt.inc();
         return self;
+    }
+
+    pub fn switchTo(
+        self: *@This(),
+        trap: *arch.TrapRegs,
+    ) void {
+        self.exec_lock.lock();
+        trap.* = self.trap;
+        self.fx.restore();
+
+        self.proc.vmem.switchTo();
+    }
+
+    pub fn switchFrom(
+        self: *@This(),
+        trap: *const arch.TrapRegs,
+    ) void {
+        self.fx.save();
+        self.trap = trap.*;
+        self.exec_lock.unlock();
     }
 
     pub fn start(self: *@This()) !void {
@@ -184,10 +209,12 @@ pub const Thread = struct {
         self.status = .dead;
         self.exit_code = exit_code;
 
+        // TODO: swap with empty, unlock and then process
         while (self.exit_waiters.popFront()) |waiter| {
             waiter.lock.lock();
-            defer waiter.lock.unlock();
             waiter.trap.arg0 = exit_code;
+            waiter.lock.unlock();
+
             proc.ready(waiter);
         }
     }
