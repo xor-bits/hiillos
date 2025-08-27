@@ -600,6 +600,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     });
     test_mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
     test_mod.addImport("font", font);
+    test_mod.addOptions("config", config);
 
     const tests = b.addTest(.{
         .name = "abi-unit-test",
