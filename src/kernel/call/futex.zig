@@ -151,4 +151,4 @@ const FutexQueue = struct {
     real_queues: std.AutoHashMapUnmanaged(*anyopaque, RealQueue) = .{},
 };
 
-const RealQueue = util.Queue(caps.Thread, "prev", "next");
+const RealQueue = abi.util.Queue(caps.Thread, "scheduler_queue_node");

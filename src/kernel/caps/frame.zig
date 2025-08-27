@@ -22,7 +22,7 @@ pub const Frame = struct {
     // flag that tells if this frame is being modified while the lock is not held
     // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
     is_transient: bool = false,
-    transient_sleep_queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
+    transient_sleep_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,

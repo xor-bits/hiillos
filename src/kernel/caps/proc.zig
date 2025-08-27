@@ -23,7 +23,8 @@ pub const Process = struct {
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,
-    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
+    exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    // threads: abi.util.Queue(caps.Thread, "process_threads_node") = .{},
 
     pub const UserHandle = abi.caps.Process;
 

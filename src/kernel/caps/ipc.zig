@@ -23,9 +23,9 @@ pub const Channel = struct {
     send_count: usize = 1,
 
     /// queue for when there are more active receivers than active senders
-    recv_queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
+    recv_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
     /// queue for when there are more active senders than active receivers
-    send_queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
+    send_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
 
     pub fn init() !struct { *Receiver, *Sender } {
         const allocator = caps.slab_allocator.allocator();
@@ -466,7 +466,7 @@ pub const Notify = struct {
 
     // waiter queue
     queue_lock: abi.lock.SpinMutex = .locked(),
-    queue: abi.util.Queue(caps.Thread, "next", "prev") = .{},
+    queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
 
     pub const UserHandle = abi.caps.Notify;
 

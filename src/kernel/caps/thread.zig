@@ -34,7 +34,7 @@ pub const Thread = struct {
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
     exit_code: usize = 0,
-    exit_waiters: abi.util.Queue(caps.Thread, "prev", "next") = .{},
+    exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
     waiting_cause: enum {
         none,
         other_thread_exit,
@@ -48,12 +48,6 @@ pub const Thread = struct {
         signal,
         futex,
     } = .none,
-    /// scheduler linked list
-    next: ?*Thread = null,
-    /// scheduler linked list
-    prev: ?*Thread = null,
-    /// IPC reply target
-    reply: ?*Thread = null,
     // TODO: IPC buffer Frame where the userspace can write data freely
     // and on send, the kernel copies it (with CoW) to the destination IPC buffer
     // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
@@ -64,6 +58,13 @@ pub const Thread = struct {
     signal_handler: usize = 0,
     /// if a signal handler is running, this is the return address
     signal: ?abi.sys.Signal = null,
+
+    /// scheduler linked list
+    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
+    /// process threads linked list
+    process_threads_node: abi.util.QueueNode(@This()) = .{},
+    /// IPC reply target
+    reply: ?*Thread = null,
 
     pub const UserHandle = abi.caps.Thread;
 
@@ -109,8 +110,8 @@ pub const Thread = struct {
 
         self.exit(0);
 
-        if (self.next) |next| next.deinit();
-        if (self.prev) |prev| prev.deinit();
+        std.debug.assert(self.scheduler_queue_node.next == null);
+        std.debug.assert(self.scheduler_queue_node.prev == null);
         if (self.reply) |reply| reply.deinit();
 
         self.proc.deinit();

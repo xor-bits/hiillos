@@ -465,21 +465,20 @@ pub fn aabbIntersect(
 
 pub fn Queue(
     comptime T: type,
-    comptime next_field: []const u8,
-    comptime prev_field: []const u8,
+    comptime node_field: []const u8,
 ) type {
     return struct {
         head: ?*T = null,
         tail: ?*T = null,
 
         pub fn pushBack(self: *@This(), new: *T) void {
-            @field(new, next_field) = null;
+            @field(new, node_field).next = null;
 
             if (self.tail) |tail| {
-                @field(new, prev_field) = tail;
-                @field(tail, next_field) = new;
+                @field(new, node_field).prev = tail;
+                @field(tail, node_field).next = new;
             } else {
-                @field(new, prev_field) = null;
+                @field(new, node_field).prev = null;
                 self.head = new;
             }
 
@@ -487,13 +486,13 @@ pub fn Queue(
         }
 
         pub fn pushFront(self: *@This(), new: *T) void {
-            @field(new, prev_field) = null;
+            @field(new, node_field).prev = null;
 
             if (self.head) |head| {
-                @field(new, next_field) = head;
-                @field(head, prev_field) = new;
+                @field(new, node_field).next = head;
+                @field(head, node_field).prev = new;
             } else {
-                @field(new, next_field) = null;
+                @field(new, node_field).next = null;
                 self.tail = new;
             }
 
@@ -508,8 +507,8 @@ pub fn Queue(
                 self.head = null;
                 self.tail = null;
             } else {
-                const second_last = @field(tail, prev_field).?; // assert that its not null
-                @field(second_last, next_field) = null;
+                const second_last = @field(tail, node_field).prev.?; // assert that its not null
+                @field(second_last, node_field).next = null;
                 self.tail = second_last;
             }
 
@@ -524,8 +523,8 @@ pub fn Queue(
                 self.head = null;
                 self.tail = null;
             } else {
-                const second = @field(head, next_field).?; // assert that its not null
-                @field(second, prev_field) = null;
+                const second = @field(head, node_field).next.?; // assert that its not null
+                @field(second, node_field).prev = null;
                 self.head = second;
             }
 
@@ -537,10 +536,17 @@ pub fn Queue(
             var cur = self.head;
             while (cur) |next| {
                 counter += 1;
-                cur = @field(next, next_field);
+                cur = @field(next, node_field).next;
             }
             return counter;
         }
+    };
+}
+
+pub fn QueueNode(comptime T: type) type {
+    return struct {
+        prev: ?*T = null,
+        next: ?*T = null,
     };
 }
 
