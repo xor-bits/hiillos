@@ -24,7 +24,7 @@ pub const Process = struct {
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,
     exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
-    // threads: abi.util.Queue(caps.Thread, "process_threads_node") = .{},
+    active_threads: abi.util.Queue(caps.Thread, "process_threads_node") = .{},
 
     pub const UserHandle = abi.caps.Process;
 
@@ -72,20 +72,35 @@ pub const Process = struct {
         return self;
     }
 
-    pub fn start(self: *@This()) !void {
+    pub fn start(
+        self: *@This(),
+        with: *caps.Thread,
+    ) !void {
         try self.vmem.start();
 
         self.lock.lock();
         defer self.lock.unlock();
+        if (self.status == .dead)
+            return Error.ProcessDead;
         self.status = .running;
+        self.active_threads.pushBack(with);
     }
 
+    /// if `thread` is null, then the whole process exits
     pub fn exit(
         self: *@This(),
         exit_code: usize,
+        exited_thread: ?*caps.Thread,
     ) void {
         self.lock.lock();
         defer self.lock.unlock();
+
+        if (exited_thread) |thread| {
+            self.active_threads.remove(thread);
+            if (!self.active_threads.isEmpty())
+                return;
+        }
+
         self.status = .dead;
         self.exit_code = exit_code;
 

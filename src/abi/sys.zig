@@ -383,6 +383,7 @@ pub const Error = error{
     Retry,
     /// the other end of the channel closed
     ChannelClosed,
+    ProcessDead,
 
     UnknownError,
 };
@@ -421,6 +422,8 @@ pub const ErrorEnum = enum(u8) {
     null_handle,
     bad_handle,
     retry,
+    channel_closed,
+    process_dead,
     _,
 };
 
@@ -1024,6 +1027,7 @@ pub fn futexWait(
     value: usize,
     flags: FutexFlags,
 ) Error!void {
+    if (builtin.is_test) return;
     while (true) {
         _ = syscall(.futex_wait, .{
             @intFromPtr(addr),
@@ -1048,6 +1052,7 @@ pub fn futexWake(
     count: usize,
     flags: FutexFlags,
 ) Error!void {
+    if (builtin.is_test) return;
     while (true) {
         _ = syscall(.futex_wake, .{
             @intFromPtr(addr),
@@ -1077,6 +1082,7 @@ pub fn futexRequeue(
     value: usize,
     flags: FutexFlags,
 ) Error!void {
+    if (builtin.is_test) return;
     while (true) {
         _ = syscall(.futex_requeue, .{
             @intFromPtr(old_addr),
@@ -1100,10 +1106,12 @@ pub fn futexRequeue(
 }
 
 pub fn selfYield() void {
+    if (builtin.is_test) return;
     _ = syscall(.self_yield, .{}, .{}) catch unreachable;
 }
 
 pub fn selfDump() void {
+    if (builtin.is_test) return;
     _ = syscall(.self_dump, .{}, .{}) catch unreachable;
 }
 

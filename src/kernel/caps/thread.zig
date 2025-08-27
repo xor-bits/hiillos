@@ -175,7 +175,7 @@ pub const Thread = struct {
             }
         }
 
-        try self.proc.start();
+        try self.proc.start(self);
         proc.start(self);
     }
 
@@ -192,8 +192,6 @@ pub const Thread = struct {
                 return Error.NotRunning;
         }
 
-        // TODO: stop the whole process if this makes the last thread stop too
-
         proc.stop(thread);
         if (self == thread) {
             proc.switchNow(trap);
@@ -204,6 +202,8 @@ pub const Thread = struct {
         self: *@This(),
         exit_code: usize,
     ) void {
+        self.proc.exit(exit_code, self);
+
         self.lock.lock();
         defer self.lock.unlock();
 

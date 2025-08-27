@@ -415,7 +415,7 @@ fn handle_syscall(
         },
         .proc_exit => {
             proc.switchFrom(trap, thread);
-            thread.proc.exit(trap.arg0);
+            thread.proc.exit(trap.arg0, null);
             proc.switchNow(trap);
         },
 

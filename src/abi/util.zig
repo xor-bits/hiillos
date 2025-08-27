@@ -587,6 +587,12 @@ pub fn Queue(
             return .{ .current = self.head };
         }
 
+        pub fn isEmpty(self: *const @This()) bool {
+            const is_empty = self.head == null;
+            std.debug.assert(!is_empty or self.tail == null); // only zero or both can be null at a time
+            return is_empty;
+        }
+
         pub fn len(self: *const @This()) usize {
             var it = self.iterator();
             while (it.next()) |_| {}
