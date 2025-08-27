@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
@@ -32,10 +33,83 @@ pub const Thread = struct {
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
-    status: abi.sys.ThreadStatus = .stopped,
-    exit_code: usize = 0,
-    exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
-    waiting_cause: enum {
+    status: union(enum) {
+        stopped: void,
+        running: struct {
+            /// the cpu that is currently running this thread
+            current_cpu: *main.CpuLocalStorage,
+        },
+        ready: struct {
+            /// scheduler priority at the time when the
+            /// thread was added to the ready queue
+            priority: u2,
+        },
+        waiting: union(enum) {
+            other_thread_exit: struct {
+                /// is ref counted
+                obj: *caps.Thread,
+            },
+            other_process_exit: struct {
+                /// is ref counted
+                obj: *caps.Process,
+            },
+            unmap_tlb_shootdown: struct {
+                i
+            },
+            transient_page_fault: struct {
+                /// is ref counted
+                obj: *caps.Frame,
+            },
+            notify: struct {
+                /// is ref counted
+                obj: *caps.Notify,
+            },
+            recv_queue: struct {
+                /// is ref counted
+                obj: *caps.Receiver,
+            },
+            send_queue: struct {
+                /// is ref counted
+                obj: *caps.Sender,
+            },
+            reply: struct {
+                /// the receiver thread that gives the reply
+                ///
+                /// is ref counted
+                from: *@This(),
+            },
+            futex: struct {
+                // TODO: make futex use Frame caps instead
+                paddr: addr.Phys,
+            },
+        },
+        dead: struct {
+            /// thread specific exit code
+            exit_code: u64 = 0,
+        },
+    },
+    exit_waiters: Queue = .{},
+    // TODO: IPC buffer Frame where the userspace can write data freely
+    // and on send, the kernel copies it (with CoW) to the destination IPC buffer
+    // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
+    /// extra ipc registers
+    /// controlled by Receiver and Sender
+    extra_regs: std.MultiArrayList(CapOrVal) = .{},
+    /// signal handler instruction pointer
+    signal_handler: usize = 0,
+    /// if a signal handler is running, this is the return address
+    signal: ?abi.sys.Signal = null,
+    /// IPC reply target
+    reply: ?*Thread = null,
+
+    /// scheduler linked list, the lock is the specific ready/wait queue's lock
+    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
+    /// process threads linked list, the lock is the owner process' lock
+    process_threads_node: abi.util.QueueNode(@This()) = .{},
+
+    pub const Queue = ThreadQueue;
+
+    pub const Cause = enum {
         none,
         other_thread_exit,
         other_process_exit,
@@ -47,24 +121,7 @@ pub const Thread = struct {
         ipc_call1,
         signal,
         futex,
-    } = .none,
-    // TODO: IPC buffer Frame where the userspace can write data freely
-    // and on send, the kernel copies it (with CoW) to the destination IPC buffer
-    // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
-    /// extra ipc registers
-    /// controlled by Receiver and Sender
-    extra_regs: std.MultiArrayList(CapOrVal) = .{},
-    /// signal handler instruction pointer
-    signal_handler: usize = 0,
-    /// if a signal handler is running, this is the return address
-    signal: ?abi.sys.Signal = null,
-
-    /// scheduler linked list
-    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
-    /// process threads linked list
-    process_threads_node: abi.util.QueueNode(@This()) = .{},
-    /// IPC reply target
-    reply: ?*Thread = null,
+    };
 
     pub const UserHandle = abi.caps.Thread;
 
@@ -112,6 +169,8 @@ pub const Thread = struct {
 
         std.debug.assert(self.scheduler_queue_node.next == null);
         std.debug.assert(self.scheduler_queue_node.prev == null);
+        std.debug.assert(self.process_threads_node.next == null);
+        std.debug.assert(self.process_threads_node.prev == null);
         if (self.reply) |reply| reply.deinit();
 
         self.proc.deinit();
@@ -134,6 +193,10 @@ pub const Thread = struct {
         self: *@This(),
         trap: *arch.TrapRegs,
     ) void {
+        self.lock.lock();
+        self.current_cpu = arch.cpuLocal();
+        self.lock.unlock();
+
         self.exec_lock.lock();
         trap.* = self.trap;
         self.fx.restore();
@@ -148,12 +211,24 @@ pub const Thread = struct {
         self.fx.save();
         self.trap = trap.*;
         self.exec_lock.unlock();
+
+        self.lock.lock();
+        self.current_cpu = null;
+        self.lock.unlock();
     }
 
+    /// start the thread and push it to the ready queue,
+    /// if the thread was already started (in a ready queue,
+    /// in a wait queue, actively running or currently starting/stopping),
+    /// `Error.NotStopped` is returned
     pub fn start(self: *@This()) !void {
         {
             self.lock.lock();
             defer self.lock.unlock();
+            log.debug("status={}", .{self.status});
+            self.queue;
+            self.queue_lock;
+            self.status;
             if (self.status != .stopped)
                 return Error.NotStopped;
         }
@@ -175,21 +250,50 @@ pub const Thread = struct {
             }
         }
 
+        log.debug("pre next={s} prev={s}", .{
+            if (self.process_threads_node.next == null) "null" else "some",
+            if (self.process_threads_node.prev == null) "null" else "some",
+        });
+        log.debug("pre head={s} tail={s} eq={}", .{
+            if (self.proc.active_threads.head == null) "null" else "some",
+            if (self.proc.active_threads.tail == null) "null" else "some",
+            self.proc.active_threads.head == self.proc.active_threads.tail,
+        });
         try self.proc.start(self);
+        log.debug("post next={s} prev={s}", .{
+            if (self.process_threads_node.next == null) "null" else "some",
+            if (self.process_threads_node.prev == null) "null" else "some",
+        });
+        log.debug("post head={s} tail={s} eq={}", .{
+            if (self.proc.active_threads.head == null) "null" else "some",
+            if (self.proc.active_threads.tail == null) "null" else "some",
+            self.proc.active_threads.head == self.proc.active_threads.tail,
+        });
         proc.start(self);
     }
 
+    /// stop a thread to remove it from any ready queues, wait queues and
+    /// interrupts the processor if its actively running on one
     pub fn stop(
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
     ) !void {
+        self.removeFromQueue() catch |_| {
+            return Error.NotRunning;
+        };
+        // status is now also set to stopped
+
         {
             self.lock.lock();
             defer self.lock.unlock();
+            errdefer log.debug("status was {}", .{self.status});
             // FIXME: atomic status, because the scheduler might be reading/writing this
-            if (self.status != .ready or self.status != .running)
+            if (self.status != .ready and
+                self.status != .running and
+                self.status != .waiting)
                 return Error.NotRunning;
+            self.status = .stopped;
         }
 
         proc.stop(thread);
@@ -202,16 +306,27 @@ pub const Thread = struct {
         self: *@This(),
         exit_code: usize,
     ) void {
+        log.debug("exit head={s} tail={s} eq={}", .{
+            if (self.proc.active_threads.head == null) "null" else "some",
+            if (self.proc.active_threads.tail == null) "null" else "some",
+            self.proc.active_threads.head == self.proc.active_threads.tail,
+        });
+        log.debug("exit next={s} prev={s}", .{
+            if (self.process_threads_node.next == null) "null" else "some",
+            if (self.process_threads_node.prev == null) "null" else "some",
+        });
         self.proc.exit(exit_code, self);
 
         self.lock.lock();
-        defer self.lock.unlock();
-
         self.status = .dead;
         self.exit_code = exit_code;
+        self.lock.unlock();
 
         // TODO: swap with empty, unlock and then process
-        while (self.exit_waiters.popFront()) |waiter| {
+
+        while (popFromQueue(&self.exit_waiters, &self.lock)) |waiter| {
+            // TODO: reduce the lock,unlock,lock,unlock,lock,unlock spam,
+            // as the state can change between unlock and lock
             waiter.lock.lock();
             waiter.trap.arg0 = exit_code;
             waiter.lock.unlock();
@@ -224,9 +339,11 @@ pub const Thread = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
-        self.lock.lock();
+    ) Error!void {
+        if (self == thread)
+            return Error.PermissionDenied;
 
+        self.lock.lock();
         if (self.status == .dead) {
             self.lock.unlock();
             trap.arg0 = self.exit_code;
@@ -235,11 +352,10 @@ pub const Thread = struct {
 
         thread.status = .waiting;
         thread.waiting_cause = .other_thread_exit;
-        proc.switchFrom(trap, thread);
-
-        self.exit_waiters.pushBack(thread);
         self.lock.unlock();
 
+        proc.switchFrom(trap, thread);
+        thread.pushToQueue(&self.exit_waiters, &self.lock);
         proc.switchNow(trap);
     }
 
@@ -355,4 +471,125 @@ pub const Thread = struct {
         proc.switchFrom(trap, self);
         proc.switchNow(trap);
     }
+};
+
+/// locking order (when holding both): Queue -> Thread
+const ThreadQueue = struct {
+
+    // TODO: the given thread should already be locked by the current thread,
+    // TODO: and the lock will be released
+    //
+    /// used to push this thread to a ready/iowait queue
+    pub fn pushToQueue(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+        thread: *Thread,
+    ) void {
+        thread.lock.lock();
+        thread.pushToQueuePrepare(self, self_lock);
+        thread.lock.unlock();
+
+        self_lock.lock();
+        thread.pushToQueueFinish(self, self_lock);
+        self_lock.unlock();
+    }
+
+    // TODO: the returned thread will be locked by the current thread
+    //
+    /// used with `popFromQueueFinish` to pop some thread off of a ready/iowait queue
+    pub fn popFromQueue(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+    ) ?*@This() {
+        self_lock.lock();
+        const _thread = popFromQueuePrepare(self, self_lock);
+        self_lock.unlock();
+
+        if (_thread) |thread| {
+            thread.lock.lock();
+            thread.popFromQueueFinish(self, self_lock);
+            thread.lock.unlock();
+        }
+
+        return _thread;
+    }
+
+    /// used to push this with `pushToQueueFinish` thread to a ready/iowait queue
+    pub fn pushToQueuePrepare(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+        thread: *Thread,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(thread.lock.isLocked());
+        std.debug.assert(thread.queue == null and thread.queue_lock == null);
+        thread.queue = self;
+        thread.queue_lock = self_lock;
+    }
+
+    /// used to push this with `pushToQueuePrepare` thread to a ready/iowait queue
+    ///
+    /// can also be used to cancel `popFromQueuePrepare`
+    pub fn pushToQueueFinish(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+        thread: *Thread,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(self_lock.isLocked());
+        self.pushBack(thread);
+    }
+
+    /// used with `popFromQueueFinish` to pop some thread off of a ready/iowait queue
+    pub fn popFromQueuePrepare(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+    ) ?*@This() {
+        if (conf.IS_DEBUG) std.debug.assert(self_lock.isLocked());
+        return self.popFront();
+    }
+
+    /// used with `popFromQueuePrepare` to pop some thread off of a ready/iowait queue
+    ///
+    /// can also be used to cancel `pushToQueuePrepare`
+    pub fn popFromQueueFinish(
+        self: *@This(),
+        self_lock: *abi.lock.SpinMutex,
+        thread: *Thread,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(thread.lock.isLocked());
+        std.debug.assert(thread.queue == self and thread.queue_lock == self_lock);
+        thread.queue = null;
+        thread.queue_lock = null;
+    }
+
+    /// used to interrupt a thread that is already in
+    /// some ready/iowait queue and remove it from there
+    pub fn removeFromQueue(
+        thread: *Thread,
+    ) error{NotInAQueue}!void {
+        // TODO: this could cause performance issues
+        // if something malicious is going on,
+        // but rn locking order is more important
+        while (true) {
+            thread.lock.lock();
+            const queue_lock = thread.queue_lock orelse
+                return error.NotInAQueue;
+            const queue = thread.queue.?;
+            thread.lock.unlock();
+
+            queue_lock.lock();
+            defer queue_lock.unlock();
+
+            thread.lock.lock();
+            if (thread.queue_lock != queue_lock or thread.queue != queue) continue;
+            thread.queue_lock = null;
+            thread.queue = null;
+            thread.status = .stopped;
+            thread.lock.unlock();
+
+            queue.remove(thread);
+        }
+    }
+
+    /// pops a thread from one queue or pushes it to another
+    pub fn atomicPopOrPush() void {}
 };

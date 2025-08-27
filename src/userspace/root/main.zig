@@ -32,6 +32,31 @@ pub fn main() !void {
 
     log.info("I am root", .{});
 
+    const thread = try caps.Thread.create(caps.Process.self);
+    const recv, const send = try caps.channel();
+
+    try abi.thread.spawnOptions(struct {
+        fn run(rx: caps.Receiver) !void {
+            log.info("running", .{});
+            _ = try rx.recv();
+        }
+    }.run, .{recv}, .{
+        .vmem = caps.Vmem.self,
+        .proc = caps.Process.self,
+        .thread = thread,
+    });
+
+    for (0..100) |_| abi.sys.selfYield();
+
+    _ = send;
+    log.info("stopping", .{});
+    try thread.stop();
+    log.info("stopped, starting", .{});
+    try thread.start();
+    log.info("started", .{});
+
+    if (true) return;
+
     try initfsd.init();
 
     // const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(BOOT_INFO)).*;

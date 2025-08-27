@@ -383,6 +383,7 @@ pub const Error = error{
     Retry,
     /// the other end of the channel closed
     ChannelClosed,
+    ThreadDead,
     ProcessDead,
 
     UnknownError,
@@ -423,6 +424,7 @@ pub const ErrorEnum = enum(u8) {
     bad_handle,
     retry,
     channel_closed,
+    thread_dead,
     process_dead,
     _,
 };
@@ -569,7 +571,7 @@ pub const ThreadStatus = enum {
     stopped,
     /// thread is actively running on some CPU
     running,
-    /// thread is ready to run, but is being starved
+    /// thread is in the ready queue
     ready,
     /// thread is blocked
     waiting,

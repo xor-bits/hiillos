@@ -411,7 +411,7 @@ fn handle_syscall(
             defer target_proc.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            target_proc.waitExit(thread, trap);
+            try target_proc.waitExit(thread, trap);
         },
         .proc_exit => {
             proc.switchFrom(trap, thread);
@@ -510,7 +510,7 @@ fn handle_syscall(
             defer target_thread.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            target_thread.waitExit(thread, trap);
+            try target_thread.waitExit(thread, trap);
         },
         .thread_set_sig_handler => {
             const target_thread, _ = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));

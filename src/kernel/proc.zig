@@ -16,11 +16,10 @@ const Error = abi.sys.Error;
 // TODO: maybe a fastpath ring buffer before the linked list to reduce locking
 
 var active_threads: std.atomic.Value(usize) = .init(1);
-var queues: [4]Queue = .{Queue{}} ** 4;
+var queues: [4]caps.Thread.Queue = .{caps.Thread.Queue{}} ** 4;
 var queue_locks: [4]abi.lock.SpinMutex = .{abi.lock.SpinMutex{}} ** 4;
 var waiters: [256]Waiter = .{Waiter.init(null)} ** 256;
 
-const Queue = abi.util.Queue(caps.Thread, "scheduler_queue_node");
 const Waiter = std.atomic.Value(?*main.CpuLocalStorage);
 
 //
@@ -47,6 +46,19 @@ pub fn yield(trap: *arch.TrapRegs) void {
 
     yieldReadyPrev(trap, prev);
     switchTo(trap, next_thread);
+}
+
+pub fn switchIfDead(trap: *arch.TrapRegs) void {
+    const current = arch.cpuLocal().current_thread orelse return;
+
+    current.lock.lock();
+    const status = current.status;
+    current.lock.unlock();
+
+    if (status != .dead) return;
+
+    current.deinit();
+    switchNow(trap);
 }
 
 ///mark the previous thread as ready
@@ -140,9 +152,7 @@ pub fn ready(thread: *caps.Thread) void {
 }
 
 fn push(thread: *caps.Thread, prio: u2) void {
-    queue_locks[prio].lock();
-    queues[prio].pushBack(thread);
-    queue_locks[prio].unlock();
+    thread.pushToQueue(&queues[prio], &queue_locks[prio]);
 
     // notify a single sleeping processor
     for (&waiters) |*w| {
@@ -190,17 +200,14 @@ pub fn next() *caps.Thread {
 
 pub fn tryNextHigherPriority(current: u8) ?*caps.Thread {
     for (queue_locks[0..current], queues[0..current]) |*lock, *queue| {
-        lock.lock();
-        const _next_thread = queue.popFront();
-        lock.unlock();
-
-        if (_next_thread) |next_thread| {
-            if (next_thread.status == .stopped) {
-                continue;
-            } else {
-                return next_thread;
-            }
+        const next_thread = caps.Thread.popFromQueue(queue, lock) orelse
+            continue;
+        if (conf.IS_DEBUG) {
+            next_thread.lock.lock();
+            std.debug.assert(next_thread.status == .ready);
+            next_thread.lock.unlock();
         }
+        return next_thread;
     }
 
     return null;

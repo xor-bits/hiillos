@@ -539,15 +539,22 @@ pub fn Queue(
 
             // special case: it is the only node
             if (head == tail) {
+                log.debug("first", .{});
                 self.head = null;
                 self.tail = null;
                 return;
             }
 
+            log.debug("next={s} prev={s}", .{
+                if (@field(node, node_field).next == null) "null" else "some",
+                if (@field(node, node_field).prev == null) "null" else "some",
+            });
+
             // special case: it is the first node
             if (&@field(head, node_field) ==
                 &@field(node, node_field))
             {
+                log.debug("2nd", .{});
                 const second = @field(node, node_field).next.?;
                 @field(second, node_field).prev = null;
                 self.head = second;
@@ -558,6 +565,7 @@ pub fn Queue(
             if (&@field(tail, node_field) ==
                 &@field(node, node_field))
             {
+                log.debug("3rd", .{});
                 const second_last = @field(node, node_field).prev.?;
                 @field(second_last, node_field).next = null;
                 self.tail = second_last;
@@ -565,6 +573,7 @@ pub fn Queue(
             }
 
             // or it is somewhere in the middle
+            log.debug("4th", .{});
             const prev = @field(node, node_field).prev.?;
             const next = @field(node, node_field).next.?;
             @field(prev, node_field).next = next;

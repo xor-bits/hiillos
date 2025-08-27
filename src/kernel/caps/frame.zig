@@ -22,6 +22,7 @@ pub const Frame = struct {
     // flag that tells if this frame is being modified while the lock is not held
     // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
     is_transient: bool = false,
+    transient_sleep_queue_lock: abi.lock.SpinMutex = .locked(),
     transient_sleep_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
@@ -56,6 +57,7 @@ pub const Frame = struct {
             .size_bytes = size_bytes,
             .mappings = .init(caps.slab_allocator.allocator()),
         };
+        obj.transient_sleep_queue_lock.unlock();
         obj.lock.unlock();
 
         return obj;
@@ -395,7 +397,7 @@ pub const Frame = struct {
         defer self.lock.unlock();
 
         self.is_transient = false;
-        while (self.transient_sleep_queue.popFront()) |sleeper| {
+        while (caps.Thread.popFromQueue(&self.transient_sleep_queue, &self.transient_sleep_queue_lock)) |sleeper| {
             proc.ready(sleeper);
         }
 
@@ -504,11 +506,16 @@ pub const Frame = struct {
 
     fn transientQueueSleep(self: *@This(), trap: *arch.TrapRegs, thread: *caps.Thread) void {
         // save the current thread that might or might not go to sleep
+        proc.switchFrom(trap, thread);
+        thread.lock.lock();
         thread.status = .waiting;
         thread.waiting_cause = .transient_page_fault;
-        proc.switchFrom(trap, thread);
+        thread.pushToQueuePrepare(&self.transient_sleep_queue, &self.transient_sleep_queue_lock);
+        thread.lock.unlock();
 
-        self.transient_sleep_queue.pushBack(thread);
+        self.transient_sleep_queue_lock.lock();
+        thread.pushToQueueFinish(&self.transient_sleep_queue, &self.transient_sleep_queue_lock);
+        self.transient_sleep_queue_lock.unlock();
     }
 };
 

@@ -95,6 +95,7 @@ pub const Process = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
+
         if (exited_thread) |thread| {
             self.active_threads.remove(thread);
             if (!self.active_threads.isEmpty())
@@ -111,9 +112,11 @@ pub const Process = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
-        self.lock.lock();
+    ) Error!void {
+        if (self == thread.proc)
+            return Error.PermissionDenied;
 
+        self.lock.lock();
         if (self.status == .dead) {
             self.lock.unlock();
             trap.arg0 = self.exit_code;
@@ -122,11 +125,10 @@ pub const Process = struct {
 
         thread.status = .waiting;
         thread.waiting_cause = .other_process_exit;
-        proc.switchFrom(trap, thread);
-
-        self.exit_waiters.pushBack(thread);
         self.lock.unlock();
 
+        proc.switchFrom(trap, thread);
+        thread.pushToQueue(&self.exit_waiters, &self.lock);
         proc.switchNow(trap);
     }
 
