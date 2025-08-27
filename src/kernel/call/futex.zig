@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
 const util = abi.util;
@@ -32,7 +33,44 @@ pub fn wait(
     }
 
     proc.switchFrom(trap, thread); // switch away before locking, to hold the lock less
+    try waitValidated(u32, futex, @truncate(value), thread);
+    proc.switchNow(trap);
+}
 
+pub fn wake(
+    trap: *arch.TrapRegs,
+    thread: *caps.Thread,
+) Error!void {
+    const futex_ptr = try addr.Virt.fromUser(trap.arg0);
+    const count = trap.arg1;
+    const flags = abi.sys.FutexFlags.fromInt(@truncate(trap.arg2));
+
+    // TODO: private mode
+    if (flags.private) {
+        return Error.Unimplemented;
+    }
+
+    const futex = try physAddr(*std.atomic.Value(u32), thread, futex_ptr);
+    wakeValidated(u32, futex, count);
+
+    // preempt if a high priority thread was awakened
+    proc.yield(trap);
+}
+
+pub fn requeue(
+    trap: *arch.TrapRegs,
+    thread: *caps.Thread,
+) Error!void {
+    _ = .{ trap, thread };
+    return Error.Unimplemented;
+}
+
+fn waitValidated(
+    comptime T: type,
+    futex: *std.atomic.Value(T),
+    value: T,
+    thread: *caps.Thread,
+) Error!void {
     const futex_queue = &futex_queues[addressHash(futex)];
     futex_queue.lock.lock();
 
@@ -43,70 +81,58 @@ pub fn wait(
         return;
     }
 
-    // sleep the thread
-    const queue = futex_queue.real_queues.getOrPut(caps.slab_allocator.allocator(), futex) catch {
+    const queue = futex_queue.getRealQueue(futex) catch |err| {
         futex_queue.lock.unlock();
         proc.switchUndo(thread);
-        return Error.OutOfMemory;
+        return err;
     };
-    if (!queue.found_existing) queue.value_ptr.* = .{};
+
+    // sleep the thread
+    thread.lock.lock();
     thread.status = .waiting;
     thread.waiting_cause = .futex;
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*}", .{thread});
-    queue.value_ptr.pushBack(thread);
+    thread.lock.unlock();
+    thread.pushToQueue(&queue.queue, &queue.lock);
 
     // switch to a new thread
     futex_queue.lock.unlock();
-    proc.switchNow(trap);
 }
 
-pub fn wake(
-    trap: *arch.TrapRegs,
-    thread: *caps.Thread,
-) Error!void {
-    const futex_ptr = try addr.Virt.fromUser(trap.arg0);
-    var count = trap.arg1;
-    const flags = abi.sys.FutexFlags.fromInt(@truncate(trap.arg2));
-
-    // TODO: private mode
-    if (flags.private) {
-        return Error.Unimplemented;
-    }
-
-    const futex = try physAddr(*std.atomic.Value(u8), thread, futex_ptr);
-
+fn wakeValidated(
+    comptime T: type,
+    futex: *std.atomic.Value(T),
+    count: usize,
+) void {
     const futex_queue = &futex_queues[addressHash(futex)];
     futex_queue.lock.lock();
+    defer futex_queue.lock.unlock();
 
-    const queue = futex_queue.real_queues.getPtr(futex) orelse {
+    const queue = futex_queue.real_queues.get(futex) orelse {
         // nothing to wake up
-        futex_queue.lock.unlock();
         return;
     };
 
-    while (count != 0) : (count -= 1) {
-        const thread_to_wake_up = queue.popFront() orelse {
+    for (0..count) |_| {
+        const thread_to_wake_up = caps.Thread.popFromQueue(
+            &queue.queue,
+            &queue.lock,
+        ) orelse {
             // nothing queued on that address anymore, remove the specific queue
             std.debug.assert(futex_queue.real_queues.remove(futex));
+
+            real_queue_allocator_lock.lock();
+            defer real_queue_allocator_lock.unlock();
+            real_queue_allocator.destroy(queue);
+
             break;
         };
+
         if (conf.LOG_FUTEX)
             std.log.debug("futex wake {*}", .{thread_to_wake_up});
         proc.ready(thread_to_wake_up);
     }
-
-    // preempt if a high priority thread was awakened
-    futex_queue.lock.unlock();
-    // proc.yield(trap);
-}
-
-pub fn requeue(
-    trap: *arch.TrapRegs,
-    thread: *caps.Thread,
-) Error!void {
-    _ = .{ trap, thread };
-    return Error.Unimplemented;
 }
 
 // find the hhdm address of a futex
@@ -148,7 +174,36 @@ var futex_queues: [256]FutexQueue = [1]FutexQueue{.{}} ** 256;
 
 const FutexQueue = struct {
     lock: abi.lock.SpinMutex = .{},
-    real_queues: std.AutoHashMapUnmanaged(*anyopaque, RealQueue) = .{},
+    // `RealQueue` needs to be a pointer, because Thread
+    // expects pointer stability from the queue it is in
+    real_queues: std.AutoHashMapUnmanaged(*anyopaque, *RealQueue) = .{},
+
+    fn getRealQueue(
+        self: *@This(),
+        futex: *anyopaque,
+    ) Error!*RealQueue {
+        const queue = self.real_queues.getOrPut(caps.slab_allocator.allocator(), futex) catch {
+            return Error.OutOfMemory;
+        };
+        if (!queue.found_existing) {
+            real_queue_allocator_lock.lock();
+            defer real_queue_allocator_lock.unlock();
+            errdefer std.debug.assert(self.real_queues.remove(futex));
+            queue.value_ptr.* = try real_queue_allocator.create();
+            queue.value_ptr.*.* = .{};
+            queue.value_ptr.*.lock.unlock();
+        }
+
+        return queue.value_ptr.*;
+    }
 };
 
-const RealQueue = abi.util.Queue(caps.Thread, "scheduler_queue_node");
+const RealQueue = struct {
+    // this lock doesnt really do anything because to access it,
+    // another lock has to be held exclusively
+    lock: abi.lock.SpinMutex = .locked(),
+    queue: caps.Thread.Queue = .{},
+};
+
+var real_queue_allocator: std.heap.MemoryPool(RealQueue) = .init(pmem.page_allocator);
+var real_queue_allocator_lock: abi.lock.SpinMutex = .{};

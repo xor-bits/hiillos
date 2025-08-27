@@ -23,9 +23,9 @@ pub const Channel = struct {
     send_count: usize = 1,
 
     /// queue for when there are more active receivers than active senders
-    recv_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    recv_queue: caps.Thread.Queue = .{},
     /// queue for when there are more active senders than active receivers
-    send_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    send_queue: caps.Thread.Queue = .{},
 
     pub fn init() !struct { *Receiver, *Sender } {
         const allocator = caps.slab_allocator.allocator();
@@ -65,7 +65,7 @@ pub const Channel = struct {
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitRecv(self: *@This()) bool {
         self.lock.lock();
-        defer self.lock.lock();
+        defer self.lock.unlock();
 
         log.info("deinit recv", .{});
 
@@ -73,16 +73,30 @@ pub const Channel = struct {
         self.recv_count = 0;
 
         // wake up all threads waiting to receive messages (BadHandle)
-        while (self.recv_queue.popFront()) |listener| {
+        while (caps.Thread.popFromQueuePrepare(&self.recv_queue, &self.lock)) |listener| {
+            self.lock.unlock();
+            defer self.lock.lock();
+
+            listener.lock.lock();
+            listener.popFromQueueFinish(&self.recv_queue, &self.lock);
             std.debug.assert(listener.status == .waiting);
             listener.trap.syscall_id = abi.sys.encode(Error.BadHandle);
+            listener.lock.unlock();
+
             proc.ready(listener);
         }
 
         // wake up all threads waiting to send messages (ChannelClosed)
-        while (self.send_queue.popFront()) |caller| {
+        while (caps.Thread.popFromQueue(&self.send_queue, &self.lock)) |caller| {
+            self.lock.unlock();
+            defer self.lock.lock();
+
+            caller.lock.lock();
+            caller.popFromQueueFinish(&self.recv_queue, &self.lock);
             std.debug.assert(caller.status == .waiting);
             caller.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+            caller.lock.unlock();
+
             proc.ready(caller);
         }
 
@@ -92,7 +106,7 @@ pub const Channel = struct {
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitSend(self: *@This()) bool {
         self.lock.lock();
-        defer self.lock.lock();
+        defer self.lock.unlock();
 
         log.info("deinit send", .{});
 
@@ -102,15 +116,29 @@ pub const Channel = struct {
 
         // wake up all threads waiting to receive messages (ChannelClosed)
         while (self.recv_queue.popFront()) |listener| {
+            self.lock.unlock();
+            defer self.lock.lock();
+
+            listener.lock.lock();
+            listener.popFromQueueFinish(&self.recv_queue, &self.lock);
             std.debug.assert(listener.status == .waiting);
             listener.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+            listener.lock.unlock();
+
             proc.ready(listener);
         }
 
         // wake up all threads waiting to send messages (BadHandle)
         while (self.send_queue.popFront()) |caller| {
+            self.lock.unlock();
+            defer self.lock.lock();
+
+            caller.lock.lock();
+            caller.popFromQueueFinish(&self.recv_queue, &self.lock);
             std.debug.assert(caller.status == .waiting);
             caller.trap.syscall_id = abi.sys.encode(Error.BadHandle);
+            caller.lock.unlock();
+
             proc.ready(caller);
         }
 
@@ -466,7 +494,7 @@ pub const Notify = struct {
 
     // waiter queue
     queue_lock: abi.lock.SpinMutex = .locked(),
-    queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    queue: caps.Thread.Queue = .{},
 
     pub const UserHandle = abi.caps.Notify;
 
@@ -514,26 +542,33 @@ pub const Notify = struct {
         }
 
         // save the state and go to sleep
+        proc.switchFrom(trap, thread);
+        thread.lock.lock();
         thread.status = .waiting;
         thread.waiting_cause = .notify_wait;
-        proc.switchFrom(trap, thread);
+        thread.pushToQueuePrepare(&self.queue, &self.queue_lock);
+        thread.lock.unlock();
 
         self.queue_lock.lock();
-        self.queue.pushBack(thread);
-
         // while holding the lock: if it became active before locking but after the swap, then test it again
         if (self.poll()) {
+            @branchHint(.cold);
             self.queue_lock.unlock();
-            // undo
-            std.debug.assert(self.queue.popBack() == thread);
+
+            thread.lock.lock();
+            thread.popFromQueueFinish(&self.queue, &self.queue_lock);
+            thread.lock.unlock();
+
             std.debug.assert(thread.status == .waiting);
             thread.status = .running;
             proc.switchUndo(thread);
             return;
-        }
-        self.queue_lock.unlock();
+        } else {
+            thread.pushToQueueFinish(&self.queue, &self.queue_lock);
+            self.queue_lock.unlock();
 
-        proc.switchNow(trap);
+            proc.switchNow(trap);
+        }
     }
 
     pub fn poll(self: *@This()) bool {
@@ -542,14 +577,17 @@ pub const Notify = struct {
 
     pub fn notify(self: *@This()) bool {
         self.queue_lock.lock();
-        if (self.queue.popFront()) |waiter| {
+        if (caps.Thread.popFromQueuePrepare(&self.queue, &self.queue_lock)) |waiter| {
             self.queue_lock.unlock();
+
+            waiter.lock.lock();
+            waiter.popFromQueueFinish(&self.queue, &self.queue_lock);
+            waiter.lock.unlock();
 
             proc.ready(waiter);
             return false;
         } else {
             defer self.queue_lock.unlock();
-
             return null != self.notified.cmpxchgStrong(false, true, .monotonic, .monotonic);
         }
     }

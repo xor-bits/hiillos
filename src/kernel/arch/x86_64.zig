@@ -1166,6 +1166,7 @@ pub const Idt = extern struct {
                     // only userspace can preempt
                     log.debug("ready queue push preempt", .{});
                     proc.yield(trap);
+                    proc.switchIfDead(trap);
                 }
 
                 apic.eoi();

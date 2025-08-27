@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
@@ -29,13 +30,37 @@ pub const Thread = struct {
 
     // lock for modifying the thread
     lock: abi.lock.SpinMutex = .locked(),
+    current_cpu: ?*main.CpuLocalStorage = null,
     /// scheduler priority
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
+    waiting_cause: Cause = .none,
     exit_code: usize = 0,
-    exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
-    waiting_cause: enum {
+    exit_waiters: Queue = .{},
+    // TODO: IPC buffer Frame where the userspace can write data freely
+    // and on send, the kernel copies it (with CoW) to the destination IPC buffer
+    // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
+    /// extra ipc registers
+    /// controlled by Receiver and Sender
+    extra_regs: std.MultiArrayList(CapOrVal) = .{},
+    /// signal handler instruction pointer
+    signal_handler: usize = 0,
+    /// if a signal handler is running, this is the return address
+    signal: ?abi.sys.Signal = null,
+    /// IPC reply target
+    reply: ?*Thread = null,
+    queue: ?*Queue = null,
+    queue_lock: ?*abi.lock.SpinMutex = null,
+
+    /// scheduler linked list, the lock is the specific ready/wait queue's lock
+    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
+    /// process threads linked list, the lock is the owner process' lock
+    process_threads_node: abi.util.QueueNode(@This()) = .{},
+
+    pub const Queue = abi.util.Queue(@This(), "scheduler_queue_node");
+
+    pub const Cause = enum {
         none,
         other_thread_exit,
         other_process_exit,
@@ -47,24 +72,8 @@ pub const Thread = struct {
         ipc_call1,
         signal,
         futex,
-    } = .none,
-    // TODO: IPC buffer Frame where the userspace can write data freely
-    // and on send, the kernel copies it (with CoW) to the destination IPC buffer
-    // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
-    /// extra ipc registers
-    /// controlled by Receiver and Sender
-    extra_regs: std.MultiArrayList(CapOrVal) = .{},
-    /// signal handler instruction pointer
-    signal_handler: usize = 0,
-    /// if a signal handler is running, this is the return address
-    signal: ?abi.sys.Signal = null,
-
-    /// scheduler linked list
-    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
-    /// process threads linked list
-    process_threads_node: abi.util.QueueNode(@This()) = .{},
-    /// IPC reply target
-    reply: ?*Thread = null,
+        ready,
+    };
 
     pub const UserHandle = abi.caps.Thread;
 
@@ -112,6 +121,8 @@ pub const Thread = struct {
 
         std.debug.assert(self.scheduler_queue_node.next == null);
         std.debug.assert(self.scheduler_queue_node.prev == null);
+        std.debug.assert(self.process_threads_node.next == null);
+        std.debug.assert(self.process_threads_node.prev == null);
         if (self.reply) |reply| reply.deinit();
 
         self.proc.deinit();
@@ -130,10 +141,116 @@ pub const Thread = struct {
         return self;
     }
 
+    // TODO: the given thread should already be locked by the current thread,
+    // TODO: and the lock will be released
+    //
+    /// used to push this thread to a ready/iowait queue
+    pub fn pushToQueue(
+        self: *@This(),
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) void {
+        self.lock.lock();
+        self.pushToQueuePrepare(queue, queue_lock);
+        self.lock.unlock();
+
+        queue_lock.lock();
+        self.pushToQueueFinish(queue, queue_lock);
+        queue_lock.unlock();
+    }
+
+    // TODO: the returned thread will be locked by the current thread
+    //
+    /// used with `popFromQueueFinish` to pop some thread off of a ready/iowait queue
+    pub fn popFromQueue(
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) ?*@This() {
+        queue_lock.lock();
+        const _thread = popFromQueuePrepare(queue, queue_lock);
+        queue_lock.unlock();
+
+        if (_thread) |thread| {
+            thread.lock.lock();
+            thread.popFromQueueFinish(queue, queue_lock);
+            thread.lock.unlock();
+        }
+
+        return _thread;
+    }
+
+    /// used to push this with `pushToQueueFinish` thread to a ready/iowait queue
+    pub fn pushToQueuePrepare(
+        self: *@This(),
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.queue == null and self.queue_lock == null);
+        self.queue = queue;
+        self.queue_lock = queue_lock;
+    }
+
+    /// used to push this with `pushToQueuePrepare` thread to a ready/iowait queue
+    ///
+    /// can also be used to cancel `popFromQueuePrepare`
+    pub fn pushToQueueFinish(
+        self: *@This(),
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(queue_lock.isLocked());
+        queue.pushBack(self);
+    }
+
+    /// used with `popFromQueueFinish` to pop some thread off of a ready/iowait queue
+    pub fn popFromQueuePrepare(
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) ?*@This() {
+        if (conf.IS_DEBUG) std.debug.assert(queue_lock.isLocked());
+        return queue.popFront();
+    }
+
+    /// used with `popFromQueuePrepare` to pop some thread off of a ready/iowait queue
+    ///
+    /// can also be used to cancel `pushToQueuePrepare`
+    pub fn popFromQueueFinish(
+        self: *@This(),
+        queue: *abi.util.Queue(@This(), "scheduler_queue_node"),
+        queue_lock: *abi.lock.SpinMutex,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.queue == queue and self.queue_lock == queue_lock);
+        self.queue = null;
+        self.queue_lock = null;
+    }
+
+    /// used to interrupt a thread that is already in
+    /// some ready/iowait queue and remove it from there
+    pub fn removeFromQueue(self: *@This()) error{NotInAQueue}!void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const queue_lock = self.queue_lock orelse
+            return error.NotInAQueue;
+        const queue = self.queue.?;
+        self.queue_lock = null;
+        self.queue = null;
+
+        queue_lock.lock();
+        defer queue_lock.unlock();
+        queue.remove(self);
+    }
+
     pub fn switchTo(
         self: *@This(),
         trap: *arch.TrapRegs,
     ) void {
+        self.lock.lock();
+        self.current_cpu = arch.cpuLocal();
+        self.lock.unlock();
+
         self.exec_lock.lock();
         trap.* = self.trap;
         self.fx.restore();
@@ -148,6 +265,10 @@ pub const Thread = struct {
         self.fx.save();
         self.trap = trap.*;
         self.exec_lock.unlock();
+
+        self.lock.lock();
+        self.current_cpu = null;
+        self.lock.unlock();
     }
 
     pub fn start(self: *@This()) !void {
@@ -205,13 +326,15 @@ pub const Thread = struct {
         self.proc.exit(exit_code, self);
 
         self.lock.lock();
-        defer self.lock.unlock();
-
         self.status = .dead;
         self.exit_code = exit_code;
+        self.lock.unlock();
 
         // TODO: swap with empty, unlock and then process
-        while (self.exit_waiters.popFront()) |waiter| {
+
+        while (popFromQueue(&self.exit_waiters, &self.lock)) |waiter| {
+            // TODO: reduce the lock,unlock,lock,unlock,lock,unlock spam,
+            // as the state can change between unlock and lock
             waiter.lock.lock();
             waiter.trap.arg0 = exit_code;
             waiter.lock.unlock();
@@ -224,9 +347,11 @@ pub const Thread = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
-        self.lock.lock();
+    ) Error!void {
+        if (self == thread)
+            return Error.PermissionDenied;
 
+        self.lock.lock();
         if (self.status == .dead) {
             self.lock.unlock();
             trap.arg0 = self.exit_code;
@@ -235,11 +360,10 @@ pub const Thread = struct {
 
         thread.status = .waiting;
         thread.waiting_cause = .other_thread_exit;
-        proc.switchFrom(trap, thread);
-
-        self.exit_waiters.pushBack(thread);
         self.lock.unlock();
 
+        proc.switchFrom(trap, thread);
+        thread.pushToQueue(&self.exit_waiters, &self.lock);
         proc.switchNow(trap);
     }
 
