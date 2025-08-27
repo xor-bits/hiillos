@@ -669,7 +669,7 @@ const FileNode = struct {
         const mount_point = self
             .parent
             .clone()
-            .findDevice() orelse unreachable; // VFS error if there is a cached file without a filesystem
+            .findDevice().?; // VFS error if there is a cached file without a filesystem
         defer mount_point.destroy();
 
         errdefer self.frame = .{};

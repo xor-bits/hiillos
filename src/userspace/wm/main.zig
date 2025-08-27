@@ -606,13 +606,13 @@ const System = struct {
 
         switch (self.held_window) {
             .moving => |moving| {
-                const window = self.windows_map.get(moving.window_id) orelse unreachable;
+                const window = self.windows_map.get(moving.window_id).?;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
                 window.rect.pos = self.cursor -| moving.offs;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
             },
             .resizing => |*resizing| {
-                const window = self.windows_map.get(resizing.window_id) orelse unreachable;
+                const window = self.windows_map.get(resizing.window_id).?;
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
 
                 var window_aabb = window.rect.asAabb();

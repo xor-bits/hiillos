@@ -501,7 +501,7 @@ pub fn Queue(
 
         pub fn popBack(self: *@This()) ?*T {
             const head = self.head orelse return null;
-            const tail = self.tail orelse unreachable;
+            const tail = self.tail.?;
 
             if (head == tail) {
                 self.head = null;
@@ -517,7 +517,7 @@ pub fn Queue(
 
         pub fn popFront(self: *@This()) ?*T {
             const head = self.head orelse return null;
-            const tail = self.tail orelse unreachable;
+            const tail = self.tail.?;
 
             if (head == tail) {
                 self.head = null;
@@ -534,8 +534,8 @@ pub fn Queue(
         pub fn remove(self: *@This(), node: *T) void {
             defer @field(node, node_field) = .{};
 
-            const head = self.head orelse unreachable;
-            const tail = self.tail orelse unreachable;
+            const head = self.head.?;
+            const tail = self.tail.?;
 
             // special case: it is the only node
             if (head == tail) {

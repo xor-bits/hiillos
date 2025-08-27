@@ -159,7 +159,7 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
             }
 
             // split full nodes pre-emptitively
-            const root = getNode(self.root, self.depth) orelse unreachable;
+            const root = getNode(self.root, self.depth).?;
             if (root.used.* == root.max) try self.splitRoot(alloc);
 
             return insertRecurse(alloc, key, val, self.root, self.depth);
@@ -172,7 +172,7 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
             root: usize,
             depth: usize,
         ) Error!?V {
-            const node = getNode(root, depth) orelse unreachable;
+            const node = getNode(root, depth).?;
             std.debug.assert(node.used.* != node.max);
 
             // replace if the slot is already in use
@@ -259,7 +259,7 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
         }
 
         fn isFull(root: usize, depth: usize) bool {
-            const node = getNode(root, depth) orelse unreachable;
+            const node = getNode(root, depth).?;
             return node.used.* == node.max;
         }
 
@@ -267,10 +267,10 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
             // log.info("splitNthChild(root={}, depth={}, n={})", .{ root, depth, n });
             if (depth == 0) unreachable;
 
-            const parent: *BranchNode = @as(?*BranchNode, @ptrFromInt(root)) orelse unreachable;
+            const parent: *BranchNode = @as(?*BranchNode, @ptrFromInt(root)).?;
             std.debug.assert(parent.used != BranchNode.MAX);
 
-            const full_node = getNode(parent.ptrs[n], depth - 1) orelse unreachable;
+            const full_node = getNode(parent.ptrs[n], depth - 1).?;
             std.debug.assert(full_node.used.* == full_node.max);
 
             var new_node: Node = undefined;

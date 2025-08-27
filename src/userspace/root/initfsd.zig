@@ -287,7 +287,7 @@ fn openDirHandlerInner(path: []const u8) Error!struct { caps.Frame, usize } {
 
 fn rootHandler(_: void, _: u32, _: void) struct { u128 } {
     // log.info("looking up root", .{});
-    const root_inode = openDir("./") orelse unreachable;
+    const root_inode = openDir("./").?;
     // log.info("root={}", .{root_inode});
     return .{root_inode};
 }
