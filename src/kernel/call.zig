@@ -35,9 +35,9 @@ pub fn syscall(trap: *arch.TrapRegs) void {
     const locals = arch.cpuLocal();
     const thread = locals.current_thread.?;
 
-    if (conf.LOG_SYSCALLS and id != .selfYield)
+    if (conf.LOG_SYSCALLS and id != .self_yield)
         log.debug("syscall: {s} from {*}", .{ @tagName(id), thread });
-    defer if (conf.LOG_SYSCALLS and id != .selfYield)
+    defer if (conf.LOG_SYSCALLS and id != .self_yield)
         log.debug("syscall: {s} done", .{@tagName(id)});
 
     if (conf.LOG_SYSCALL_STATS) {
