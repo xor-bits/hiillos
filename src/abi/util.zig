@@ -507,7 +507,7 @@ pub fn Queue(
                 self.head = null;
                 self.tail = null;
             } else {
-                const second_last = @field(tail, node_field).prev.?; // assert that its not null
+                const second_last = @field(tail, node_field).prev.?;
                 @field(second_last, node_field).next = null;
                 self.tail = second_last;
             }
@@ -523,7 +523,7 @@ pub fn Queue(
                 self.head = null;
                 self.tail = null;
             } else {
-                const second = @field(head, node_field).next.?; // assert that its not null
+                const second = @field(head, node_field).next.?;
                 @field(second, node_field).prev = null;
                 self.head = second;
             }
@@ -531,14 +531,66 @@ pub fn Queue(
             return head;
         }
 
-        pub fn len(self: *const @This()) usize {
-            var counter: usize = 0;
-            var cur = self.head;
-            while (cur) |next| {
-                counter += 1;
-                cur = @field(next, node_field).next;
+        pub fn remove(self: *@This(), node: *T) void {
+            defer @field(node, node_field) = .{};
+
+            const head = self.head orelse unreachable;
+            const tail = self.tail orelse unreachable;
+
+            // special case: it is the only node
+            if (head == tail) {
+                self.head = null;
+                self.tail = null;
+                return;
             }
-            return counter;
+
+            // special case: it is the first node
+            if (&@field(head, node_field) ==
+                &@field(node, node_field))
+            {
+                const second = @field(node, node_field).next.?;
+                @field(second, node_field).prev = null;
+                self.head = second;
+                return;
+            }
+
+            // special case: it is the last node
+            if (&@field(tail, node_field) ==
+                &@field(node, node_field))
+            {
+                const second_last = @field(node, node_field).prev.?;
+                @field(second_last, node_field).next = null;
+                self.tail = second_last;
+                return;
+            }
+
+            // or it is somewhere in the middle
+            const prev = @field(node, node_field).prev.?;
+            const next = @field(node, node_field).next.?;
+            @field(prev, node_field).next = next;
+            @field(next, node_field).prev = prev;
+        }
+
+        pub const Iterator = struct {
+            nth: usize = std.math.maxInt(usize),
+            current: ?*T,
+
+            pub fn next(self: *@This()) ?*T {
+                const _next = self.current orelse return null;
+                self.nth +%= 1;
+                self.current = @field(_next, node_field).next;
+                return _next;
+            }
+        };
+
+        pub fn iterator(self: *const @This()) Iterator {
+            return .{ .current = self.head };
+        }
+
+        pub fn len(self: *const @This()) usize {
+            var it = self.iterator();
+            while (it.next()) |_| {}
+            return it.nth;
         }
     };
 }
@@ -552,8 +604,7 @@ pub fn QueueNode(comptime T: type) type {
 
 test "Queue.stress_test" {
     const Test = struct {
-        next: ?*@This() = null,
-        prev: ?*@This() = null,
+        node: QueueNode(@This()) = .{},
     };
 
     const alloc = std.testing.allocator;
@@ -561,10 +612,10 @@ test "Queue.stress_test" {
     var rng = std.Random.DefaultPrng.init(std.testing.random_seed);
     const rand = rng.random();
 
-    var queue = Queue(Test, "next", "prev"){};
+    var queue: Queue(Test, "node") = .{};
 
     for (0..100_000) |_| {
-        switch (rand.intRangeAtMostBiased(u2, 0, 3)) {
+        switch (rand.intRangeAtMostBiased(u3, 0, 4)) {
             0 => {
                 const before = queue.len();
                 queue.pushBack(try alloc.create(Test));
@@ -597,6 +648,29 @@ test "Queue.stress_test" {
                     try std.testing.expect(before == 0);
                 }
             },
+            4 => {
+                const nth: usize = switch (rand.intRangeAtMostBiased(u2, 0, 2)) {
+                    0 => 0,
+                    1 => 1,
+                    2 => queue.len() -| 1,
+                    else => unreachable,
+                };
+
+                var it = queue.iterator();
+                for (0..nth) |_| _ = it.next();
+
+                const item = it.current orelse {
+                    try std.testing.expect(queue.len() == 0);
+                    continue;
+                };
+
+                const before = queue.len();
+                queue.remove(item);
+                alloc.destroy(item);
+                const after = queue.len();
+                try std.testing.expect(before == after + 1);
+            },
+            else => unreachable,
         }
     }
 
