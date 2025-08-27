@@ -82,11 +82,13 @@ pub const File = union(enum) {
     pub fn share(self: Self) sys.Error!Stdio {
         return switch (self) {
             .ring => |v| .{ .ring = try v.share() },
-            .file => |v| .{ .file = .{
-                .frame = v.frame,
-                .cursor = v.cursor.load(.monotonic),
-                .limit = try v.frame.getSize(),
-            } },
+            .file => |v| .{
+                .file = .{
+                    .frame = v.frame,
+                    .cursor = v.cursor.load(.monotonic),
+                    // .limit = try v.frame.getSize(),
+                },
+            },
             .none => .{ .none = {} },
         };
     }

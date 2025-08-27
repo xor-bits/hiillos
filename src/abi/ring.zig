@@ -430,9 +430,9 @@ pub const Marker = extern struct {
         return self.write_lock.val.tryLock();
     }
 
-    pub fn lockWriteAttempts(self: *Self, attempts: usize) bool {
-        return self.write_lock.val.lockAttempts(attempts);
-    }
+    // pub fn lockWriteAttempts(self: *Self, attempts: usize) bool {
+    //     return self.write_lock.val.lockAttempts(attempts);
+    // }
 
     pub fn unlockWrite(self: *Self) void {
         self.write_lock.val.unlock();
@@ -446,9 +446,9 @@ pub const Marker = extern struct {
         return self.read_lock.val.tryLock();
     }
 
-    pub fn lockReadAttempts(self: *Self, attempts: usize) bool {
-        return self.read_lock.val.lockAttempts(attempts);
-    }
+    // pub fn lockReadAttempts(self: *Self, attempts: usize) bool {
+    //     return self.read_lock.val.lockAttempts(attempts);
+    // }
 
     pub fn unlockRead(self: *Self) void {
         self.read_lock.val.unlock();
