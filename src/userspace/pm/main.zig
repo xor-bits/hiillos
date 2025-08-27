@@ -49,11 +49,12 @@ pub export var import_tty = abi.loader.Resource.new(.{
     .ty = .sender,
 });
 
-var system: System = .{ .self_vmem = undefined };
+var system: System = .{};
 
 //
 
 pub fn main() !void {
+    try abi.caps.init();
     log.info("hello from pm, export_pm={} import_vfs={}", .{
         export_pm.handle,
         import_vfs.handle,
@@ -66,7 +67,7 @@ pub fn main() !void {
         }
     }
 
-    system = .{ .self_vmem = try caps.Vmem.self() };
+    const vmem = caps.Vmem.self;
 
     // const init_elf = try open("initfs:///sbin/init");
 
@@ -77,7 +78,7 @@ pub fn main() !void {
     );
 
     const init_elf_size = try init_elf_frame.getSize();
-    const init_elf_addr = try system.self_vmem.map(
+    const init_elf_addr = try vmem.map(
         init_elf_frame,
         0,
         0,
@@ -130,8 +131,6 @@ const Context = struct {
 };
 
 pub const System = struct {
-    self_vmem: caps.Vmem,
-
     lock: abi.lock.Futex = .{},
     processes: std.ArrayList(?Process) = .init(abi.mem.slab_allocator),
     // empty process ids into ↑
@@ -157,6 +156,8 @@ pub const System = struct {
         const slot = &self.processes.items[pid - 1];
         std.debug.assert(slot.* == null);
 
+        const self_vmem = caps.Vmem.self;
+
         const vmem = try caps.Vmem.create();
         defer vmem.close();
         const proc = try caps.Process.create(vmem);
@@ -164,7 +165,7 @@ pub const System = struct {
         const thread = try caps.Thread.create(proc);
         errdefer thread.close();
 
-        const entry = try elf.loadInto(self.self_vmem, vmem);
+        const entry = try elf.loadInto(self_vmem, vmem);
         try abi.loader.prepareSpawn(vmem, thread, entry);
 
         var id: u32 = 0;
@@ -310,14 +311,17 @@ fn execElf(
 
     // FIXME: make the arg_map frame copy-on-write
 
+    const vmem = caps.Vmem.self;
+
     const arg_map_len = try handler.req.arg_map.getSize();
-    const arg_map_addr = try system.self_vmem.map(
+    const arg_map_addr = try vmem.map(
         handler.req.arg_map,
         0,
         0,
         0,
         .{},
     );
+    defer vmem.unmap(arg_map_addr, arg_map_len) catch unreachable;
     const arg_map: []const u8 = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
     const cmd: []const u8 = std.mem.sliceTo(arg_map, 0);
 
@@ -338,14 +342,14 @@ fn execElf(
     ) orelse return;
 
     const elf_size = try elf_file.getSize();
-    const elf_bytes = try system.self_vmem.map(
+    const elf_bytes = try vmem.map(
         elf_file,
         0,
         0,
         0,
         .{},
     );
-    defer system.self_vmem.unmap(elf_bytes, elf_size) catch unreachable;
+    defer vmem.unmap(elf_bytes, elf_size) catch unreachable;
 
     var elf = try abi.loader.Elf.init(@as(
         [*]const u8,

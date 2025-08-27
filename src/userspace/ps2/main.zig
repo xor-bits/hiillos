@@ -57,6 +57,7 @@ pub export var import_ps2_status_port = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
+    try abi.caps.init();
 
     log.info("hello from ps2", .{});
     controller = try Controller.init();

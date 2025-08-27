@@ -317,6 +317,9 @@ pub const Vmem = struct {
         const ptr = self.toHhdm().toPtr(*volatile @This());
         abi.util.fillVolatile(Entry, ptr.entries[0..256], .{});
         abi.util.copyForwardsVolatile(Entry, ptr.entries[256..], kernel_table.entries[256..]);
+
+        if (conf.LOG_CTX_SWITCHES)
+            log.debug("new context 0x{x}", .{self.raw});
     }
 
     pub fn alloc(_: ?abi.ChunkSize) Error!addr.Phys {
@@ -326,8 +329,6 @@ pub const Vmem = struct {
     pub fn switchTo(self: addr.Phys) void {
         const cur = arch.Cr3.read();
         if (cur.pml4_phys_base == self.toParts().page) {
-            if (conf.LOG_CTX_SWITCHES)
-                log.debug("context switch avoided", .{});
             return;
         }
 
@@ -336,7 +337,7 @@ pub const Vmem = struct {
         }).write();
 
         if (conf.LOG_CTX_SWITCHES)
-            log.debug("context switched", .{});
+            log.debug("context switched to 0x{x}", .{self.raw});
     }
 
     pub fn printMappings(self: *volatile @This()) !void {

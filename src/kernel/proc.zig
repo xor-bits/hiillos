@@ -83,9 +83,6 @@ pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     thread.lock.unlock();
 
     thread.switchTo(trap);
-
-    if (conf.LOG_CTX_SWITCHES)
-        log.debug("switch to {*}", .{thread});
 }
 
 /// switches away from a thread, but not to another thread

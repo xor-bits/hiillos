@@ -12,7 +12,7 @@ pub fn main() !void {
 
     term_lock.lock();
 
-    const vmem = try caps.Vmem.self();
+    const vmem = caps.Vmem.self;
     // intentionally leak `vmem`
 
     const wm_display = try gui.WmDisplay.connect();

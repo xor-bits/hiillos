@@ -40,8 +40,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
 
     const script_file_len = try script_file.getSize();
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const script_file_addr = try vmem.map(
         script_file,

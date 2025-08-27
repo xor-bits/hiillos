@@ -199,7 +199,7 @@ pub const Path = union(enum(u8)) {
         switch (self.*) {
             .short => |*v| return .{ .p = std.mem.sliceTo(v, 0) },
             .long => |v| {
-                const vmem = try caps.Vmem.self();
+                const vmem = caps.Vmem.self;
                 const addr = try vmem.map(
                     v.frame, // FIXME: make the v.frame copy-on-write
                     v.offs,
@@ -269,8 +269,7 @@ pub const Dir = struct {
     }
 
     pub fn iterate(self: @This()) !Iterator {
-        const vmem = try caps.Vmem.self();
-        errdefer vmem.close();
+        const vmem = caps.Vmem.self;
 
         // FIXME: make the frame copy-on-write
 
@@ -284,7 +283,6 @@ pub const Dir = struct {
         );
 
         return .{
-            .vmem = vmem,
             .entries = @as([*]const u8, @ptrFromInt(addr))[0..frame_size],
             .count = self.count,
             .initial_count = self.count,
@@ -293,18 +291,18 @@ pub const Dir = struct {
     }
 
     pub const Iterator = struct {
-        vmem: caps.Vmem,
         entries: []const u8,
         count: usize,
         initial_count: usize,
         idx: usize,
 
         pub fn deinit(self: @This()) void {
-            self.vmem.unmap(
+            const vmem = caps.Vmem.self;
+
+            vmem.unmap(
                 @intFromPtr(self.entries.ptr),
                 self.entries.len,
             ) catch unreachable;
-            self.vmem.close();
         }
 
         pub fn reset(self: *@This()) void {

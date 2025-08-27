@@ -163,8 +163,7 @@ pub fn init() !void {
 
     // FIXME: make the frames copy-on-write
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const arg_map_len = try arg_map_frame.getSize();
     const arg_map_addr = try vmem.map(

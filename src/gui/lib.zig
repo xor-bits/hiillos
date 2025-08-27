@@ -15,8 +15,7 @@ pub fn openImage(
     allocator: std.mem.Allocator,
     path: []const u8,
 ) !abi.util.Image([]u8) {
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const file = try abi.fs.openFileAbsolute(path, .{});
     defer file.close();

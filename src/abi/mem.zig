@@ -20,8 +20,7 @@ var slab_allocator_inst: SlabAllocator = .init(server_page_allocator);
 
 const ServerPageAllocator = struct {
     fn alloc(_: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
-        const vmem = abi.caps.Vmem.self() catch return null;
-        defer vmem.close();
+        const vmem = abi.caps.Vmem.self;
 
         const size = std.mem.alignForward(usize, len, 0x1000);
 
@@ -59,8 +58,7 @@ const ServerPageAllocator = struct {
     }
 
     fn free(_: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
-        const vmem = abi.caps.Vmem.self() catch return;
-        defer vmem.close();
+        const vmem = abi.caps.Vmem.self;
 
         const size = std.mem.alignForward(usize, buf.len, 0x1000);
 

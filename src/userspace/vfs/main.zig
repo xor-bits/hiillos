@@ -40,11 +40,11 @@ pub export var import_hpet = abi.loader.Resource.new(.{
 var global_root: *DirNode = undefined;
 var fs_root: *DirNode = undefined;
 var initfs_root: *DirNode = undefined;
-var vmem: caps.Vmem = .{};
 
 //
 
 pub fn main() !void {
+    try abi.caps.init();
     log.info("hello from vfs", .{});
 
     if (abi.conf.IPC_BENCHMARK) {
@@ -77,8 +77,6 @@ pub fn main() !void {
 
     const initfsd = abi.FsProtocol.Client().init(.{ .cap = import_initfs.handle });
     const initfs_root_inode: u128 = (try initfsd.call(.root, {})).@"0";
-
-    vmem = try caps.Vmem.self();
 
     global_root = try DirNode.create(null, 0);
 
@@ -886,6 +884,8 @@ const DirNode = struct {
 
         const real_dir = try mount_point.loadRealDir(self.inode);
         const real_dir_frame_size = try real_dir.frame.getSize();
+
+        const vmem = caps.Vmem.self;
 
         const addr = try vmem.map(
             real_dir.frame,

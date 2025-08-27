@@ -22,12 +22,11 @@ pub fn installRuntime() void {
 }
 
 pub fn init() !void {
+    try @import("caps.zig").init();
     try @import("io.zig").init();
     try @import("process.zig").init();
 
-    const main_thread = try caps.Thread.self();
-    defer main_thread.close();
-    try main_thread.threadSetSigHandler(@intFromPtr(&signalHandler));
+    try caps.Thread.main.threadSetSigHandler(@intFromPtr(&signalHandler));
 }
 
 pub const SignalRegs = extern struct {
@@ -110,5 +109,4 @@ fn signalHandlerWrapper(regs: *SignalRegs) callconv(.SysV) void {
 
 fn _start() callconv(.SysV) noreturn {
     thread.callFn(root.main, .process, .{});
-    sys.selfStop(0);
 }

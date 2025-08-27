@@ -157,8 +157,7 @@ const Calculator = struct {
 pub fn main() !void {
     try abi.rt.init();
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const wm_display = try gui.WmDisplay.connect();
     defer wm_display.deinit();

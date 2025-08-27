@@ -48,12 +48,12 @@ var seat_lock: abi.thread.Mutex = .{};
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
+    try abi.caps.init();
     log.info("hello from tty", .{});
 
     try abi.thread.spawn(seatListener, .{});
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const fb_frame = caps.Frame{ .cap = import_fb.handle };
     const fb_addr = try vmem.map(

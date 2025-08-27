@@ -27,7 +27,7 @@ const color: u32 = 0xFF8000;
 //
 
 pub fn spinnerMain() !void {
-    const vmem = try caps.Vmem.self();
+    const vmem = caps.Vmem.self;
 
     const fb_frame = caps.Frame{ .cap = 0 };
     const fb_info_frame = caps.Frame{ .cap = 0 };

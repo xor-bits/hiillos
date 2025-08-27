@@ -48,8 +48,7 @@ pub fn main() !void {
     var fb_info: abi.FramebufferInfoFrame = undefined;
     try seat.fb_info.read(0, std.mem.asBytes(&fb_info));
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const fb_addr = try vmem.map(
         seat.fb,
@@ -375,8 +374,7 @@ const Framebuffer = struct {
     fb: abi.util.Image([*]volatile u8),
 
     pub fn init(shmem: gui.Framebuffer) !@This() {
-        const vmem = caps.Vmem.self() catch unreachable;
-        defer vmem.close();
+        const vmem = caps.Vmem.self;
 
         const shmem_addr = try vmem.map(
             shmem.shmem,
@@ -406,9 +404,7 @@ const Framebuffer = struct {
     }
 
     pub fn deinit(self: @This()) void {
-        const vmem = caps.Vmem.self() catch unreachable;
-        defer vmem.close();
-
+        const vmem = caps.Vmem.self;
         vmem.unmap(
             @intFromPtr(self.fb.pixel_array),
             self.shmem.bytes,

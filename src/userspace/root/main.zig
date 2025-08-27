@@ -28,6 +28,8 @@ pub var self_vmem_lock: abi.thread.Mutex = .new();
 //
 
 pub fn main() !void {
+    try abi.caps.init();
+
     log.info("I am root", .{});
 
     try initfsd.init();

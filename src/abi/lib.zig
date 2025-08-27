@@ -101,8 +101,7 @@ fn tryLoadSelfExe() sys.Error![]const u8 {
     if (@hasDecl(root, "manifest"))
         return sys.Error.NotFound;
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const frame = try fs.openSelfExe();
     const size = try frame.getSize();

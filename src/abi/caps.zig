@@ -24,6 +24,14 @@ pub const COMMON_TTY = Sender{ .cap = 7 };
 
 //
 
+pub fn init() !void {
+    Process.self = try .createSelf();
+    Vmem.self = try .createSelf();
+    Thread.main = try .createSelf();
+}
+
+//
+
 pub const Handle = extern struct {
     cap: u32 = 0,
 
@@ -64,12 +72,14 @@ pub const Process = extern struct {
         .transfer = true,
     };
 
+    pub var self: @This() = .{};
+
     pub fn create(vmem: Vmem) sys.Error!@This() {
         const cap = try sys.procCreate(vmem.cap);
         return .{ .cap = cap };
     }
 
-    pub fn self() sys.Error!@This() {
+    pub fn createSelf() sys.Error!@This() {
         const cap = try sys.procSelf();
         return .{ .cap = cap };
     }
@@ -80,6 +90,7 @@ pub const Process = extern struct {
     }
 
     pub fn close(this: @This()) void {
+        std.debug.assert(this.cap != self.cap);
         sys.handleClose(this.cap);
     }
 
@@ -108,12 +119,14 @@ pub const Thread = extern struct {
         .transfer = true,
     };
 
+    pub var main: @This() = .{};
+
     pub fn create(proc: Process) sys.Error!@This() {
         const cap = try sys.threadCreate(proc.cap);
         return .{ .cap = cap };
     }
 
-    pub fn self() sys.Error!@This() {
+    pub fn createSelf() sys.Error!@This() {
         const cap = try sys.threadSelf();
         return .{ .cap = cap };
     }
@@ -124,6 +137,7 @@ pub const Thread = extern struct {
     }
 
     pub fn close(this: @This()) void {
+        std.debug.assert(this.cap != main.cap);
         sys.handleClose(this.cap);
     }
 
@@ -164,8 +178,7 @@ pub const Thread = extern struct {
 pub const Vmem = extern struct {
     cap: u32 = 0,
 
-    var global_self: std.atomic.Value(u32) = .init(0);
-    var global_self_init: lock.Once(thread.Mutex) = .new();
+    pub var self: @This() = .{};
 
     pub const object_type = abi.ObjectType.vmem;
     pub const default_rights = abi.sys.Rights{
@@ -183,17 +196,9 @@ pub const Vmem = extern struct {
         return .{ .cap = cap };
     }
 
-    pub fn self() sys.Error!@This() {
-        if (!global_self_init.tryRun()) {
-            global_self_init.wait();
-            return .{ .cap = global_self.load(.acquire) };
-        }
-
-        const self_vmem_cap = try sys.vmemSelf();
-        global_self.store(self_vmem_cap, .release);
-        global_self_init.complete();
-
-        return .{ .cap = self_vmem_cap };
+    pub fn createSelf() sys.Error!@This() {
+        const cap = try sys.vmemSelf();
+        return .{ .cap = cap };
     }
 
     pub fn clone(this: @This()) sys.Error!@This() {
@@ -202,8 +207,7 @@ pub const Vmem = extern struct {
     }
 
     pub fn close(this: @This()) void {
-        if (this.cap == global_self.load(.monotonic)) return;
-
+        std.debug.assert(this.cap != self.cap);
         sys.handleClose(this.cap);
     }
 
@@ -216,6 +220,10 @@ pub const Vmem = extern struct {
         length: usize,
         flags: abi.sys.MapFlags,
     ) sys.Error!usize {
+        const name = if (@hasDecl(@import("root"), "manifest")) @import("root").manifest.name else "<unknown>";
+        if (this.cap == 0) std.log.err("vmem is null {s}", .{name});
+        if (frame.cap == 0) std.log.err("frame is null {s}", .{name});
+
         return sys.vmemMap(
             this.cap,
             frame.cap,

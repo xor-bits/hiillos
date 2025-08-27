@@ -144,8 +144,6 @@ pub const Vmem = struct {
 
         const current_vmem_ptr = &arch.cpuLocal().current_vmem;
         if (current_vmem_ptr.* == self) {
-            if (conf.LOG_CTX_SWITCHES)
-                log.debug("context switch avoided", .{});
             return;
         }
 

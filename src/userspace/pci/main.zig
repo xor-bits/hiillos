@@ -40,10 +40,10 @@ pub export var import_mcfg_info_frame = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
+    try abi.caps.init();
     log.info("hello from pci", .{});
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const mcfg_frame = caps.Frame{ .cap = import_mcfg_frame.handle };
     defer mcfg_frame.close();

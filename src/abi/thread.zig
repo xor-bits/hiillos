@@ -30,14 +30,10 @@ pub const SpawnOptions = struct {
 pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOptions) !void {
     if (opts.stack_size < 0x4000) @panic("stack too small");
 
-    const vmem = opts.vmem orelse try caps.Vmem.self();
-    defer vmem.close();
-
-    const proc = opts.proc orelse try caps.Process.self();
-    defer proc.close();
-
+    const vmem = opts.vmem orelse caps.Vmem.self;
+    const proc = opts.proc orelse caps.Process.self;
     const thread = opts.thread orelse try caps.Thread.create(proc);
-    defer thread.close();
+    defer if (opts.thread == null) thread.close();
 
     const Args = @TypeOf(args);
     const Instance = struct {

@@ -46,10 +46,10 @@ var timers: [32]Timer = .{Timer{}} ** 32;
 //
 
 pub fn main() !void {
+    try abi.caps.init();
     log.info("hello from hpet", .{});
 
-    const vmem = try caps.Vmem.self();
-    defer vmem.close();
+    const vmem = caps.Vmem.self;
 
     const hpet_frame = caps.Frame{ .cap = import_hpet_frame.handle };
     defer hpet_frame.close();

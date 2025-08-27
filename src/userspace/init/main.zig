@@ -11,6 +11,7 @@ const log = std.log.scoped(.init);
 //
 
 pub fn main() !void {
+    try abi.rt.init();
     log.info("hello from init", .{});
 
     if (abi.conf.SCHED_STRESS_TEST) {

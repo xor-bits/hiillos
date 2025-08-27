@@ -68,10 +68,9 @@ pub fn Ring(comptime T: type) type {
             if (size_bytes < sizeOf(shared.capacity))
                 return RingError.InvalidState;
 
-            const self_vmem = try caps.Vmem.self();
-            errdefer self_vmem.close();
+            const vmem = caps.Vmem.self;
 
-            const addr = try self_vmem.map(
+            const addr = try vmem.map(
                 shared.frame,
                 0,
                 0,
@@ -81,7 +80,7 @@ pub fn Ring(comptime T: type) type {
 
             return .{
                 .frame = shared.frame,
-                .self_vmem = self_vmem,
+                .self_vmem = vmem,
                 .capacity = shared.capacity,
                 .mapped_data = @as([*]volatile u8, @ptrFromInt(addr))[0..size_bytes],
             };
