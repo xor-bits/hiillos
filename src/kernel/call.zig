@@ -59,6 +59,12 @@ pub fn syscall(trap: *arch.TrapRegs) void {
             log.warn("syscall error {}: {}", .{ id, err });
         trap.syscall_id = abi.sys.encode(err);
     };
+
+    if (locals.current_thread == null) {
+        // all locks are unlocked now and the CPU
+        // can halt while waiting for threads
+        proc.switchNow(trap);
+    }
 }
 
 fn handle_syscall(
@@ -196,7 +202,7 @@ fn handle_syscall(
                 thread,
             );
             if (res == Error.Retry) {
-                proc.switchNow(trap);
+                return;
             } else {
                 _ = try res;
             }
@@ -283,7 +289,7 @@ fn handle_syscall(
                 pages,
                 false,
             ) catch |err| switch (err) {
-                Error.Retry => proc.switchNow(trap),
+                Error.Retry => return,
                 else => return err,
             };
         },
@@ -353,7 +359,7 @@ fn handle_syscall(
                 thread,
             );
             if (res == Error.Retry) {
-                proc.switchNow(trap);
+                return;
             } else {
                 _ = try res;
             }
@@ -416,7 +422,6 @@ fn handle_syscall(
         .proc_exit => {
             proc.switchFrom(trap, thread);
             thread.proc.exit(trap.arg0, null);
-            proc.switchNow(trap);
         },
 
         .thread_create => {
@@ -522,7 +527,6 @@ fn handle_syscall(
         .thread_exit => {
             proc.switchFrom(trap, thread);
             thread.exit(trap.arg0);
-            proc.switchNow(trap);
         },
 
         .channel_create => {

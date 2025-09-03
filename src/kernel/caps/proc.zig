@@ -126,8 +126,6 @@ pub const Process = struct {
 
         self.exit_waiters.pushBack(thread);
         self.lock.unlock();
-
-        proc.switchNow(trap);
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {

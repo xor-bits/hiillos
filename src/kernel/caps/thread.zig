@@ -192,10 +192,10 @@ pub const Thread = struct {
                 return Error.NotRunning;
         }
 
-        proc.stop(thread);
         if (self == thread) {
-            proc.switchNow(trap);
+            proc.switchFrom(trap, thread);
         }
+        proc.stop(thread);
     }
 
     pub fn exit(
@@ -239,8 +239,6 @@ pub const Thread = struct {
 
         self.exit_waiters.pushBack(thread);
         self.lock.unlock();
-
-        proc.switchNow(trap);
     }
 
     pub fn getExtra(self: *@This(), idx: u7) CapOrVal {
@@ -353,6 +351,5 @@ pub const Thread = struct {
         // TODO: sigsegv
 
         proc.switchFrom(trap, self);
-        proc.switchNow(trap);
     }
 };

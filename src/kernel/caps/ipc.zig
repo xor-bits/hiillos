@@ -127,9 +127,7 @@ pub const Channel = struct {
         if (thread.reply) |discarded| discarded.deinit();
         thread.reply = null;
 
-        if (self.recvNoFail(thread, trap)) {
-            proc.switchNow(trap);
-        }
+        if (self.recvNoFail(thread, trap)) {}
     }
 
     // might block the user-space thread (kernel-space should only ever block after a syscall is complete)
@@ -252,7 +250,6 @@ pub const Channel = struct {
             self.send_queue.pushBack(thread);
             self.lock.unlock();
 
-            proc.switchNow(trap);
             return;
         };
         self.lock.unlock();
@@ -532,8 +529,6 @@ pub const Notify = struct {
             return;
         }
         self.queue_lock.unlock();
-
-        proc.switchNow(trap);
     }
 
     pub fn poll(self: *@This()) bool {
