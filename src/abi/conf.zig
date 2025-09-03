@@ -40,7 +40,7 @@ pub const NO_LAZY_REMAP: bool = false;
 /// freeze the kernel when an unhandled user-space fault happens, for easier debugging with gdb
 pub const DEBUG_UNHANDLED_FAULT: bool = false;
 
-pub const IPC_BENCHMARK: bool = false;
+pub const IPC_BENCHMARK: bool = true;
 pub const SCHED_STRESS_TEST: bool = false;
 pub const FUTEX_STRESS_TEST: bool = false;
 

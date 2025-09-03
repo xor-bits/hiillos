@@ -58,7 +58,6 @@ pub fn wait(
 
     // switch to a new thread
     futex_queue.lock.unlock();
-    proc.switchNow(trap);
 }
 
 pub fn wake(
