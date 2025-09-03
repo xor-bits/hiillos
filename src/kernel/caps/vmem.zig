@@ -499,8 +499,16 @@ pub const Vmem = struct {
                 addr.Virt.fromInt(vaddr.raw + pages * 0x1000),
             } },
         );
-        thread.status = .waiting;
-        thread.waiting_cause = .unmap_tlb_shootdown;
+        thread.lock.lock();
+        thread.pushPrepare(.{
+            .new_status = .waiting,
+            .new_cause = .unmap_tlb_shootdown,
+            .cancel_op = .allow_cancelled,
+        }) catch {
+            // thread stopped but it still has
+            // to wait before it can start again
+        };
+        thread.lock.unlock();
         proc.switchFrom(trap, thread);
 
         // tests cannot yield or do IPIs or other stuff rn
@@ -508,21 +516,26 @@ pub const Vmem = struct {
             // no need to send an IPI to self
             if (locals == arch.cpuLocal()) continue;
 
-            if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
-                locals.pushTlbShootdown(shootdown.clone());
+            // no need to send an IPI to a CPU that has not used this Vmem
+            if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) == 0) continue;
 
-                // log.debug("issuing a TLB shootdown from unmap", .{});
-                apic.interProcessorInterrupt(
-                    locals.lapic_id,
-                    apic.IRQ_IPI_TLB_SHOOTDOWN,
-                );
-            } else {}
+            locals.pushTlbShootdown(shootdown.clone());
+
+            // log.debug("issuing a TLB shootdown from unmap", .{});
+            apic.interProcessorInterrupt(
+                locals.lapic_id,
+                apic.IRQ_IPI_TLB_SHOOTDOWN,
+            );
         };
 
         if (shootdown.deinit()) |this_thread| {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
-            this_thread.status = .running;
+            this_thread.popFinishUnlocked(.{}) catch {
+                // thread was stopped while unmapping
+                // but the unmap was completed
+                return;
+            };
             proc.switchUndo(thread);
         } else {
             return Error.Retry;

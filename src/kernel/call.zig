@@ -65,6 +65,20 @@ pub fn syscall(trap: *arch.TrapRegs) void {
         // can halt while waiting for threads
         proc.switchNow(trap);
     }
+
+    if (conf.IS_DEBUG) {
+        const new_thread = locals.current_thread.?;
+        new_thread.lock.lock();
+        defer new_thread.lock.unlock();
+        if (new_thread.status != .running and
+            new_thread.status != .stopping and
+            new_thread.status != .exiting)
+            std.debug.panic("call={} status={} cause={}", .{
+                id,
+                new_thread.status,
+                new_thread.waiting_cause,
+            });
+    }
 }
 
 fn handle_syscall(
@@ -488,7 +502,7 @@ fn handle_syscall(
         },
         .thread_start => {
             const target_thread, _ = try thread.proc.getObject(caps.Thread, @truncate(trap.arg0));
-            errdefer target_thread.deinit();
+            defer target_thread.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
             try target_thread.start();

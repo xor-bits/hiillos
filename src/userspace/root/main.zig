@@ -27,10 +27,53 @@ pub var self_vmem_lock: abi.thread.Mutex = .new();
 
 //
 
+test "simple thread start stop sync" {
+    const thread = try caps.Thread.create(caps.Process.self);
+
+    try abi.thread.spawnOptions(struct {
+        fn f() !void {
+            log.info("thread running", .{});
+            try caps.Thread.main.start();
+            while (true) {
+                abi.thread.yield();
+                log.info("thread running", .{});
+            }
+        }
+    }.f, .{}, .{ .thread = thread });
+
+    try caps.Thread.main.stop();
+    log.info("thread stopping", .{});
+    try thread.stop();
+    log.info("thread stopped", .{});
+
+    while (true) {
+        abi.thread.yield();
+    }
+}
+
 pub fn main() !void {
     try abi.caps.init();
 
     log.info("I am root", .{});
+
+    // const thread = try caps.Thread.create(caps.Process.self);
+
+    // try abi.thread.spawnOptions(struct {
+    //     fn f() !void {
+    //         while (true) {
+    //             log.info("thread running", .{});
+    //             abi.thread.yield();
+    //         }
+    //     }
+    // }.f, .{}, .{ .thread = thread });
+
+    // while (true) {
+    //     log.info("thread running", .{});
+    //     try thread.stop();
+    //     log.info("thread running", .{});
+    //     try thread.start();
+    //     log.info("thread running", .{});
+    // }
 
     try initfsd.init();
 

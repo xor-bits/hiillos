@@ -65,7 +65,7 @@ pub fn exec(a: args.Args) !void {
     // the handles (init_thread, init_vmem, boot_info) moved, but they are still valid
     try mapRoot(init_thread, init_vmem, boot_info, a);
 
-    proc.start(init_thread);
+    try init_thread.start();
     proc.init();
 }
 
