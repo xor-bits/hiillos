@@ -51,22 +51,14 @@ pub fn init() !void {
     std.crypto.secureZero(u64, page.toHhdm().toPtr([*]volatile u64)[0..512]);
     readonly_zero_page.store(page.toParts().page, .release);
 
-    debugType(CapabilitySlot);
-    debugType(Capability);
-    debugType(Generic);
-    debugType(Process);
-    debugType(Thread);
-    debugType(Frame);
-    debugType(Vmem);
-    debugType(Mapping);
-    debugType(Receiver);
-    debugType(Reply);
-    debugType(Sender);
-    debugType(Notify);
-    debugType(X86IoPortAllocator);
-    debugType(X86IoPort);
-    debugType(X86IrqAllocator);
-    debugType(X86Irq);
+    inline for ([_]type{
+        CapabilitySlot,     Capability, Generic,         Process,
+        Thread,             Frame,      Vmem,            Mapping,
+        Receiver,           Reply,      Sender,          Notify,
+        X86IoPortAllocator, X86IoPort,  X86IrqAllocator, X86Irq,
+    }) |T| {
+        debugType(T);
+    }
 }
 
 pub fn incCount(ty: abi.ObjectType) void {

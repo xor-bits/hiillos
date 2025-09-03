@@ -23,7 +23,7 @@ pub const Process = struct {
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,
-    exit_waiters: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    exit_waiters: caps.Thread.Queue = .{},
     active_threads: abi.util.Queue(caps.Thread, "process_threads_node") = .{},
 
     pub const UserHandle = abi.caps.Process;
@@ -112,20 +112,48 @@ pub const Process = struct {
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
     ) void {
-        self.lock.lock();
-
-        if (self.status == .dead) {
-            self.lock.unlock();
-            trap.arg0 = self.exit_code;
+        if (self == thread.proc) {
+            trap.syscall_id = abi.sys.encode(Error.PermissionDenied);
             return;
         }
 
-        thread.status = .waiting;
-        thread.waiting_cause = .other_process_exit;
+        // early block the thread (or cancel)
         proc.switchFrom(trap, thread);
+        thread.lock.lock();
+        thread.pushPrepare(.{
+            .new_status = .waiting,
+            .new_cause = .other_process_exit,
+        }) catch {
+            @branchHint(.cold);
+            thread.lock.unlock();
 
-        self.exit_waiters.pushBack(thread);
+            // the current thread was stopped
+            trap.syscall_id = abi.sys.encode(Error.Cancelled);
+            proc.switchFrom(trap, thread);
+            thread.deinit();
+            return;
+        };
+        thread.lock.unlock();
+
+        // if the thread isnt already dead, then add it to the wait queue
+        self.lock.lock();
+        if (self.status != .dead) {
+            self.exit_waiters.queue.pushBack(thread);
+            self.lock.unlock();
+            return;
+        }
+        const exit_code = self.exit_code;
         self.lock.unlock();
+
+        // the thread was already dead
+        trap.arg0 = exit_code;
+        proc.switchUndo(thread);
+        thread.popFinishUnlocked(.{}) catch {
+            // the current thread was stopped
+            trap.syscall_id = abi.sys.encode(Error.Cancelled);
+            proc.switchFrom(trap, thread);
+            thread.deinit();
+        };
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {

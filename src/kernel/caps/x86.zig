@@ -51,6 +51,7 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
             to_addr,
             from.getFlags(false),
         );
+        tmp.global = 1;
     } else if (level == 1) {
         // last level, 4kib frame
 

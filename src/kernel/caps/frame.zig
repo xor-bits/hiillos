@@ -22,7 +22,7 @@ pub const Frame = struct {
     // flag that tells if this frame is being modified while the lock is not held
     // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
     is_transient: bool = false,
-    transient_sleep_queue: abi.util.Queue(caps.Thread, "scheduler_queue_node") = .{},
+    transient_sleep_queue: caps.Thread.Queue = .{},
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,
@@ -392,10 +392,12 @@ pub const Frame = struct {
         // make the frame as ready to use again
 
         self.lock.lock();
-        defer self.lock.unlock();
-
         self.is_transient = false;
-        while (self.transient_sleep_queue.popFront()) |sleeper| {
+        var queued = self.transient_sleep_queue.takeAll(&self.lock);
+        self.lock.unlock();
+
+        var dummy_lock: abi.lock.SpinMutex = .{};
+        while (queued.pop(&dummy_lock)) |sleeper| {
             proc.ready(sleeper);
         }
 
@@ -504,11 +506,21 @@ pub const Frame = struct {
 
     fn transientQueueSleep(self: *@This(), trap: *arch.TrapRegs, thread: *caps.Thread) void {
         // save the current thread that might or might not go to sleep
-        thread.status = .waiting;
-        thread.waiting_cause = .transient_page_fault;
         proc.switchFrom(trap, thread);
 
-        self.transient_sleep_queue.pushBack(thread);
+        var dummy_lock: abi.lock.SpinMutex = .{};
+        self.transient_sleep_queue.push(
+            &dummy_lock,
+            thread,
+            .{
+                .new_status = .waiting,
+                .new_cause = .transient_page_fault,
+                // if the thread is cancelled, it still has to wait for the transient
+                // page to be resolved, so it goes into the queue.
+                // The pop will handle stopping it
+                .cancel_op = .allow_cancelled,
+            },
+        );
     }
 };
 
@@ -586,5 +598,18 @@ pub const TlbShootdown = struct {
 
         self.refcnt.inc();
         return self;
+    }
+
+    pub fn flushAll() void {
+        const locals = arch.cpuLocal();
+        while (locals.tryPopTlbShootdown()) |shootdown| {
+            // log.debug("one TLB shootdown complete for {*}", .{shootdown});
+            if (shootdown.deinit()) |thread| {
+                thread.popFinishUnlocked(.{}) catch continue;
+
+                // log.debug("TLB shootdowns complete for {*}", .{thread});
+                proc.ready(thread);
+            }
+        }
     }
 };

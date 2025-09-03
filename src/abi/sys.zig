@@ -368,7 +368,7 @@ pub const Error = error{
     MappingOverlap,
     PermissionDenied,
     Internal,
-    NoReplyTarget,
+    NoReply,
     NotifyAlreadySubscribed,
     IrqAlreadySubscribed,
     IrqNotReady,
@@ -384,6 +384,7 @@ pub const Error = error{
     /// the other end of the channel closed
     ChannelClosed,
     ProcessDead,
+    Cancelled,
 
     UnknownError,
 };
@@ -409,7 +410,7 @@ pub const ErrorEnum = enum(u8) {
     mapping_overlap,
     permission_denied,
     internal,
-    no_reply_target,
+    no_reply,
     notify_already_subscribed,
     irq_already_subscribed,
     irq_not_ready,
@@ -424,6 +425,7 @@ pub const ErrorEnum = enum(u8) {
     retry,
     channel_closed,
     process_dead,
+    cancelled,
     _,
 };
 
@@ -576,6 +578,12 @@ pub const ThreadStatus = enum {
     /// thread is permanently killed
     /// and the exit code is usable
     dead,
+    /// transition state from * to stopped
+    stopping,
+    /// transition state from * to running
+    starting,
+    /// transition state from * to dead
+    exiting,
 };
 
 pub const ProcessStatus = enum {

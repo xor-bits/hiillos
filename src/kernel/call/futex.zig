@@ -31,6 +31,18 @@ pub fn wait(
         return;
     }
 
+    thread.lock.lock();
+    thread.pushPrepare(.{
+        .new_status = .waiting,
+        .new_cause = .futex,
+    }) catch {
+        thread.lock.unlock();
+        trap.syscall_id = abi.sys.encode(Error.Cancelled);
+        proc.switchFrom(trap, thread);
+        thread.deinit();
+        return;
+    };
+    thread.lock.unlock();
     proc.switchFrom(trap, thread); // switch away before locking, to hold the lock less
 
     const futex_queue = &futex_queues[addressHash(futex)];
@@ -39,22 +51,41 @@ pub fn wait(
     if (futex.load(.acquire) != value) {
         // late fail
         futex_queue.lock.unlock();
-        proc.switchUndo(thread);
+        if (thread.popFinishUnlocked(.{})) |_| {
+            // undo and return the error immediately
+            proc.switchUndo(thread);
+            return;
+        } else |_| {
+            // cancelled but finished
+            thread.exec_lock.lock();
+            thread.trap.syscall_id = abi.sys.encode(0);
+            thread.exec_lock.unlock();
+            thread.deinit();
+            return;
+        }
         return;
     }
 
     // sleep the thread
     const queue = futex_queue.real_queues.getOrPut(caps.slab_allocator.allocator(), futex) catch {
         futex_queue.lock.unlock();
-        proc.switchUndo(thread);
-        return Error.OutOfMemory;
+        if (thread.popFinishUnlocked(.{})) |_| {
+            // undo and return the error immediately
+            proc.switchUndo(thread);
+            return Error.OutOfMemory;
+        } else |_| {
+            // cancelled but finished
+            thread.exec_lock.lock();
+            thread.trap.syscall_id = abi.sys.encode(Error.OutOfMemory);
+            thread.exec_lock.unlock();
+            thread.deinit();
+            return;
+        }
     };
     if (!queue.found_existing) queue.value_ptr.* = .{};
-    thread.status = .waiting;
-    thread.waiting_cause = .futex;
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*}", .{thread});
-    queue.value_ptr.pushBack(thread);
+    queue.value_ptr.queue.pushBack(thread);
 
     // switch to a new thread
     futex_queue.lock.unlock();
@@ -84,12 +115,18 @@ pub fn wake(
         return;
     };
 
+    var dummy_lock: abi.lock.SpinMutex = .{};
+
     while (count != 0) : (count -= 1) {
-        const thread_to_wake_up = queue.popFront() orelse {
+        const thread_to_wake_up = queue.popOpts(
+            &dummy_lock,
+            .{},
+        ) orelse {
             // nothing queued on that address anymore, remove the specific queue
             std.debug.assert(futex_queue.real_queues.remove(futex));
             break;
         };
+
         if (conf.LOG_FUTEX)
             std.log.debug("futex wake {*}", .{thread_to_wake_up});
         proc.ready(thread_to_wake_up);
@@ -97,7 +134,7 @@ pub fn wake(
 
     // preempt if a high priority thread was awakened
     futex_queue.lock.unlock();
-    // proc.yield(trap);
+    proc.yield(trap);
 }
 
 pub fn requeue(
@@ -147,7 +184,5 @@ var futex_queues: [256]FutexQueue = [1]FutexQueue{.{}} ** 256;
 
 const FutexQueue = struct {
     lock: abi.lock.SpinMutex = .{},
-    real_queues: std.AutoHashMapUnmanaged(*anyopaque, RealQueue) = .{},
+    real_queues: std.AutoHashMapUnmanaged(*anyopaque, caps.Thread.Queue) = .{},
 };
-
-const RealQueue = abi.util.Queue(caps.Thread, "scheduler_queue_node");

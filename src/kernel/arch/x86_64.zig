@@ -5,6 +5,7 @@ const limine = @import("limine");
 const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const call = @import("../call.zig");
+const caps = @import("../caps.zig");
 const logs = @import("../logs.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
@@ -1164,7 +1165,7 @@ pub const Idt = extern struct {
 
                 if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
                     // only userspace can preempt
-                    log.debug("ready queue push preempt", .{});
+                    log.debug("preempt", .{});
                     proc.yield(trap);
                 }
 
@@ -1183,15 +1184,7 @@ pub const Idt = extern struct {
             fn handler(_: *const InterruptStackFrame) void {
                 if (conf.LOG_INTERRUPTS) log.debug("TLB shootdown interrupt", .{});
 
-                const locals = cpuLocal();
-                while (locals.tryPopTlbShootdown()) |shootdown| {
-                    // log.debug("one TLB shootdown complete for {*}", .{shootdown});
-                    if (shootdown.deinit()) |thread| {
-                        // log.debug("TLB shootdowns complete for {*}", .{thread});
-                        proc.ready(thread);
-                    }
-                }
-
+                caps.TlbShootdown.flushAll();
                 apic.eoi();
             }
         }).asInt();

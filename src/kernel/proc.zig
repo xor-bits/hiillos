@@ -16,11 +16,10 @@ const Error = abi.sys.Error;
 // TODO: maybe a fastpath ring buffer before the linked list to reduce locking
 
 var active_threads: std.atomic.Value(usize) = .init(1);
-var queues: [4]Queue = .{Queue{}} ** 4;
+var queues: [4]caps.Thread.Queue = .{caps.Thread.Queue{}} ** 4;
 var queue_locks: [4]abi.lock.SpinMutex = .{abi.lock.SpinMutex{}} ** 4;
 var waiters: [256]Waiter = .{Waiter.init(null)} ** 256;
 
-const Queue = abi.util.Queue(caps.Thread, "scheduler_queue_node");
 const Waiter = std.atomic.Value(?*main.CpuLocalStorage);
 
 //
@@ -40,9 +39,23 @@ pub fn enter() noreturn {
 /// TODO: yield that can switch to another thread on the same priority
 /// conditionally yield if there is a higher priority thread ready
 pub fn yield(trap: *arch.TrapRegs) void {
-    const prev = arch.cpuLocal().current_thread;
+    const prev = arch.cpuLocal().current_thread orelse {
+        switchNow(trap);
+        return;
+    };
 
-    const priority: u8 = if (prev) |_prev| _prev.priority else @intCast(queues.len);
+    prev.lock.lock();
+    const priority = prev.priority;
+    prev.checkRunning() catch {
+        // previous thread was cancelled
+        prev.lock.unlock();
+        switchFrom(trap, prev);
+        prev.deinit();
+        switchNow(trap);
+        return;
+    };
+    prev.lock.unlock();
+
     const next_thread = tryNextHigherPriority(priority) orelse return;
 
     yieldReadyPrev(trap, prev);
@@ -53,15 +66,7 @@ pub fn yield(trap: *arch.TrapRegs) void {
 fn yieldReadyPrev(trap: *arch.TrapRegs, prev: ?*caps.Thread) void {
     if (prev) |prev_thread| {
         switchFrom(trap, prev_thread);
-
-        switch (prev_thread.status) {
-            .ready => unreachable,
-            .running => {
-                prev_thread.status = .ready;
-                ready(prev_thread);
-            },
-            .stopped, .waiting, .dead => {},
-        }
+        ready(prev_thread);
     }
 }
 
@@ -76,11 +81,6 @@ pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
     std.debug.assert(local.current_thread == null);
     local.current_thread = thread;
-
-    thread.lock.lock();
-    std.debug.assert(thread.status != .running);
-    thread.status = .running;
-    thread.lock.unlock();
 
     thread.switchTo(trap);
 }
@@ -119,30 +119,26 @@ pub fn stop(thread: *caps.Thread) void {
 /// start the thread, if its not running
 pub fn start(thread: *caps.Thread) void {
     _ = active_threads.fetchAdd(1, .acquire);
-
-    thread.lock.lock();
-    const prio = thread.priority;
-    std.debug.assert(thread.status == .stopped);
-    thread.status = .ready;
-    thread.lock.unlock();
-
-    push(thread, prio);
+    ready(thread);
 }
 
 pub fn ready(thread: *caps.Thread) void {
     thread.lock.lock();
     const prio = thread.priority;
-    std.debug.assert(thread.status != .ready and thread.status != .running);
-    thread.status = .ready;
     thread.lock.unlock();
 
     push(thread, prio);
 }
 
 fn push(thread: *caps.Thread, prio: u2) void {
-    queue_locks[prio].lock();
-    queues[prio].pushBack(thread);
-    queue_locks[prio].unlock();
+    queues[prio].push(
+        &queue_locks[prio],
+        thread,
+        .{
+            .new_status = .ready,
+            .new_cause = .none,
+        },
+    );
 
     // notify a single sleeping processor
     for (&waiters) |*w| {
@@ -190,17 +186,7 @@ pub fn next() *caps.Thread {
 
 pub fn tryNextHigherPriority(current: u8) ?*caps.Thread {
     for (queue_locks[0..current], queues[0..current]) |*lock, *queue| {
-        lock.lock();
-        const _next_thread = queue.popFront();
-        lock.unlock();
-
-        if (_next_thread) |next_thread| {
-            if (next_thread.status == .stopped) {
-                continue;
-            } else {
-                return next_thread;
-            }
-        }
+        return queue.pop(lock) orelse continue;
     }
 
     return null;
