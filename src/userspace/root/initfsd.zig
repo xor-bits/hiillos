@@ -81,8 +81,7 @@ pub fn init() !void {
 }
 
 pub fn wait() !void {
-    initfs_ready.lock();
-    initfs_ready.unlock();
+    initfs_ready.wait();
 }
 
 pub fn getSender() !caps.Sender {
@@ -93,7 +92,7 @@ pub fn getBootInfoAddr() *const volatile abi.BootInfo {
     return @ptrFromInt(boot_info_addr.load(.monotonic));
 }
 
-var initfs_ready: abi.lock.Futex = .locked();
+var initfs_ready: abi.lock.Once(abi.lock.Futex) = .{};
 var initfs_send: caps.Sender = .{};
 pub var boot_info_addr: std.atomic.Value(usize) = .init(0);
 
@@ -113,7 +112,7 @@ fn run() !void {
     log.info("decompressing", .{});
     try decompress();
 
-    initfs_ready.unlock();
+    initfs_ready.complete();
 
     log.info("initfs ready", .{});
     var server = abi.FsProtocol.Server(.{
