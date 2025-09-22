@@ -74,8 +74,6 @@ var initfs_tar: std.ArrayList(u8) = .init(vmm_vector);
 //
 
 pub fn init() !void {
-    @atomicStore(u32, &initfs_ready.cap, (try caps.Notify.create()).cap, .seq_cst);
-
     log.info("starting initfs thread", .{});
     try abi.thread.spawnOptions(run, .{}, .{ .stack_size = 1024 * 1024 });
     log.info("yielding", .{});
@@ -83,7 +81,8 @@ pub fn init() !void {
 }
 
 pub fn wait() !void {
-    initfs_ready.wait();
+    initfs_ready.lock();
+    initfs_ready.unlock();
 }
 
 pub fn getSender() !caps.Sender {
@@ -94,7 +93,7 @@ pub fn getBootInfoAddr() *const volatile abi.BootInfo {
     return @ptrFromInt(boot_info_addr.load(.monotonic));
 }
 
-var initfs_ready: caps.Notify = .{};
+var initfs_ready: abi.lock.Futex = .locked();
 var initfs_send: caps.Sender = .{};
 pub var boot_info_addr: std.atomic.Value(usize) = .init(0);
 
@@ -114,7 +113,7 @@ fn run() !void {
     log.info("decompressing", .{});
     try decompress();
 
-    _ = initfs_ready.notify();
+    initfs_ready.unlock();
 
     log.info("initfs ready", .{});
     var server = abi.FsProtocol.Server(.{
