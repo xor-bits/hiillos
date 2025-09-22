@@ -10,15 +10,15 @@ const Error = sys.Error;
 
 //
 
-const State = packed struct {
-    waiting: u31 = 0,
-    locked: bool = false,
-};
-
 pub const Futex = extern struct {
     state: std.atomic.Value(u32) = .init(@bitCast(State{ .locked = false })),
 
     const Self = @This();
+
+    const State = packed struct {
+        waiting: u31 = 0,
+        locked: bool = false,
+    };
 
     pub fn locked() Self {
         return .{ .state = .init(@bitCast(State{ .locked = true })) };
@@ -52,6 +52,60 @@ pub const Futex = extern struct {
     fn tryLockSlow() bool {
         @branchHint(.cold);
         return false;
+    }
+
+    pub fn waitUnlocked(self: *Self) void {
+        const state: State = self.load(.monotonic);
+        if (state.locked) self.waitUnlockedSlow(state);
+        return;
+    }
+
+    fn waitUnlockedSlow(self: *Self, _state: State) void {
+        @branchHint(.cold);
+
+        var state: State = _state;
+        while (true) {
+            if (!state.locked) return;
+
+            if (state.waiting >= std.math.maxInt(u31))
+                std.debug.panic("too many threads waiting on the same futex", .{});
+
+            const prev_state = state;
+            state.waiting += 1;
+            if (self.cmpxchg(
+                .weak,
+                prev_state,
+                state,
+                .monotonic,
+                .monotonic,
+            )) |failed| {
+                // failed to increase waiter count
+                state = failed;
+                continue;
+            }
+            // successfully incremented the sleeper count
+
+            sys.futexWait(&self.state.raw, @as(u32, @bitCast(state)), .{
+                .size = .bits32,
+            }) catch unreachable;
+            break;
+        }
+
+        state = self.load(.monotonic);
+        while (true) {
+            if (self.cmpxchg(.weak, state, State{
+                .waiting = state.waiting - 1,
+                // it can get relocked before the return
+                .locked = state.locked,
+            }, .acquire, .monotonic)) |failed| {
+                // failed to lock, either spuriously or it was locked
+                state = failed;
+                continue;
+            } else {
+                // successfully removed the waiter
+                return;
+            }
+        }
     }
 
     pub fn lock(self: *Self) void {
@@ -228,6 +282,10 @@ pub const SpinMutex = extern struct {
         }
     }
 
+    pub fn waitUnlocked(self: *Self) void {
+        while (self.isLocked()) {}
+    }
+
     pub fn lockAttempts(self: *Self, attempts: usize) bool {
         std.debug.assert(attempts != 0);
 
@@ -324,14 +382,10 @@ pub const DebugLock = struct {
 
 pub fn Once(comptime Mutex: type) type {
     return struct {
-        entry_mutex: Mutex = .{},
+        entry_mutex: SpinMutex = .{},
         wait_mutex: Mutex = .locked(),
 
         const Self = @This();
-
-        pub fn new() Self {
-            return .{};
-        }
 
         /// try init whatever resource
         /// false => some other CPU did it, call `wait`
@@ -343,8 +397,7 @@ pub fn Once(comptime Mutex: type) type {
         pub fn wait(self: *Self) void {
             // some other cpu is already working on this,
             // wait for it to be complete and then return
-            self.wait_mutex.lock();
-            self.wait_mutex.unlock();
+            self.wait_mutex.waitUnlocked();
         }
 
         pub fn complete(self: *Self) void {
