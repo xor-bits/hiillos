@@ -31,10 +31,15 @@ test "simple thread start stop sync" {
     const thread = try caps.Thread.create(caps.Process.self);
 
     try abi.thread.spawnOptions(struct {
+        var lock = abi.lock.DebugLock{};
         fn f() !void {
             log.info("thread running", .{});
             try caps.Thread.main.start();
             while (true) {
+                // making sure no other threads spawn out of nowhere
+                lock.lock();
+                defer lock.unlock();
+
                 abi.thread.yield();
                 log.info("thread running", .{});
             }
@@ -51,28 +56,86 @@ test "simple thread start stop sync" {
     }
 }
 
+test "stress: thread start stop" {
+    const thread = try caps.Thread.create(caps.Process.self);
+
+    try abi.thread.spawnOptions(struct {
+        var lock = abi.lock.DebugLock{};
+        fn f() !void {
+            while (true) {
+                // making sure no other threads spawn out of nowhere
+                lock.lock();
+                defer lock.unlock();
+
+                log.info("thread running", .{});
+                abi.thread.yield();
+            }
+        }
+    }.f, .{}, .{ .thread = thread });
+
+    while (true) {
+        log.info("thread running", .{});
+        try thread.stop();
+        log.info("thread running", .{});
+        try thread.start();
+        log.info("thread running", .{});
+    }
+}
+
+test "ipc late cancel" {
+    const thread = try caps.Thread.create(caps.Process.self);
+    const _rx, const tx = try caps.channel();
+
+    try abi.thread.spawnOptions(struct {
+        var lock = abi.lock.DebugLock{};
+        fn f(rx: caps.Receiver) !void {
+            {
+                // making sure no other threads spawn out of nowhere
+                lock.lock();
+                defer lock.unlock();
+
+                _ = try rx.recv();
+            }
+            while (true) {
+                // making sure no other threads spawn out of nowhere
+                lock.lock();
+                defer lock.unlock();
+
+                log.info("thread running", .{});
+                _ = try rx.replyRecv(.{});
+            }
+        }
+    }.f, .{_rx}, .{ .thread = thread });
+
+    while (true) {
+        _ = try tx.call(.{});
+        try thread.stop();
+        _ = try tx.call(.{});
+        try thread.start();
+    }
+}
+
 pub fn main() !void {
     try abi.caps.init();
-
     log.info("I am root", .{});
 
     // const thread = try caps.Thread.create(caps.Process.self);
-
+    // var running: std.atomic.Value(bool) = .init(false);
     // try abi.thread.spawnOptions(struct {
-    //     fn f() !void {
+    //     var lock = abi.lock.DebugLock{};
+    //     fn f(running_p: *std.atomic.Value(bool)) !void {
     //         while (true) {
-    //             log.info("thread running", .{});
-    //             abi.thread.yield();
+    //             // making sure no other threads spawn out of nowhere
+    //             lock.lock();
+    //             defer lock.unlock();
+    //             running_p.store(true, .release);
     //         }
     //     }
-    // }.f, .{}, .{ .thread = thread });
+    // }.f, .{&running}, .{ .thread = thread });
 
     // while (true) {
-    //     log.info("thread running", .{});
     //     try thread.stop();
-    //     log.info("thread running", .{});
     //     try thread.start();
-    //     log.info("thread running", .{});
     // }
 
     try initfsd.init();

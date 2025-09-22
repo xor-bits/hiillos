@@ -108,6 +108,7 @@ pub fn stop(thread: *caps.Thread) void {
 
     thread.lock.lock();
     std.debug.assert(thread.status != .stopped);
+    thread.prev_status = thread.status;
     thread.status = .stopped;
     thread.lock.unlock();
 
@@ -136,7 +137,7 @@ fn push(thread: *caps.Thread, prio: u2) void {
         thread,
         .{
             .new_status = .ready,
-            .new_cause = .none,
+            .new_cause = .starving,
         },
     );
 
