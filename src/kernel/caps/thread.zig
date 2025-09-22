@@ -357,7 +357,9 @@ pub const Thread = struct {
             self.lock.lock();
             defer self.lock.unlock();
             // FIXME: atomic status, because the scheduler might be reading/writing this
-            if (self.status != .ready and self.status != .running)
+            if (self.status != .ready and
+                self.status != .running and
+                self.status != .waiting)
                 return Error.NotRunning;
             self.status = .stopping;
         }
