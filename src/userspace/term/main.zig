@@ -12,9 +12,6 @@ pub fn main() !void {
 
     term_lock.lock();
 
-    const vmem = caps.Vmem.self;
-    // intentionally leak `vmem`
-
     const wm_display = try gui.WmDisplay.connect();
 
     const window = try wm_display.createWindow(.{
@@ -22,7 +19,6 @@ pub fn main() !void {
     });
 
     term = try Terminal.new(
-        vmem,
         window.fb,
         wm_display,
         window,
@@ -204,66 +200,42 @@ pub const Terminal = struct {
     cursor_store: Pos = .{},
 
     /// cpu accessible pixel buffer
-    framebuffer: abi.util.Image([]volatile u8),
+    framebuffer: gui.MappedFramebuffer,
 
     /// wm ipc handle, to send damaged regions
     wm_display: gui.WmDisplay,
     window: gui.Window,
 
-    vmem: caps.Vmem,
-
     pub fn new(
-        vmem: caps.Vmem,
         info: gui.Framebuffer,
         wm_display: gui.WmDisplay,
         window: gui.Window,
     ) !@This() {
         var self: @This() = .{
-            .framebuffer = abi.util.Image([]volatile u8){
-                .width = 0,
-                .height = 0,
-                .pitch = 0,
-                .bits_per_pixel = 32,
-                .pixel_array = &.{},
-            },
+            .framebuffer = try .init(info, caps.Vmem.self),
             .wm_display = wm_display,
             .window = window,
-            .vmem = vmem,
         };
 
-        try self.resize(info);
+        log.debug("initial resize", .{});
+        try self.resize(null);
         return self;
     }
 
     pub fn resize(
         self: *@This(),
-        info: gui.Framebuffer,
+        info: ?gui.Framebuffer,
     ) !void {
-        if (self.framebuffer.pixel_array.len != 0 and info.shmem.cap != 0) {
-            try self.vmem.unmap(
-                @intFromPtr(self.framebuffer.pixel_array.ptr),
-                self.framebuffer.pixel_array.len,
-            );
-        }
-        const fb =
-            if (info.shmem.cap != 0)
-                try mapFb(self.vmem, info)
-            else
-                self.framebuffer.pixel_array;
+        if (info) |new_info|
+            try self.framebuffer.update(new_info, caps.Vmem.self);
 
-        self.framebuffer = abi.util.Image([]volatile u8){
-            .width = info.size[0],
-            .height = info.size[1],
-            .pitch = info.pitch,
-            .bits_per_pixel = 32,
-            .pixel_array = fb,
-        };
-        self.framebuffer.fill(0xff_000000);
+        self.framebuffer.image.fill(0xff_000000);
 
         const old_size = self.size;
+        const fb_size = self.framebuffer.fb.size;
         self.size = .{
-            .width = info.size[0] / 8,
-            .height = info.size[1] / 16,
+            .width = fb_size[0] / 8,
+            .height = fb_size[1] / 16,
         };
         const old_terminal_buf_size = old_size.width * old_size.height;
         const terminal_buf_size = self.size.width * self.size.height;
@@ -377,7 +349,7 @@ pub const Terminal = struct {
 
                 // update the physical pixel
                 const letter = &abi.font.glyphs[self.terminal_buf_front[i]];
-                var to = self.framebuffer.subimage(x * 8, y * 16, 8, 16) catch {
+                var to = self.framebuffer.image.subimage(x * 8, y * 16, 8, 16) catch {
                     return;
                 };
                 to.fillGlyph(letter, 0xFF_FFFFFF, 0xFF_000000);
@@ -389,17 +361,11 @@ pub const Terminal = struct {
             }
         }
 
-        if (full_damage) {
-            self.window.damage(self.wm_display, .{
-                .min = .{ 0, 0 },
-                .max = .{ @intCast(self.window.fb.size[0]), @intCast(self.window.fb.size[1]) },
-            }) catch |err| {
-                log.err("failed to damage regions: {}", .{err});
-            };
-            return;
-        }
+        const damage_aabb = if (full_damage)
+            null
+        else
+            damage.take() orelse return;
 
-        const damage_aabb = damage.take() orelse return;
         self.window.damage(self.wm_display, damage_aabb) catch |err| {
             log.err("failed to damage regions: {}", .{err});
         };
