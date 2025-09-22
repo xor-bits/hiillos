@@ -245,7 +245,7 @@ pub const SpinMutex = extern struct {
             while (self.isLocked()) {
                 if (conf.IS_DEBUG) {
                     counter += 1;
-                    if (counter % 100_000 == 0) {
+                    if (counter % 1_000_000 == 0) {
                         log.warn("possible deadlock", .{});
                     }
                 }

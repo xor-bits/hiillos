@@ -33,10 +33,12 @@ pub const Thread = struct {
     priority: u2 = 1,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
+    prev_status: abi.sys.ThreadStatus = .stopped,
     in_queue: bool = false,
     exit_code: usize = 0,
     exit_waiters: Queue = .{},
-    waiting_cause: Cause = .none,
+    waiting_cause: Cause = .not_started,
+    prev_waiting_cause: Cause = .not_started,
     // TODO: IPC buffer Frame where the userspace can write data freely
     // and on send, the kernel copies it (with CoW) to the destination IPC buffer
     // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
@@ -58,7 +60,8 @@ pub const Thread = struct {
 
     pub const Queue = ThreadQueue;
     pub const Cause = enum {
-        none,
+        not_started,
+        starving,
         other_thread_exit,
         other_process_exit,
         unmap_tlb_shootdown,
@@ -69,6 +72,7 @@ pub const Thread = struct {
         ipc_call1,
         signal,
         futex,
+        cancel_stop,
     };
     pub const UserHandle = abi.caps.Thread;
 
@@ -172,11 +176,13 @@ pub const Thread = struct {
             .running => {},
             .stopping => {
                 @branchHint(.cold);
+                self.prev_status = self.status;
                 self.status = .stopped;
                 return error.Cancelled;
             },
             .exiting => {
                 @branchHint(.cold);
+                self.prev_status = self.status;
                 self.status = .dead;
                 return error.Cancelled;
             },
@@ -215,19 +221,26 @@ pub const Thread = struct {
             .running,
             .starting,
             => {
+                self.prev_status = self.status;
+                self.prev_waiting_cause = self.waiting_cause;
+
                 self.status = opts.new_status;
                 self.waiting_cause = opts.new_cause;
             },
             .stopping => {
                 @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled)
+                if (opts.cancel_op != .allow_cancelled) {
+                    self.prev_status = self.status;
                     self.status = .stopped;
+                }
                 return error.Cancelled;
             },
             .exiting => {
                 @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled)
+                if (opts.cancel_op != .allow_cancelled) {
+                    self.prev_status = self.status;
                     self.status = .dead;
+                }
                 return error.Cancelled;
             },
 
@@ -271,19 +284,23 @@ pub const Thread = struct {
             .ready,
             .waiting,
             => {
+                self.prev_status = self.status;
                 self.status = .running;
-                self.waiting_cause = .none;
             },
             .exiting => {
                 @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled)
+                if (opts.cancel_op != .allow_cancelled) {
+                    self.prev_status = self.status;
                     self.status = .dead;
+                }
                 return error.Cancelled;
             },
             .stopping => {
                 @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled)
+                if (opts.cancel_op != .allow_cancelled) {
+                    self.prev_status = self.status;
                     self.status = .stopped;
+                }
                 return error.Cancelled;
             },
 
@@ -333,12 +350,15 @@ pub const Thread = struct {
         self.lock.lock();
         switch (self.status) {
             .stopped => {
+                self.prev_status = self.status;
                 self.status = .running;
+
                 self.lock.unlock();
                 proc.start(self.clone());
             },
             .stopping => {
-                self.status = .waiting; // TODO: should be .ready if it was in a ready queue
+                self.status = self.prev_status;
+
                 self.lock.unlock();
             },
             else => {
@@ -361,6 +381,7 @@ pub const Thread = struct {
                 self.status != .running and
                 self.status != .waiting)
                 return Error.NotRunning;
+            self.prev_status = self.status;
             self.status = .stopping;
         }
 
@@ -377,6 +398,7 @@ pub const Thread = struct {
         self.proc.exit(exit_code, self);
 
         self.lock.lock();
+        self.prev_status = self.status;
         self.status = .dead;
         self.exit_code = exit_code;
         self.lock.unlock();
