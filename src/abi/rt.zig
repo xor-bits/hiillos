@@ -21,12 +21,13 @@ pub fn installRuntime() void {
     });
 }
 
+/// init for normal processes
 pub fn init() !void {
     try @import("caps.zig").init();
     try @import("io.zig").init();
     try @import("process.zig").init();
 
-    try caps.Thread.main.threadSetSigHandler(@intFromPtr(&signalHandler));
+    try caps.Thread.main.threadSetSigHandler(@intFromPtr(&defaultSignalHandler));
 }
 
 pub const SignalRegs = extern struct {
@@ -47,7 +48,7 @@ pub const SignalRegs = extern struct {
     return_addr: u64 = 0,
 };
 
-fn signalHandler() callconv(.naked) noreturn {
+pub fn defaultSignalHandler() callconv(.naked) noreturn {
     asm volatile (
         \\ subq $128, %rsp
         \\ pushq $0

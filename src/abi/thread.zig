@@ -77,6 +77,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
         .rip = entry_ptr,
         .rsp = stack_ptr,
     });
+    try thread.threadSetSigHandler(@intFromPtr(&abi.rt.defaultSignalHandler));
 
     // std.log.info("spawn ip=0x{x} sp=0x{x} arg0=0x{x}", .{
     //     entry_ptr,
