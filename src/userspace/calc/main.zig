@@ -300,6 +300,10 @@ pub fn main() !void {
                         continue;
                     }
 
+                    if (key.code == .escape) {
+                        abi.process.exit(0);
+                    }
+
                     if (shift) {
                         if (key.code.toCharShift()) |ch| {
                             append(&calc, ch);
