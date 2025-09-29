@@ -630,15 +630,16 @@ const ThreadQueue = struct {
 
         {
             thread.lock.lock();
-            defer thread.lock.unlock();
             thread.pushPrepare(
                 opts,
             ) catch switch (opts.cancel_op) {
                 .ignore => {
+                    thread.lock.unlock();
                     thread.deinit();
                     return;
                 },
                 .set_error => {
+                    thread.lock.unlock();
                     thread.exec_lock.lock();
                     thread.trap.syscall_id =
                         abi.sys.encode(Error.Cancelled);
@@ -648,6 +649,7 @@ const ThreadQueue = struct {
                 },
                 .allow_cancelled => {},
             };
+            thread.lock.unlock();
         }
 
         {
@@ -700,14 +702,18 @@ const ThreadQueue = struct {
             lock.unlock();
 
             next_thread.lock.lock();
-            defer next_thread.lock.unlock();
-            if (opts.no_pop_finish) return next_thread;
+            if (opts.no_pop_finish) {
+                next_thread.lock.unlock();
+                return next_thread;
+            }
             next_thread.popFinish(opts) catch switch (opts.cancel_op) {
                 .ignore => {
+                    next_thread.lock.unlock();
                     next_thread.deinit();
                     continue;
                 },
                 .set_error => {
+                    next_thread.lock.unlock();
                     next_thread.exec_lock.lock();
                     next_thread.trap.syscall_id =
                         abi.sys.encode(Error.Cancelled);
@@ -717,6 +723,7 @@ const ThreadQueue = struct {
                 },
                 .allow_cancelled => {},
             };
+            next_thread.lock.unlock();
             return next_thread;
         }
     }
