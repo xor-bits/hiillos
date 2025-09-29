@@ -41,6 +41,7 @@ pub const LimineHhdmResponse = extern struct {
 
 //
 
+/// access behind the pmem lock
 pub export var memory: LimineMemmapRequest = .{};
 
 pub const LimineMemmapRequest = extern struct {
