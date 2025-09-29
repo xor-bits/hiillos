@@ -1169,7 +1169,7 @@ pub const Idt = extern struct {
 
                 if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
                     // only userspace can preempt
-                    log.debug("preempt", .{});
+                    // log.debug("preempt", .{});
                     proc.yield(trap);
                 }
 

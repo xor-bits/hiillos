@@ -162,6 +162,14 @@ pub const Keyboard = struct {
                 if (ev.code == .print_screen and abi.conf.KERNEL_PANIC_SYSCALL)
                     abi.sys.kernelPanic();
 
+                if (ev.code == .f1) {
+                    log.info("HPET health check", .{});
+                    abi.time.sleepWith(1_000, .{
+                        .cap = main.import_hpet.handle,
+                    });
+                    log.info("HPET health check success", .{});
+                }
+
                 main.pushEvent(.{ .keyboard = ev });
                 // log.info("key event {}", .{ev});
             }
