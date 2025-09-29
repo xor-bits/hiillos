@@ -31,6 +31,10 @@ pub const Page = [512]u64;
 //
 
 pub fn printInfo() void {
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+
+    // using boot.memory requires the pmem_lock
     const memory_response = boot.memory.response orelse {
         return;
     };
@@ -55,7 +59,7 @@ pub fn printInfo() void {
     }
 
     var overhead: usize = 0;
-    var it = bitmaps.iterator();
+    var it = levels.iterator();
     while (it.next()) |level| {
         overhead += level.value.bitmap.len * @sizeOf(u64);
     }
@@ -75,13 +79,16 @@ pub fn printInfo() void {
 }
 
 pub fn printBits(comptime print: bool) usize {
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+
     var total_unused: usize = 0;
 
-    var it = bitmaps.iterator();
+    var it = levels.iterator();
     while (it.next()) |level| {
         var unused: usize = 0;
         for (level.value.bitmap) |*bucket| {
-            unused += @popCount(bucket.load(.unordered));
+            unused += @popCount(bucket.*);
         }
         total_unused += unused * level.key.sizeBytes();
 
@@ -101,98 +108,175 @@ pub fn printBits(comptime print: bool) usize {
 }
 
 pub fn usedPages() usize {
-    return used.load(.monotonic);
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+    return used_pages;
 }
 
 pub fn freePages() usize {
-    return totalPages() - usedPages();
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+    return usable_pages - used_pages;
 }
 
 pub fn totalPages() usize {
-    return usable.load(.monotonic);
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+    return usable_pages;
 }
 
 pub fn isInitialized() bool {
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
     return pmem_ready;
 }
 
 //
 
-/// tells if the frame allocator can be used already internally (debugging)
-var initialized = if (conf.IS_DEBUG) false else {};
+var pmem_lock: abi.lock.SpinMutex = .{};
 
 /// tells if the frame allocator can be used already by other parts of the kernel
 var pmem_ready = false;
+
+/// how many 4kib pages are currently in use
+var used_pages: u32 = 0;
+/// how many of the 4kib pages are usable memory
+var usable_pages: u32 = 0;
 
 /// approximately 2 bits for each 4KiB page to track
 /// 4KiB, 8KiB, 16KiB, 32KiB, .. 2MiB, 4MiB, .., 512MiB and 1GiB chunks
 ///
 /// 1 bit to tell if the chunk is free or allocated
 /// and each chunk (except 4KiB) has 2 chunks 'under' it
-var bitmaps: std.EnumArray(abi.ChunkSize, Level) = .initFill(.{});
+///
+/// additionally each level has a doubly linked list to store
+/// free chunks for fast allocations
+var levels: std.EnumArray(abi.ChunkSize, Level) = .initFill(.{});
 
 const Level = struct {
-    bitmap: []std.atomic.Value(u64) = &.{},
-
-    // avail: std.atomic.Value(u32) = .init(0),
-
-    /// just an atomic index hint to rotate around the memory instead of starting the
-    /// finding process from 0 every time, because pages arent usually freed almost instantly
-    next: std.atomic.Value(u32) = .init(0),
+    bitmap: []u64 = &.{},
+    freelist: std.DoublyLinkedList = .{},
 };
 
-/// how many pages are currently in use (approx)
-var used = std.atomic.Value(u32).init(0);
+const ChunkMetadata = struct {
+    freelist_node: std.DoublyLinkedList.Node = .{},
+};
 
-/// how many pages are usable
-var usable = std.atomic.Value(u32).init(0);
+// fn bitmapToggle(bitmap: []u64, paddr: addr.Phys, size: abi.ChunkSize) void {
+//     const chunk_id = paddr.raw / size.sizeBytes();
+//     const bucket_id = chunk_id / 64;
+//     const bit_id: u6 = @truncate(chunk_id % 64);
 
-// FIXME: return error{OutOfMemory}!addr.Phys
-pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
-    if (debugAssertInitialized()) return null;
+//     const bucket = &bitmap[bucket_id];
+//     bucket ^= @as(usize, 1) << bit_id;
+// }
 
-    const bitmap: []std.atomic.Value(u64) = bitmaps.get(size).bitmap;
-    for (bitmap, 0..) |*bucket, i| {
-        // bucket contains 64 bits, each controlling one chunk
+const BitmapIndex = struct {
+    bucket_id: u58,
+    bit_id: u6,
+};
 
-        // quickly skip over 64 chunks at a time if none of them is free
-        const now = bucket.load(.acquire);
-        if (now == 0) continue;
+fn bitmapIndex(paddr: addr.Phys, size: abi.ChunkSize) BitmapIndex {
+    const chunk_id = paddr.raw / size.sizeBytes();
+    return .{
+        .bucket_id = @truncate(chunk_id / 64),
+        .bit_id = @truncate(chunk_id % 64),
+    };
+}
 
-        // const lowest = @as(u64, 2) << @intCast(@ctz(now));
-        const highest = @as(u64, 0x8000000000000000) >> @intCast(@clz(now));
+fn bitmapBuddy(idx: BitmapIndex) BitmapIndex {
+    return .{
+        .bucket_id = idx.bucket_id,
+        .bit_id = idx.bit_id ^ 1,
+    };
+}
 
-        std.debug.assert(@popCount(highest) == 1);
-        const now2 = bucket.fetchAnd(~highest, .acquire);
+fn bitmapLeftBuddy(idx: BitmapIndex) BitmapIndex {
+    return .{
+        .bucket_id = idx.bucket_id,
+        .bit_id = idx.bit_id & ~@as(u6, 1),
+    };
+}
 
-        if (now2 & highest != 0) {
-            // success: bit set to 0 from 1 before anyone else
-            const result = addr.Phys.fromInt((std.math.log2_int(u64, highest) + 64 * i) * size.sizeBytes());
-            if (conf.IS_DEBUG) {
-                std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
-                std.crypto.secureZero(u64, result.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
-            }
-            return result;
-        }
+fn bitmapAddrOfIndex(idx: BitmapIndex, size: abi.ChunkSize) addr.Phys {
+    return addr.Phys.fromInt((@as(u64, idx.bucket_id) * 64 + @as(u64, idx.bit_id)) *
+        size.sizeBytes());
+}
+
+fn bitmapSet(bitmap: []u64, idx: BitmapIndex) void {
+    const bucket = &bitmap[idx.bucket_id];
+    bucket.* |= @as(usize, 1) << idx.bit_id;
+}
+
+fn bitmapUnset(bitmap: []u64, idx: BitmapIndex) void {
+    const bucket = &bitmap[idx.bucket_id];
+    bucket.* &= ~(@as(usize, 1) << idx.bit_id);
+}
+
+fn bitmapGet(bitmap: []u64, idx: BitmapIndex) bool {
+    const bucket = &bitmap[idx.bucket_id];
+    return (bucket.* & @as(usize, 1) << idx.bit_id) != 0;
+}
+
+fn freelistPop(l: *std.DoublyLinkedList) ?*std.DoublyLinkedList.Node {
+    return l.popFirst();
+}
+
+fn freelistPush(l: *std.DoublyLinkedList, new_node: *std.DoublyLinkedList.Node) void {
+    if (conf.CYCLE_PHYSICAL_MEMORY) {
+        l.append(new_node);
+    } else {
+        l.prepend(new_node);
     }
+}
 
-    // NOTE: the max recursion is controlled by `ChunkSize`
-    const parent_chunk = allocChunk(size.next() orelse return null) orelse return null;
-    // split it in 2, free the first one and return the second
-
-    const chunk_id = parent_chunk.raw / size.sizeBytes();
-    const bucket_id = chunk_id / 64;
-    const bit_id: u6 = @truncate(chunk_id % 64);
-
-    const bucket = &bitmap[bucket_id];
-    _ = bucket.fetchOr(@as(usize, 1) << bit_id, .monotonic); // maybe monotonic instead of release, because nothing is written into it
-
-    const result = addr.Phys.fromInt(parent_chunk.raw + size.sizeBytes());
+fn debugZeroAllocs(result: addr.Phys, size: abi.ChunkSize) void {
     if (conf.IS_DEBUG) {
         std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
         std.crypto.secureZero(u64, result.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
     }
-    return result;
+}
+
+// FIXME: return error{OutOfMemory}!addr.Phys
+pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+
+    if (debugAssertInitialized()) return null;
+
+    return allocChunkInner(size);
+}
+
+fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
+    const minimum_level = levels.getPtr(size);
+    if (freelistPop(&minimum_level.freelist)) |free_chunk| {
+        const chunk_metadata: *ChunkMetadata = @fieldParentPtr("freelist_node", free_chunk);
+        std.crypto.secureZero(u8, std.mem.asBytes(chunk_metadata));
+
+        const this_chunk = addr.Virt.fromPtr(chunk_metadata).hhdmToPhys();
+        bitmapUnset(minimum_level.bitmap, bitmapIndex(this_chunk, size));
+
+        debugZeroAllocs(this_chunk, size);
+        return this_chunk;
+    }
+
+    // NOTE: the max recursion is controlled by `ChunkSize`
+    const parent_chunk_size = size.next() orelse {
+        log.warn("out of memory", .{});
+        return null;
+    };
+    const parent_chunk = allocChunkInner(parent_chunk_size) orelse return null;
+    // split it in 2, free the first one and return the second
+
+    const buddy_chunk = parent_chunk;
+    const buddy_idx = bitmapIndex(buddy_chunk, size);
+    const buddy_meta = buddy_chunk.toHhdm().toPtr(*ChunkMetadata);
+    const this_chunk = addr.Phys.fromInt(parent_chunk.raw + size.sizeBytes());
+
+    bitmapSet(minimum_level.bitmap, buddy_idx);
+    freelistPush(&minimum_level.freelist, &buddy_meta.freelist_node);
+
+    return this_chunk;
 }
 
 pub fn deallocChunk(comptime zero: bool, ptr: addr.Phys, size: abi.ChunkSize) void {
@@ -201,67 +285,61 @@ pub fn deallocChunk(comptime zero: bool, ptr: addr.Phys, size: abi.ChunkSize) vo
     if (zero)
         std.crypto.secureZero(u64, ptr.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
 
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+
+    if (debugAssertInitialized()) return;
+
+    return deallocChunkInner(ptr, size);
+}
+
+fn deallocChunkInner(ptr: addr.Phys, size: abi.ChunkSize) void {
     // if the buddy chunk is also free, allocate it and free the parent chunk
     // if the buddy chunk is not free, then just free the current chunk
     //
     // illustration: (0=allocated, left side is the buddy and right side is the current chunk)
     // 00 -> 01 (parent: 0->0), 10 -> 00 (parent: 0->1)
 
-    if (debugAssertInitialized()) return;
+    const level = levels.getPtr(size);
 
-    const chunk_id = ptr.raw / size.sizeBytes();
-    const bucket_id = chunk_id / 64;
-    const bit_id: u6 = @truncate(chunk_id % 64);
+    const this_idx = bitmapIndex(ptr, size);
+    const this_meta = ptr.toHhdm().toPtr(*ChunkMetadata);
+    const buddy_idx = bitmapBuddy(this_idx);
+    const buddy_chunk = bitmapAddrOfIndex(buddy_idx, size);
+    const buddy_meta = buddy_chunk.toHhdm().toPtr(*ChunkMetadata);
 
-    const bitmap: []std.atomic.Value(u64) = bitmaps.get(size).bitmap;
-    const bucket = &bitmap[bucket_id];
+    if (conf.IS_DEBUG) {
+        const current_state = bitmapGet(level.bitmap, this_idx);
+        std.debug.assert(!current_state);
+    }
 
-    std.debug.assert((bucket.load(.acquire) & (@as(usize, 1) << bit_id)) == 0);
-
-    // 2 cases:
-    // the buddy is on the right side
-    // the buddy is on the left side
-    const buddy_id: u6 = if (bit_id % 2 == 0) bit_id + 1 else bit_id - 1;
-
-    // if (size == .@"4KiB") {
-    //     log.info("freeing chunk_id={} bucket_id={} bit_id={} buddy_id={}", .{
-    //         chunk_id, bucket_id, bit_id, buddy_id,
-    //     });
-    // }
-    // log.info("freeing {}", .{size});
-
-    const next_size = size.next() orelse size;
-    const is_next_size = size.next() != null;
-
-    while (true) {
-        const now = bucket.load(.acquire);
-
-        if ((now & (@as(usize, 1) << buddy_id)) != 0 and is_next_size) {
+    if (size.next()) |parent_size| {
+        if (bitmapGet(level.bitmap, buddy_idx)) {
             // buddy is free => allocate the buddy and free the parent
 
-            if (null == bucket.cmpxchgWeak(now, now & ~(@as(usize, 1) << buddy_id), .release, .monotonic)) {
-                const parent_ptr = addr.Phys.fromInt(std.mem.alignBackward(usize, ptr.raw, next_size.sizeBytes()));
-                deallocChunk(zero, parent_ptr, next_size);
-                return; // tail call optimization hopefully?
-            }
+            bitmapUnset(level.bitmap, buddy_idx);
+            level.freelist.remove(&buddy_meta.freelist_node);
+            std.crypto.secureZero(u8, std.mem.asBytes(buddy_meta));
 
-            // retry when some other bit was changed or a sporadic failure happened
-        } else {
-            // buddy is allocated => free the current
+            const left_idx = bitmapLeftBuddy(this_idx);
+            const parent_addr = bitmapAddrOfIndex(left_idx, size);
 
-            if (null == bucket.cmpxchgWeak(now, now | (@as(usize, 1) << bit_id), .release, .monotonic)) {
-                return;
-            }
-
-            // retry when some other bit was changed or a sporadic failure happened
+            return deallocChunkInner(parent_addr, parent_size);
         }
     }
+
+    // buddy is allocated / largest size => free the current
+    bitmapSet(level.bitmap, this_idx);
+    freelistPush(&level.freelist, &this_meta.freelist_node);
 }
 
 //
 
 pub fn init() !void {
-    if (conf.IS_DEBUG and initialized) {
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
+
+    if (conf.IS_DEBUG and pmem_ready) {
         return error.PmmAlreadyInitialized;
     }
 
@@ -290,7 +368,7 @@ pub fn init() !void {
     }
 
     log.info("allocating bitmaps", .{});
-    var it = bitmaps.iterator();
+    var it = levels.iterator();
     while (it.next()) |level| {
         const bits = memory_top / level.key.sizeBytes();
         if (bits == 0) continue;
@@ -306,7 +384,7 @@ pub fn init() !void {
         const bitmap_bytes = initAlloc(memory_response.entries(), buckets * @sizeOf(u64), @alignOf(u64)) orelse {
             return error.NotEnoughContiguousMemory;
         };
-        const bitmap: []std.atomic.Value(u64) = @as([*]std.atomic.Value(u64), @ptrCast(@alignCast(bitmap_bytes)))[0..buckets];
+        const bitmap: []u64 = @as([*]u64, @ptrCast(@alignCast(bitmap_bytes)))[0..buckets];
 
         // log.info("bitmap from 0x{x} to 0x{x}", .{
         //     @intFromPtr(bitmap.ptr),
@@ -320,8 +398,6 @@ pub fn init() !void {
             .bitmap = bitmap,
         };
     }
-
-    abi.util.volat(&initialized).* = if (conf.IS_DEBUG) true else {};
 
     log.info("freeing usable memory", .{});
     for (memory_response.entries()) |memory_map_entry| {
@@ -346,16 +422,14 @@ pub fn init() !void {
                     continue;
                 }
 
-                deallocChunk(false, addr.Phys.fromParts(.{ .page = @truncate(page) }), .@"4KiB");
+                deallocChunkInner(addr.Phys.fromParts(.{ .page = @truncate(page) }), .@"4KiB");
             }
 
-            _ = usable.fetchAdd(n_pages, .monotonic);
+            usable_pages += n_pages;
         }
     }
 
-    abi.util.volat(&pmem_ready).* = true;
-
-    printInfo();
+    pmem_ready = true;
 }
 
 fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) ?[*]u8 {
@@ -439,7 +513,7 @@ fn _remap(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usi
 }
 
 fn debugAssertInitialized() bool {
-    if (conf.IS_DEBUG and !initialized) {
+    if (conf.IS_DEBUG and !pmem_ready) {
         log.err("physical memory manager not initialized", .{});
         return true;
     } else {

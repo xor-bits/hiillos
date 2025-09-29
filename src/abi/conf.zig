@@ -39,6 +39,8 @@ pub const ANTI_TLB_MODE: bool = false;
 pub const NO_LAZY_REMAP: bool = false;
 /// freeze the kernel when an unhandled user-space fault happens, for easier debugging with gdb
 pub const DEBUG_UNHANDLED_FAULT: bool = false;
+/// FIFO vs. FILO physical memory free lists
+pub const CYCLE_PHYSICAL_MEMORY: bool = false;
 
 pub const IPC_BENCHMARK: bool = false;
 pub const SCHED_STRESS_TEST: bool = false;
