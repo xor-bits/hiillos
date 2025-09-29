@@ -151,8 +151,28 @@ pub const Channel = struct {
                 .no_pop_finish = true, // makes the caller still be in its waiting state
             },
         ) orelse {
-            self.recv_queue.queue.pushBack(thread);
-            self.lock.unlock();
+            @branchHint(.cold);
+
+            if (self.send_count != 0) {
+                self.recv_queue.queue.pushBack(thread);
+                self.lock.unlock();
+                return;
+            } else {
+                @branchHint(.cold);
+                self.lock.unlock();
+            }
+
+            trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+            thread.exec_lock.lock();
+            thread.trap.syscall_id = trap.syscall_id;
+            thread.exec_lock.unlock();
+
+            // nothing to receive and the channel was closed
+            if (thread.popFinishUnlocked(.{})) |_| {
+                proc.switchUndo(thread);
+            } else |_| {
+                thread.deinit();
+            }
             return;
         };
 
@@ -283,8 +303,27 @@ pub const Channel = struct {
             },
         ) orelse {
             @branchHint(.cold);
-            self.send_queue.queue.pushBack(thread);
-            self.lock.unlock();
+
+            if (self.recv_count != 0) {
+                self.send_queue.queue.pushBack(thread);
+                self.lock.unlock();
+                return;
+            } else {
+                @branchHint(.cold);
+                self.lock.unlock();
+            }
+
+            trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+            thread.exec_lock.lock();
+            thread.trap.syscall_id = trap.syscall_id;
+            thread.exec_lock.unlock();
+
+            // no listeners and the channel was closed
+            if (thread.popFinishUnlocked(.{})) |_| {
+                proc.switchUndo(thread);
+            } else |_| {
+                thread.deinit();
+            }
             return;
         };
 
