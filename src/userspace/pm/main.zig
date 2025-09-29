@@ -113,7 +113,7 @@ pub fn main() !void {
     std.debug.assert(init_proc.pid == 1);
 
     log.debug("pm ready", .{});
-    try abi.lpc.daemon(Context{
+    abi.lpc.daemon(Context{
         .recv = .{ .cap = export_pm.handle },
     });
 }

@@ -29,7 +29,7 @@ pub fn call(
     return try deserialize(Response, sys_msg);
 }
 
-pub fn daemon(ctx: anytype) noreturn {
+pub fn daemon(ctx: anytype) void {
     var d = Daemon(@TypeOf(ctx)).init(ctx);
     d.run();
 }
@@ -46,12 +46,13 @@ pub fn Daemon(comptime Ctx: type) type {
             return .{ .ctx = ctx };
         }
 
-        pub fn run(self: *@This()) noreturn {
+        pub fn run(self: *@This()) void {
             comptime std.debug.assert(@FieldType(Ctx, "recv") == caps.Receiver);
 
             var sys_msg: ?sys.Message = null;
             while (true) {
                 self.runOnce(&sys_msg) catch |err| {
+                    if (err == error.ChannelClosed) break;
                     log.err("daemon handler wrapper error: {}", .{err});
                 };
             }
