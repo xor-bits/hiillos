@@ -221,25 +221,62 @@ pub const ChunkSize = enum(u5) {
     @"512MiB",
     @"1GiB",
 
-    pub fn of(n_bytes: usize) ?ChunkSize {
+    pub const Self = @This();
+
+    pub fn maxFit(
+        addr: usize,
+        size: usize,
+    ) ?Self {
+        const size_limit = Self.minAlignSize(size).?;
+        const addr_limit = Self.maxAlignAddr(addr).?;
+
+        if (@intFromEnum(size_limit) < @intFromEnum(addr_limit)) {
+            return size_limit;
+        } else {
+            return addr_limit;
+        }
+    }
+
+    /// the chunk size is the possible largest that is aligned to the `addr` (or null)
+    pub fn maxAlignAddr(addr: usize) ?Self {
+        if (addr == 0) return Self.@"1GiB";
+        const clz = @ctz(addr);
+        if (clz < 12) return null;
+        return @enumFromInt(@ctz(addr) - 12);
+    }
+
+    /// the chunk size will be exactly the size of `n_bytes` or smaller (or null)
+    pub fn minAlignSize(n_bytes: usize) ?Self {
+        if (n_bytes < Self.@"4KiB".sizeBytes()) return null;
         // 0 = 4KiB, 1 = 8KiB, ..
-        const page_size = @max(12, std.math.log2_int_ceil(usize, n_bytes)) - 12;
-        if (page_size >= 18) return null;
-        return @enumFromInt(page_size);
+        return @enumFromInt(std.math.log2_int(usize, n_bytes) - 12);
     }
 
-    pub fn next(self: @This()) ?@This() {
-        return std.meta.intToEnum(@This(), @intFromEnum(self) + 1) catch return null;
+    /// the chunk size will be exactly the size of `n_bytes` or larger (or null)
+    pub fn maxAlignSize(n_bytes: usize) ?Self {
+        if (n_bytes > Self.@"1GiB".sizeBytes()) return null;
+        // 0 = 4KiB, 1 = 8KiB, ..
+        return @enumFromInt(@max(12, std.math.log2_int_ceil(usize, n_bytes)) - 12);
     }
 
-    pub fn sizeBytes(self: @This()) usize {
+    pub fn prev(self: Self) ?Self {
+        if (self == .@"4KiB") return null;
+        return @enumFromInt(@intFromEnum(self) - 1);
+    }
+
+    pub fn next(self: Self) ?Self {
+        if (self == .@"1GiB") return null;
+        return @enumFromInt(@intFromEnum(self) + 1);
+    }
+
+    pub fn sizeBytes(self: Self) usize {
         return @as(usize, 0x1000) << @intFromEnum(self);
     }
 
-    pub fn alignOf(self: @This()) usize {
-        if (self.sizeBytes() >= ChunkSize.@"1GiB".sizeBytes()) return ChunkSize.@"1GiB".sizeBytes();
-        if (self.sizeBytes() >= ChunkSize.@"2MiB".sizeBytes()) return ChunkSize.@"2MiB".sizeBytes();
-        return ChunkSize.@"4KiB".sizeBytes();
+    pub fn alignOf(self: Self) usize {
+        if (self.sizeBytes() >= Self.@"1GiB".sizeBytes()) return Self.@"1GiB".sizeBytes();
+        if (self.sizeBytes() >= Self.@"2MiB".sizeBytes()) return Self.@"2MiB".sizeBytes();
+        return Self.@"4KiB".sizeBytes();
     }
 };
 

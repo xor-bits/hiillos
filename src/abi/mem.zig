@@ -49,7 +49,7 @@ const ServerPageAllocator = struct {
     }
 
     fn resize(_: *anyopaque, mem: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
-        const n = abi.ChunkSize.of(mem.len) orelse return false;
+        const n = abi.ChunkSize.maxAlignSize(mem.len) orelse return false;
         return n.sizeBytes() >= new_len;
     }
 

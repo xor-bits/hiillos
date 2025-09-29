@@ -275,10 +275,17 @@ pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
 
     if (debugAssertInitialized()) return;
 
-    return deallocChunkInner(ptr, size);
+    return deallocChunkInner(.check_double_frees, ptr, size);
 }
 
-fn deallocChunkInner(ptr: addr.Phys, size: abi.ChunkSize) void {
+fn deallocChunkInner(
+    comptime mode: enum {
+        check_double_frees,
+        allow_double_frees,
+    },
+    ptr: addr.Phys,
+    size: abi.ChunkSize,
+) void {
     // if the buddy chunk is also free, allocate it and free the parent chunk
     // if the buddy chunk is not free, then just free the current chunk
     //
@@ -293,9 +300,13 @@ fn deallocChunkInner(ptr: addr.Phys, size: abi.ChunkSize) void {
     const buddy_chunk = bitmapAddrOfIndex(buddy_idx, size);
     const buddy_meta = buddy_chunk.toHhdm().toPtr(*ChunkMetadata);
 
-    if (conf.IS_DEBUG) {
+    if (conf.IS_DEBUG and mode == .check_double_frees) {
         const current_state = bitmapGet(level.bitmap, this_idx);
         std.debug.assert(!current_state);
+    } else if (mode == .allow_double_frees) {
+        // only pmem init is allowed to double free, as memory maps might overlap
+        const current_state = bitmapGet(level.bitmap, this_idx);
+        if (current_state) return;
     }
 
     if (size.next()) |parent_size| {
@@ -309,7 +320,7 @@ fn deallocChunkInner(ptr: addr.Phys, size: abi.ChunkSize) void {
             const left_idx = bitmapLeftBuddy(this_idx);
             const parent_addr = bitmapAddrOfIndex(left_idx, size);
 
-            return deallocChunkInner(parent_addr, parent_size);
+            return deallocChunkInner(mode, parent_addr, parent_size);
         }
     }
 
@@ -386,35 +397,44 @@ pub fn init() !void {
 
     log.info("freeing usable memory", .{});
     for (memory_response.entries()) |memory_map_entry| {
-        if (memory_map_entry.ty == .usable) {
-            // FIXME: a faster way would be to repeatedly deallocate chunks
-            // from smallest to biggest and then to smallest again
-            // ex: 1,2,3,7,8,8,8,8,8,8,8,8,8,8,5,4,1
-
-            const base = std.mem.alignForward(usize, memory_map_entry.base, 0x1000);
-            const waste = base - memory_map_entry.base;
-            memory_map_entry.base += waste;
-            memory_map_entry.len -= waste;
-            memory_map_entry.len = std.mem.alignBackward(usize, memory_map_entry.len, 0x1000);
-
-            const first_page: u32 = addr.Phys.fromInt(memory_map_entry.base).toParts().page;
-            const n_pages: u32 = @truncate(memory_map_entry.len >> 12);
-            for (first_page..first_page + n_pages) |page| {
-                if (page == 0) {
-                    // make sure the 0 phys page is not free
-                    // phys addr values of 0 are treated as null
-                    @branchHint(.cold);
-                    continue;
-                }
-
-                deallocChunkInner(addr.Phys.fromParts(.{ .page = @truncate(page) }), .@"4KiB");
-            }
-
-            usable_pages += n_pages;
-        }
+        if (memory_map_entry.ty != .usable) continue;
+        freeMemoryRange(memory_map_entry.base, memory_map_entry.len);
     }
 
     pmem_ready.complete();
+}
+
+fn freeMemoryRange(
+    base: usize,
+    len: usize,
+) void {
+    var aligned_base = std.mem.alignForward(usize, base, 0x1000);
+    const aligned_end = std.mem.alignBackward(usize, base + len, 0x1000);
+    var aligned_len = aligned_end - aligned_base;
+
+    // log.debug("base:  0x{x}  len: 0x{x}", .{ base, len });
+    // log.debug("abase: 0x{x} alen: 0x{x}", .{ aligned_base, aligned_len });
+
+    usable_pages += @truncate(aligned_len >> 12);
+
+    while (abi.ChunkSize.maxFit(aligned_base, aligned_len)) |max_fit| {
+        std.debug.assert(aligned_len >= max_fit.sizeBytes());
+        std.debug.assert(std.mem.isAligned(aligned_base, max_fit.alignOf()));
+
+        // log.debug("free {t}", .{max_fit});
+
+        const max_fit_size = max_fit.sizeBytes();
+        deallocChunkInner(
+            .allow_double_frees,
+            addr.Phys.fromInt(aligned_base),
+            max_fit,
+        );
+
+        aligned_base += max_fit_size;
+        aligned_len -= max_fit_size;
+
+        if (aligned_len == 0) break;
+    }
 }
 
 fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) ?[*]u8 {
@@ -444,7 +464,7 @@ pub fn alloc(size: usize) ?addr.Phys {
     if (size == 0)
         return addr.Phys.fromInt(0);
 
-    const _size = abi.ChunkSize.of(size) orelse return null;
+    const _size = abi.ChunkSize.maxAlignSize(size) orelse return null;
     return allocChunk(_size);
 }
 
@@ -452,7 +472,7 @@ pub fn free(chunk: addr.Phys, size: usize) void {
     if (size == 0)
         return;
 
-    const _size = abi.ChunkSize.of(size) orelse {
+    const _size = abi.ChunkSize.maxAlignSize(size) orelse {
         log.err("trying to free a chunk that could not have been allocated", .{});
         return;
     };
@@ -479,7 +499,7 @@ fn _alloc(_: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
 }
 
 fn _resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
-    const chunk_size = abi.ChunkSize.of(buf.len) orelse return false;
+    const chunk_size = abi.ChunkSize.maxAlignSize(buf.len) orelse return false;
     if (chunk_size.sizeBytes() >= new_len) return true;
     return false;
 }
@@ -491,7 +511,7 @@ fn _free(_: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
 fn _remap(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
     // physical memory cant be remapped
 
-    const chunk_size = abi.ChunkSize.of(buf.len) orelse return null;
+    const chunk_size = abi.ChunkSize.maxAlignSize(buf.len) orelse return null;
     if (chunk_size.sizeBytes() >= new_len) return buf.ptr;
 
     return null;
