@@ -119,6 +119,8 @@ pub const Thread = struct {
         self.exit(0);
 
         self.lock.lock();
+        std.debug.assert(self.process_threads_node.next == null);
+        std.debug.assert(self.process_threads_node.prev == null);
         std.debug.assert(self.scheduler_queue_node.next == null);
         std.debug.assert(self.scheduler_queue_node.prev == null);
         self.discardReply();
@@ -403,11 +405,34 @@ pub const Thread = struct {
         self.exit_code = exit_code;
         self.lock.unlock();
 
-        // TODO: swap with empty, unlock and then process
-        while (self.exit_waiters.pop(&self.lock)) |waiter| {
+        self.onExit(exit_code);
+    }
+
+    pub fn exitRemote(
+        self: *@This(),
+        exit_code: usize,
+    ) void {
+        self.lock.lock();
+        self.prev_status = self.status;
+        self.status = .exiting;
+        self.exit_code = exit_code;
+        self.lock.unlock();
+
+        self.onExit(exit_code);
+    }
+
+    fn onExit(self: *@This(), exit_code: usize) void {
+        self.lock.lock();
+        var exit_waiters = self.exit_waiters.takeAll(&self.lock);
+        self.lock.unlock();
+
+        var dummy_lock: abi.lock.SpinMutex = .{};
+        while (exit_waiters.pop(&dummy_lock)) |waiter| {
             waiter.lock.lock();
             waiter.trap.arg0 = exit_code;
             waiter.lock.unlock();
+
+            // log.info("exit waiter notified", .{});
 
             proc.ready(waiter);
         }
@@ -450,6 +475,7 @@ pub const Thread = struct {
         }
         const exit_code = self.exit_code;
         self.lock.unlock();
+        // log.info("exit waiter notified early", .{});
 
         // the thread was already dead
         trap.arg0 = exit_code;
@@ -576,12 +602,14 @@ pub const Thread = struct {
 
         log.warn(
             \\unhandled page fault 0x{x} (user) ({})
+            \\ - thread: {*}
             \\ - caused by: {}
             \\ - ip: 0x{x}
             \\ - sp: 0x{x}
         , .{
             target_addr,
             reason,
+            self,
             caused_by,
             ip,
             sp,

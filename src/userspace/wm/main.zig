@@ -201,11 +201,46 @@ const ConnectionContext = struct {
     pub const Request = gui.WmProtocol.Request;
 };
 
-fn clientConnectionThreadMain(rx: caps.Receiver) !void {
+fn clientConnectionThreadMain(rx: caps.Receiver) void {
+    var conn: Connection = .{};
     abi.lpc.daemon(DisplayContext{
         .recv = rx,
-        .conn = .{},
+        .conn = &conn,
     });
+
+    system_lock.lock();
+
+    // TODO: linked list of windows in the connection
+
+    var defer_window_deletes: std.DoublyLinkedList = .{};
+    var it = system.windows_list.first;
+    while (it) |node| {
+        const window: *Window = @fieldParentPtr("window_list_node", node);
+        it = window.window_list_node.next;
+
+        if (window.conn != &conn) continue;
+
+        system.windows_list.remove(&window.window_list_node);
+        defer_window_deletes.append(&window.window_list_node);
+        std.debug.assert(system.windows_map.remove(window.server_id));
+
+        system.damage.addRect(window.rect.border(window_borders));
+    }
+
+    if (system.focusedWindow()) |window| {
+        system.damage.addRect(window.rect.border(window_borders));
+    }
+
+    system_lock.unlock();
+
+    it = defer_window_deletes.first;
+    while (it) |node| {
+        const window: *Window = @fieldParentPtr("window_list_node", node);
+        it = window.window_list_node.next;
+
+        window.deinit();
+        abi.mem.slab_allocator.destroy(window);
+    }
 }
 
 fn createWindowRequest(
@@ -223,7 +258,7 @@ fn createWindowRequest(
     system_lock.lock();
     defer system_lock.unlock();
 
-    const result = system.addWindow(&daemon.ctx.conn, shmem) catch |err| {
+    const result = system.addWindow(daemon.ctx.conn, shmem) catch |err| {
         log.err("internal error while trying to create a window: {}", .{err});
         return handler.reply.send(.{ .err = .out_of_memory });
     };
@@ -283,7 +318,7 @@ fn damage(
 
 const DisplayContext = struct {
     recv: caps.Receiver,
-    conn: Connection,
+    conn: *Connection,
 
     pub const routes = .{
         createWindowRequest,

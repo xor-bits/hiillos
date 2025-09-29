@@ -104,15 +104,19 @@ pub const Process = struct {
 
         if (exited_thread) |thread| {
             self.active_threads.remove(thread);
-            if (!self.active_threads.isEmpty())
+            if (!self.active_threads.isEmpty()) {
                 return;
+            }
         }
 
         self.status = .dead;
         self.exit_code = exit_code;
         self.closeAllCaps();
 
-        // TODO: exit all threads
+        var it = self.active_threads.iterator();
+        while (it.next()) |active_thread| {
+            active_thread.exitRemote(exit_code);
+        }
     }
 
     pub fn waitExit(
