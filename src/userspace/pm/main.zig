@@ -60,7 +60,7 @@ var system: System = .{};
 //
 
 pub fn main() !void {
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("hello from pm, export_pm={} import_vfs={}", .{
         export_pm.handle,
         import_vfs.handle,

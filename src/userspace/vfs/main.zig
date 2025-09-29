@@ -50,7 +50,7 @@ var initfs_root: *DirNode = undefined;
 //
 
 pub fn main() !void {
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("hello from vfs", .{});
 
     if (abi.conf.IPC_BENCHMARK) {

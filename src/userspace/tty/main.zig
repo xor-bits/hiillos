@@ -54,7 +54,7 @@ var seat_lock: abi.thread.Mutex = .{};
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("hello from tty", .{});
 
     try abi.thread.spawn(seatListener, .{});

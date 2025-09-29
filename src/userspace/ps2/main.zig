@@ -68,7 +68,7 @@ pub export var import_hpet = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
-    try abi.caps.init();
+    try abi.rt.initServer();
 
     log.info("hello from ps2", .{});
     controller = try Controller.init();

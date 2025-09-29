@@ -179,7 +179,7 @@ test "closing a process closes its handles" {
 }
 
 pub fn main() !void {
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("I am root", .{});
 
     try initfsd.init();

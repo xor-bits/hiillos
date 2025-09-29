@@ -30,6 +30,13 @@ pub fn init() !void {
     try caps.Thread.main.threadSetSigHandler(@intFromPtr(&defaultSignalHandler));
 }
 
+/// init for normal processes
+pub fn initServer() !void {
+    try @import("caps.zig").init();
+
+    try caps.Thread.main.threadSetSigHandler(@intFromPtr(&defaultSignalHandler));
+}
+
 pub const SignalRegs = extern struct {
     r15: u64 = 0,
     r14: u64 = 0,

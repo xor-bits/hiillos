@@ -52,7 +52,7 @@ var timers: [32]Timer = .{Timer{}} ** 32;
 //
 
 pub fn main() !void {
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("hello from hpet", .{});
 
     const vmem = caps.Vmem.self;

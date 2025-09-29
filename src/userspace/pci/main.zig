@@ -46,7 +46,7 @@ pub export var import_mcfg_info_frame = abi.loader.Resource.new(.{
 
 pub fn main() !void {
     if (abi.conf.IPC_BENCHMARK) return;
-    try abi.caps.init();
+    try abi.rt.initServer();
     log.info("hello from pci", .{});
 
     const vmem = caps.Vmem.self;
