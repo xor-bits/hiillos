@@ -291,7 +291,7 @@ fn createArgMap(
     path: []const u8,
     cli: []const u8,
 ) !caps.Frame {
-    const args = try caps.Frame.create(0x1000);
+    const args = try caps.Frame.create(0x1000, .{});
     errdefer args.close();
 
     var buffer: [0x1000]u8 = undefined;

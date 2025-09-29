@@ -107,7 +107,7 @@ pub fn main() !void {
         &init_elf,
         0,
         .{},
-        try caps.Frame.create(0x1000),
+        try caps.Frame.create(0x1000, .{}),
         try caps.Frame.init("PATH=initfs:///sbin/"),
     );
     std.debug.assert(init_proc.pid == 1);

@@ -269,8 +269,12 @@ pub const ChunkSize = enum(u5) {
         return @enumFromInt(@intFromEnum(self) + 1);
     }
 
-    pub fn sizeBytes(self: Self) usize {
-        return @as(usize, 0x1000) << @intFromEnum(self);
+    pub fn sizeBytes(self: Self) u32 {
+        return @as(u32, 0x1000) << @intFromEnum(self);
+    }
+
+    pub fn sizePages(self: @This()) u32 {
+        return @as(u32, 1) << @intFromEnum(self);
     }
 
     pub fn alignOf(self: Self) usize {

@@ -135,7 +135,8 @@ fn handle_syscall(
 
         .frame_create => {
             const size_bytes = trap.arg0;
-            const frame = try caps.Frame.init(size_bytes);
+            const flags = abi.sys.FrameCreateFlags.decode(trap.arg1);
+            const frame = try caps.Frame.init(size_bytes, flags);
             errdefer frame.deinit();
 
             const handle = try thread.proc.pushCapability(caps.Capability.init(frame, null));
@@ -243,7 +244,7 @@ fn handle_syscall(
             defer frame.lock.unlock();
 
             log.info("frame: {*} is_transient={}", .{ frame, frame.is_transient });
-            for (frame.pages) |p| {
+            for (frame.chunks) |p| {
                 log.info(" - 0x{x}", .{p});
             }
         },
@@ -283,12 +284,12 @@ fn handle_syscall(
 
             // map takes ownership of the frame
             const pages: u32 = if (trap.arg4 == 0)
-                @intCast(@max(frame.pages.len, frame_first_page) - frame_first_page)
+                @intCast(@max(frame.chunks.len * frame.chunk_size.sizePages(), frame_first_page) - frame_first_page)
             else
                 @truncate(std.math.divCeil(usize, trap.arg4, 0x1000) catch unreachable);
 
             const mapped_vaddr = try vmem.map(
-                frame,
+                frame.clone(),
                 frame_first_page,
                 vaddr,
                 pages,
@@ -417,7 +418,7 @@ fn handle_syscall(
             for (vmem.mappings.items) |mapping| {
                 log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
                     mapping.getVaddr().raw,
-                    mapping.getVaddr().raw + mapping.pages * 0x1000,
+                    mapping.getVaddr().raw + mapping.chunks * 0x1000,
                     mapping.frame,
                 });
             }

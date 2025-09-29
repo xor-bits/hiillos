@@ -33,7 +33,7 @@ pub fn load(vmem: caps.Vmem, elf: []const u8) !usize {
 
 pub fn prepareSpawn(vmem: caps.Vmem, thread: caps.Thread, entry: u64) !void {
     // map a stack
-    const stack = try caps.Frame.create(1024 * 256);
+    const stack = try caps.Frame.create(1024 * 256, .{});
     defer stack.close();
     const stack_ptr = try vmem.map(
         stack,
@@ -163,7 +163,7 @@ pub const Elf = struct {
             .exec = phdr.p_flags & std.elf.PF_X != 0,
         };
 
-        const frame = try caps.Frame.create(seg_size);
+        const frame = try caps.Frame.create(seg_size, .{});
         defer frame.close();
 
         const data_off = phdr.p_vaddr - seg_bot;

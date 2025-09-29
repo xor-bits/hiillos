@@ -108,7 +108,7 @@ pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame
         size += 2 + env_var.name.len + env_var.value.len;
     }
 
-    var derived = try caps.Frame.create(size);
+    var derived = try caps.Frame.create(size, .{});
     var buffer: [0x1000]u8 = undefined;
     var derived_writer_raw = derived.writer(&buffer, size);
     const derived_writer = &derived_writer_raw.interface;

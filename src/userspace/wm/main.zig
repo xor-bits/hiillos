@@ -66,7 +66,7 @@ pub fn main() !void {
         },
     );
 
-    const fb_backbuf_frame = try caps.Frame.create(fb_info.pitch * fb_info.height);
+    const fb_backbuf_frame = try caps.Frame.create(fb_info.pitch * fb_info.height, .{});
     defer fb_backbuf_frame.close();
 
     const fb_backbuf_addr = try vmem.map(

@@ -196,7 +196,7 @@ fn openDirInner(
     }
     frame_size = @min(frame_size, 0x1000);
 
-    const frame = try caps.Frame.create(frame_size);
+    const frame = try caps.Frame.create(frame_size, .{});
     errdefer frame.close();
 
     var buffer: [0x1000]u8 = undefined;

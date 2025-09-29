@@ -198,6 +198,20 @@ pub fn main() !void {
     try abi.rt.initServer();
     log.info("I am root", .{});
 
+    // const frame = try caps.Frame.create(0x100_0000, .{
+    //     .page_size_hint = .@"2MiB",
+    // });
+    // const addr = try caps.Vmem.self.map(frame, 0, 0, 0, .{
+    //     .write = true,
+    // });
+    // const s: [*]volatile u8 = @ptrFromInt(addr);
+    // const slice: []volatile u8 = s[0..0x100_0000];
+    // for (slice) |b| std.debug.assert(b == 0);
+    // @memset(slice, 0xff);
+    // for (slice) |b| std.debug.assert(b == 0xff);
+    // log.info("done, works", .{});
+    // if (true) return;
+
     try initfsd.init();
 
     // const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(BOOT_INFO)).*;
@@ -635,7 +649,7 @@ export fn zigMain() noreturn {
 fn mapStack() !usize {
     log.info("mapping stack", .{});
 
-    const frame = try caps.Frame.create(1024 * 256);
+    const frame = try caps.Frame.create(1024 * 256, .{});
     const stack_bottom = try caps.ROOT_SELF_VMEM.map(
         frame,
         0,

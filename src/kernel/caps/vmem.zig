@@ -106,7 +106,7 @@ pub const Vmem = struct {
                 if (!mapping.overlaps(self.vaddr, 1)) return Error.InvalidAddress;
 
                 self.cur_frame = mapping.frame.data(
-                    self.vaddr.raw - mapping.getVaddr().raw + mapping.frame_first_page * 0x1000,
+                    self.vaddr.raw - mapping.getVaddr().raw + mapping.frame_first_chunk * 0x1000,
                     is_write,
                 );
             }
@@ -177,7 +177,7 @@ pub const Vmem = struct {
         {
             frame.lock.lock();
             defer frame.lock.unlock();
-            if (pages + frame_first_page > frame.pages.len)
+            if (pages + frame_first_page > frame.chunks.len * frame.chunk_size.sizePages())
                 return Error.OutOfBounds;
         }
 
@@ -376,7 +376,7 @@ pub const Vmem = struct {
             // cut the mapping into 0, 1 or 2 mappings
 
             const a_beg: usize = mapping.getVaddr().raw;
-            const a_end: usize = mapping.getVaddr().raw + @as(usize, mapping.pages) * 0x1000;
+            const a_end: usize = mapping.getVaddr().raw + @as(usize, mapping.chunks) * 0x1000;
             const b_beg: usize = vaddr.raw;
             const b_end: usize = vaddr.raw + pages * 0x1000;
 
@@ -393,15 +393,15 @@ pub const Vmem = struct {
                 // log.debug("unmap case 1", .{});
                 const shift: u32 = @intCast((b_end - a_beg) / 0x1000);
                 mapping.setVaddr(addr.Virt.fromInt(b_end));
-                mapping.pages -= shift;
-                mapping.frame_first_page += shift;
+                mapping.chunks -= shift;
+                mapping.frame_first_chunk += shift;
             } else if (a_beg >= b_beg and a_end <= a_end) {
                 // case 2:
                 // b: |---------------------|
                 // a:      |==========|
 
                 // log.debug("unmap case 2", .{});
-                mapping.pages = 0;
+                mapping.chunks = 0;
             } else if (b_beg >= a_beg and b_end >= a_end) {
                 // case 3:
                 // b:            |---------|
@@ -409,7 +409,7 @@ pub const Vmem = struct {
 
                 // log.debug("unmap case 3", .{});
                 const trunc: u32 = @intCast((a_end - b_beg) / 0x1000);
-                mapping.pages -= trunc;
+                mapping.chunks -= trunc;
             } else {
                 std.debug.assert(a_beg < b_beg);
                 std.debug.assert(a_end > b_end);
@@ -425,25 +425,25 @@ pub const Vmem = struct {
                 const cloned = try mapping.clone();
 
                 const trunc: u32 = @intCast((a_end - b_beg) / 0x1000);
-                mapping.pages -= trunc;
+                mapping.chunks -= trunc;
 
                 const shift: u32 = @intCast((b_end - a_beg) / 0x1000);
                 cloned.setVaddr(addr.Virt.fromInt(b_end));
-                cloned.pages -= shift;
-                cloned.frame_first_page += shift;
+                cloned.chunks -= shift;
+                cloned.frame_first_chunk += shift;
 
                 cloned.frame.lock.lock();
                 cloned.frame.mappings.append(gpa, cloned) catch unreachable;
                 cloned.frame.lock.unlock();
                 self.mappings.insert(gpa, idx + 1, cloned) catch unreachable;
 
-                std.debug.assert(cloned.pages != 0);
-                std.debug.assert(mapping.pages != 0);
+                std.debug.assert(cloned.chunks != 0);
+                std.debug.assert(mapping.chunks != 0);
 
                 break;
             }
 
-            if (mapping.pages == 0) {
+            if (mapping.chunks == 0) {
                 // TODO: batch remove
                 self.mappings.orderedRemove(idx).deinit();
             } else {
@@ -465,8 +465,8 @@ pub const Vmem = struct {
         const shootdown = try caps.TlbShootdown.init(
             .{ .unmap = thread },
             .{ .range = .{
-                vaddr,
-                addr.Virt.fromInt(vaddr.raw + pages * 0x1000),
+                .start = vaddr,
+                .n_4kib_pages = pages,
             } },
         );
         proc.switchFrom(trap, thread);
@@ -515,6 +515,7 @@ pub const Vmem = struct {
         if (self != dont_lock_if) self.lock.lock();
         defer if (self != dont_lock_if) self.lock.unlock();
 
+        const page_size = frame.chunk_size.sizeBytes();
         for (self.mappings.items) |mapping| {
             if (mapping.frame != frame) continue;
 
@@ -522,16 +523,17 @@ pub const Vmem = struct {
             const mapping_idx = std.math.sub(
                 u32,
                 idx,
-                mapping.frame_first_page,
+                mapping.frame_first_chunk,
             ) catch continue;
-            if (mapping_idx >= mapping.pages) continue;
+            if (mapping_idx >= mapping.chunks) continue;
 
-            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + 0x1000 * mapping_idx);
+            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + page_size * mapping_idx);
 
             try refreshPageAndTlbShootdown(
                 frame,
                 &self.hal_vmem,
                 vaddr,
+                page_size,
                 ipi_bitmap,
             );
         }
@@ -543,6 +545,7 @@ pub const Vmem = struct {
         frame: *caps.Frame,
         hal_vmem: *caps.HalVmem,
         vaddr: addr.Virt,
+        page_size: u32,
         ipi_bitmap: *u256,
     ) !void {
         hal_vmem.canUnmapFrame(vaddr) catch |err| {
@@ -559,7 +562,10 @@ pub const Vmem = struct {
 
         const shootdown = try caps.TlbShootdown.init(
             .{ .transient = frame.clone() },
-            .{ .individual = vaddr },
+            .{ .range = .{
+                .start = vaddr,
+                .n_4kib_pages = page_size / 0x1000,
+            } },
         );
         defer _ = shootdown.deinit();
 
@@ -633,53 +639,61 @@ pub const Vmem = struct {
 
         // check if it is lazy mapping
 
-        const page_offs: u32 = @intCast((vaddr.raw - mapping.getVaddr().raw) / 0x1000);
-        std.debug.assert(page_offs < mapping.pages);
+        const byte_idx = vaddr.raw - mapping.getVaddr().raw;
+        const mapping_chunk_offs: u32 = @intCast(byte_idx % mapping.frame.chunk_size.sizeBytes());
+        const mapping_chunk_idx: u32 = @intCast(byte_idx / mapping.frame.chunk_size.sizeBytes());
+        const real_chunk_idx: u32 = mapping_chunk_idx + mapping.frame_first_chunk;
+        std.debug.assert(mapping_chunk_idx < mapping.chunks);
 
         const entry = (try self.hal_vmem.entryFrame(vaddr)).*;
+        // if (mapping.frame.chunk_size.sizeBytes() != 0x1000) {
+        //     log.info("pf 0x{x:016}", .{vaddr.raw});
+        //     log.info("frame: {*}", .{mapping.frame});
+        //     log.info("mapping: 0x{x:016}", .{mapping.getVaddr().raw});
+        //     log.info("idx: {}", .{chunk_idx});
+        //     log.info("size: {}", .{mapping.frame.chunk_size.sizeBytes()});
+        // }
 
         // accessing a page with a write also immediately makes it readable/executable
         // log.debug("caused_by={} entry={}", .{ caused_by, entry });
         if (caused_by != .write and entry.present != 0) {
             // already resolved by another thread
+            arch.x86_64.flushTlbAddr(vaddr.raw);
             return;
         }
 
         // read, exec => was mapped but only now accessed using a read/exec
         // write      => was mapped but only now accessed using a write
-        const wanted_page_index = try mapping.frame.pageFault(
-            mapping.frame_first_page + page_offs,
+        var paddr = try mapping.frame.pageFault(
+            real_chunk_idx,
             caused_by == .write,
             self,
             trap,
             thread,
         );
+        paddr.raw += mapping_chunk_offs;
 
         if (conf.LOG_PAGE_FAULTS)
-            log.debug("vaddr=0x{x} cause={s} wanted={} prev={}", .{
+            log.debug("vaddr=0x{x} cause={s} paddr=0x{x} prev={}", .{
                 vaddr.raw,
                 @tagName(caused_by),
-                wanted_page_index,
+                paddr.raw,
                 entry,
             });
 
         // if the wanted_page_index is the same as the existing page,
         // then the cause must be a write after it was already mapped with read
-        // and remapping the same page with new rights is fine without TLB shootdown IPIs
+        // and remapping the same page with *more* rights is fine without TLB shootdown IPIs
 
         const flags = if (caused_by == .write)
             mapping.target.flags
         else
             mapping.target.flags.intersection(abi.sys.MapFlags.urx);
-
-        if (conf.LOG_PAGE_FAULTS and wanted_page_index == entry.page_index)
+        if (conf.LOG_PAGE_FAULTS and paddr.toParts().page == entry.page_index)
             log.debug("remapping with more rights: {}", .{flags});
 
-        try self.hal_vmem.mapFrame(
-            addr.Phys.fromParts(.{ .page = wanted_page_index }),
-            vaddr,
-            flags,
-        );
+        // TODO: map with huge or giant pages when possible
+        try self.hal_vmem.mapFrame(paddr, vaddr, flags);
         arch.x86_64.flushTlbAddr(vaddr.raw);
     }
 
@@ -687,7 +701,7 @@ pub const Vmem = struct {
         for (self.mappings.items) |mapping| {
             log.info("[ 0x{x:0>16} .. 0x{x:0>16} ]", .{
                 mapping.getVaddr().raw,
-                mapping.getVaddr().raw + mapping.pages * 0x1000,
+                mapping.getVaddr().raw + mapping.chunks * 0x1000,
             });
         }
     }
@@ -706,14 +720,14 @@ pub const Vmem = struct {
         for (self.mappings.items) |mapping| {
             // make sure mappings are ordered
             if (mapping.getVaddr().raw < prev) ok = false;
-            prev = mapping.getVaddr().raw + mapping.pages * 0x1000;
+            prev = mapping.getVaddr().raw + mapping.chunks * 0x1000;
 
             // make sure mappings are non-zero length
-            if (mapping.pages == 0) ok = false;
+            if (mapping.chunks == 0) ok = false;
 
             if (print) log.debug("[ 0x{x:0>16} .. 0x{x:0>16} ] {s}", .{
                 mapping.getVaddr().raw,
-                mapping.getVaddr().raw + mapping.pages * 0x1000,
+                mapping.getVaddr().raw + mapping.chunks * 0x1000,
                 if (ok) "ok" else "err",
             });
         }
@@ -747,7 +761,7 @@ pub const Vmem = struct {
             vaddr,
             struct {
                 fn pred(target_vaddr: addr.Virt, val: *const caps.Mapping) bool {
-                    return (val.getVaddr().raw + 0x1000 * val.pages) <= target_vaddr.raw;
+                    return (val.getVaddr().raw + 0x1000 * val.chunks) <= target_vaddr.raw;
                 }
             }.pred,
         );

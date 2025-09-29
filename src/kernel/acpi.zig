@@ -54,7 +54,7 @@ pub fn bootInfoInstallMcfg(boot_info: *caps.Frame, thread: *caps.Thread) !void {
         const mcfg_paddr = addr.Phys.fromInt(entry.base_addr);
 
         const mcfg_obj = try caps.Frame.initPhysical(mcfg_paddr, 0x10000000);
-        const mcfg_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame));
+        const mcfg_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame), .{});
 
         try mcfg_info_obj.initialWrite(0, std.mem.asBytes(&abi.McfgInfoFrame{
             .pci_segment_group = entry.pci_segment_group,

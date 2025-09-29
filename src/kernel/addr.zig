@@ -17,15 +17,11 @@ pub const Phys = struct {
     };
 
     pub fn fromInt(i: usize) Phys {
-        return Phys{
-            .raw = i,
-        };
+        return Phys{ .raw = i };
     }
 
     pub fn toHhdm(self: Phys) Virt {
-        return Virt{
-            .raw = self.raw + main.hhdm_offset,
-        };
+        return Virt{ .raw = self.raw + main.hhdm_offset };
     }
 
     pub fn fromParts(parts: Parts) Phys {
@@ -58,15 +54,11 @@ pub const Virt = struct {
     }
 
     pub fn fromInt(i: usize) Virt {
-        return Virt{
-            .raw = i,
-        };
+        return Virt{ .raw = i };
     }
 
     pub fn fromPtr(ptr: anytype) Virt {
-        return Virt{
-            .raw = @intFromPtr(ptr),
-        };
+        return Virt{ .raw = @intFromPtr(ptr) };
     }
 
     pub fn hhdmToPhys(self: Virt) Phys {

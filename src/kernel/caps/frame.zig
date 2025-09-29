@@ -28,29 +28,37 @@ pub const Frame = struct {
 
     is_physical: bool,
     lock: lock.TrackingSpinMutex = .{},
-    pages: []u32,
+    chunks: []u32,
+    chunk_size: abi.ChunkSize,
     size_bytes: usize,
     mappings: std.ArrayList(*const caps.Mapping),
 
     pub const UserHandle = abi.caps.Frame;
 
-    pub fn init(size_bytes: usize) !*@This() {
+    pub fn init(
+        size_bytes: usize,
+        flags: abi.sys.FrameCreateFlags,
+    ) !*@This() {
         caps.incCount(.frame, .{ .size_bytes = size_bytes });
 
         if (size_bytes == 0)
             return Error.InvalidArgument;
 
-        const size_pages = std.math.divCeil(usize, size_bytes, 0x1000) catch unreachable;
-        if (size_pages > std.math.maxInt(u32)) return error.OutOfMemory;
+        const size_chunks = std.math.divCeil(
+            usize,
+            size_bytes,
+            flags.page_size_hint.sizeBytes(),
+        ) catch unreachable;
+        if (size_chunks > std.math.maxInt(u32)) return error.OutOfMemory;
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        const pages = try caps.slab_allocator.allocator().alloc(u32, size_pages);
-
-        @memset(pages, 0);
+        const chunks = try caps.slab_allocator.allocator().alloc(u32, size_chunks);
+        @memset(chunks, 0);
 
         obj.* = .{
             .is_physical = false,
-            .pages = pages,
+            .chunks = chunks,
+            .chunk_size = flags.page_size_hint,
             .size_bytes = size_bytes,
             .mappings = .{},
         };
@@ -68,20 +76,33 @@ pub const Frame = struct {
             return Error.InvalidAddress;
         }
 
+        if (size_bytes == 0)
+            return Error.InvalidArgument;
+
         const aligned_paddr: usize = std.mem.alignBackward(usize, paddr.raw, 0x1000);
         const aligned_size: usize = std.mem.alignForward(usize, size_bytes, 0x1000);
+        // FIXME: biggest possible chunk size that does not make the size overflow to reduce Frame memory usage
+        // const chunk_size = abi.ChunkSize.maxAlignSize(@as(usize, 1) << @truncate(@ctz(aligned_size))) orelse .@"1GiB";
+        var chunk_size: abi.ChunkSize = .@"4KiB";
+        while (chunk_size.next()) |next| {
+            const next_size = next.sizeBytes();
+            if (!std.mem.isAligned(aligned_paddr, next_size)) break;
+            if (!std.mem.isAligned(aligned_size, next_size)) break;
+            chunk_size = next;
+        }
 
         if (aligned_paddr == 0)
             return Error.InvalidAddress;
 
-        const frame = try Frame.init(aligned_size);
-        // just a memory barrier, is_physical is not supposed to be atomic
-        @atomicStore(bool, &frame.is_physical, true, .release);
-
-        for (frame.pages, 0..) |*page, i| {
-            page.* = addr.Phys.fromInt(aligned_paddr + i * 0x1000).toParts().page;
+        const frame = try Frame.init(aligned_size, .{
+            .page_size_hint = chunk_size,
+        });
+        for (frame.chunks, 0..) |*page, i| {
+            page.* = addr.Phys.fromInt(aligned_paddr + i * chunk_size.sizeBytes()).toParts().page;
         }
 
+        // just a memory barrier, is_physical is not supposed to be atomic
+        @atomicStore(bool, &frame.is_physical, true, .release);
         return frame;
     }
 
@@ -93,12 +114,12 @@ pub const Frame = struct {
         self.lock.giveOwnership();
 
         if (!self.is_physical) {
-            for (self.pages) |page| {
+            for (self.chunks) |page| {
                 if (page == 0) continue;
 
                 pmem.deallocChunk(
                     addr.Phys.fromParts(.{ .page = page }),
-                    .@"4KiB",
+                    self.chunk_size,
                 );
             }
         }
@@ -106,7 +127,7 @@ pub const Frame = struct {
         std.debug.assert(self.mappings.items.len == 0);
         self.mappings.deinit(caps.slab_allocator.allocator());
 
-        caps.slab_allocator.allocator().free(self.pages);
+        caps.slab_allocator.allocator().free(self.chunks);
         caps.slab_allocator.allocator().destroy(self);
     }
 
@@ -131,18 +152,18 @@ pub const Frame = struct {
         const idx_beg: usize = std.math.divFloor(
             usize,
             offset_byte,
-            0x1000,
+            self.chunk_size.sizeBytes(),
         ) catch unreachable;
         const idx_end: usize = std.math.divCeil(
             usize,
             offset_byte + length - 1,
-            0x1000,
+            self.chunk_size.sizeBytes(),
         ) catch unreachable;
 
-        for (self.pages[idx_beg..idx_end]) |*page| {
+        for (self.chunks[idx_beg..idx_end]) |*page| {
             if (page.* != 0) continue; // FIXME: handle readonly zero pages
 
-            const new_page = pmem.allocChunk(.@"4KiB") orelse
+            const new_page = pmem.allocChunk(self.chunk_size) orelse
                 return Error.OutOfMemory;
             page.* = new_page.toParts().page;
         }
@@ -170,6 +191,7 @@ pub const Frame = struct {
         }
     }
 
+    // TODO: std.Io.Writer/std.Io.Reader API works here now
     pub fn DataIterator(comptime is_write: bool) type {
         return struct {
             frame: *Frame,
@@ -179,7 +201,7 @@ pub const Frame = struct {
             const Slice = if (is_write) []volatile u8 else []const volatile u8;
 
             pub fn next(self: *@This()) !?Slice {
-                if (self.idx >= self.frame.pages.len)
+                if (self.idx >= self.frame.chunks.len)
                     return null;
 
                 defer self.idx += 1;
@@ -200,7 +222,7 @@ pub const Frame = struct {
 
                 return addr.Phys.fromParts(.{ .page = page })
                     .toHhdm()
-                    .toPtr([*]volatile u8)[self.offset_within_first orelse 0 .. 0x1000];
+                    .toPtr([*]volatile u8)[self.offset_within_first orelse 0 .. self.frame.chunk_size.sizeBytes()];
             }
 
             pub fn deinit(self: *@This()) void {
@@ -212,15 +234,15 @@ pub const Frame = struct {
     pub fn data(self: *@This(), offset_bytes: usize, comptime is_write: bool) DataIterator(is_write) {
         self.lock.lock();
 
-        if (offset_bytes >= self.pages.len * 0x1000) {
+        if (offset_bytes >= self.chunks.len * self.chunk_size.sizeBytes()) {
             return .{
                 .frame = self,
                 .offset_within_first = null,
-                .idx = @intCast(self.pages.len),
+                .idx = @intCast(self.chunks.len),
             };
         }
 
-        const first_byte = std.mem.alignBackward(usize, offset_bytes, 0x1000);
+        const first_byte = std.mem.alignBackward(usize, offset_bytes, self.chunk_size.sizeBytes());
         const offset_within_page: ?u32 = if (first_byte == offset_bytes)
             null
         else
@@ -229,7 +251,7 @@ pub const Frame = struct {
         return .{
             .frame = self,
             .offset_within_first = offset_within_page,
-            .idx = @intCast(first_byte / 0x1000),
+            .idx = @intCast(first_byte / self.chunk_size.sizeBytes()),
         };
     }
 
@@ -240,8 +262,7 @@ pub const Frame = struct {
     ) error{Retry}!u32 {
         if (self.is_transient) return Error.Retry;
 
-        std.debug.assert(idx < self.pages.len);
-        const page = self.pages[idx];
+        const page = self.chunks[idx];
 
         const readonly_zero_page_now = caps.readonly_zero_page.load(.monotonic);
         std.debug.assert(readonly_zero_page_now != 0);
@@ -269,7 +290,7 @@ pub const Frame = struct {
         dont_lock_if: ?*caps.Vmem,
         trap: *arch.TrapRegs,
         thread: *caps.Thread,
-    ) Error!u32 {
+    ) Error!addr.Phys {
         //     1.  lock `Frame`
         //     2.  copy all mappings that reference the old page to a temporary list
         //     3.  set `is_transient` flag
@@ -313,7 +334,7 @@ pub const Frame = struct {
         switch (result) {
             .reused => |page| {
                 @branchHint(.likely);
-                return page;
+                return addr.Phys.fromParts(.{ .page = page });
             },
             .is_transient => |cleanup| {
                 cleanup.run();
@@ -432,14 +453,13 @@ pub const Frame = struct {
             return .{ .is_transient = cleanup };
         }
 
-        std.debug.assert(idx < self.pages.len);
-        const page = &self.pages[idx];
+        const page = &self.chunks[idx];
 
         const is_uninit = page.* == 0;
 
         if (conf.NO_LAZY_REMAP) {
             if (is_uninit) {
-                const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
+                const alloc = pmem.allocChunk(self.chunk_size) orelse return error.OutOfMemory;
                 page.* = alloc.toParts().page;
             }
 
@@ -453,8 +473,8 @@ pub const Frame = struct {
             // save all old mappings that need to be updated
             // TODO: use a per-CPU arena allocator
 
-            const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-            errdefer pmem.deallocChunk(alloc, .@"4KiB");
+            const alloc = pmem.allocChunk(self.chunk_size) orelse return error.OutOfMemory;
+            errdefer pmem.deallocChunk(alloc, self.chunk_size);
             const old = try self.collectOldMappingsLocked();
 
             const new_page = alloc.toParts().page;
@@ -542,9 +562,12 @@ pub const TlbShootdown = struct {
 
     // TODO: PCID
     pub const Target = union(enum) {
-        individual: addr.Virt,
-        range: [2]addr.Virt,
-        whole: void,
+        // individual: addr.Virt,
+        range: struct {
+            start: addr.Virt,
+            n_4kib_pages: u32,
+        },
+        // whole: void,
     };
 
     pub fn init(
@@ -568,12 +591,14 @@ pub const TlbShootdown = struct {
     pub fn deinit(self: *@This()) ?*caps.Thread {
         // log.debug("TLB (partial) flush", .{});
         switch (self.target) {
-            .individual => |vaddr| arch.x86_64.flushTlbAddr(vaddr.raw),
+            // .individual => |vaddr| arch.x86_64.flushTlbAddr(vaddr.raw),
             .range => |vaddr_range| {
-                for (vaddr_range[0].raw..vaddr_range[1].raw) |vaddr|
-                    arch.x86_64.flushTlbAddr(vaddr);
+                // FIXME: this iterates over bytes instead of over pages
+                for (0..vaddr_range.n_4kib_pages) |i| {
+                    arch.x86_64.flushTlbAddr(vaddr_range.start.raw + i * 0x1000);
+                }
             },
-            .whole => arch.x86_64.flushTlb(),
+            // .whole => arch.x86_64.flushTlb(),
         }
 
         if (!self.refcnt.dec()) return null;
