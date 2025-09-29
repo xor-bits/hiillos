@@ -71,6 +71,8 @@ pub const Channel = struct {
         self.recv_count = 0;
         self.lock.unlock();
 
+        log.info("deinit channel", .{});
+
         // wake up all threads waiting to receive messages (BadHandle)
         while (self.recv_queue.pop(&self.lock)) |listener| {
             listener.exec_lock.lock();
@@ -101,6 +103,7 @@ pub const Channel = struct {
         self.lock.unlock();
 
         if (was_last_sender) return false;
+        log.info("deinit channel", .{});
 
         // wake up all threads waiting to receive messages (ChannelClosed)
         while (self.recv_queue.pop(&self.lock)) |listener| {
@@ -529,6 +532,12 @@ pub const Reply = struct {
         Channel.replyToSender(thread, msg, sender);
 
         sender.popFinishUnlocked(.{}) catch {
+            log.debug("{} {} prev {} {}", .{
+                sender.status,
+                sender.waiting_cause,
+                sender.prev_status,
+                sender.prev_waiting_cause,
+            });
             // the reply target stopped, its fine
             sender.deinit();
             return;

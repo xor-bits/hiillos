@@ -197,11 +197,22 @@ const ConnectionContext = struct {
     pub const Request = gui.WmProtocol.Request;
 };
 
-fn clientConnectionThreadMain(rx: caps.Receiver) !void {
+fn clientConnectionThreadMain(rx: caps.Receiver) void {
+    var conn: Connection = .{};
     abi.lpc.daemon(DisplayContext{
         .recv = rx,
-        .conn = .{},
+        .conn = &conn,
     });
+
+    system_lock.lock();
+    defer system_lock.unlock();
+
+    // TODO: multi doubly linked list
+    // TODO: remove windows
+    // var it = system.windows_map.iterator();
+    // while (it.next()) |window| {
+    //     if (window.value_ptr.conn != &conn) continue;
+    // }
 }
 
 fn createWindowRequest(
@@ -279,7 +290,7 @@ fn damage(
 
 const DisplayContext = struct {
     recv: caps.Receiver,
-    conn: Connection,
+    conn: *Connection,
 
     pub const routes = .{
         createWindowRequest,

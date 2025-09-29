@@ -119,7 +119,7 @@ fn handle_syscall(
                 var lines = std.mem.splitAny(u8, @volatileCast(chunk[0..limit]), "\n\r");
                 while (lines.next()) |line| {
                     if (line.len == 0) continue;
-                    log.info("{s}", .{line});
+                    log.info("{*} {s}", .{ thread, line });
                 }
 
                 if (len == 0) break;

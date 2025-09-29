@@ -54,9 +54,7 @@ pub const Process = struct {
         if (conf.LOG_OBJ_STATS)
             caps.decCount(.process);
 
-        for (self.caps.items) |*cap_slot| {
-            cap_slot.deinit();
-        }
+        self.closeAllCaps();
 
         self.caps.deinit(caps.slab_allocator.allocator());
         self.vmem.deinit();
@@ -70,6 +68,15 @@ pub const Process = struct {
 
         self.refcnt.inc();
         return self;
+    }
+
+    fn closeAllCaps(
+        self: *@This(),
+    ) void {
+        for (self.caps.items) |*cap_slot| {
+            cap_slot.deinit();
+        }
+        self.caps.clearRetainingCapacity();
     }
 
     pub fn start(
@@ -103,6 +110,18 @@ pub const Process = struct {
 
         self.status = .dead;
         self.exit_code = exit_code;
+        self.closeAllCaps();
+
+        var it = self.active_threads.iterator();
+        while (it.next()) |active_thread| {
+            active_thread.lock.lock();
+            defer active_thread.lock.unlock();
+
+            active_thread.prev_status = active_thread.status;
+            active_thread.status = .exiting;
+            active_thread.exit_code = exit_code;
+            log.err("active thread {*} exiting", .{active_thread});
+        }
 
         // TODO: exit all threads
     }
