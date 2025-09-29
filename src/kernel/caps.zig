@@ -98,7 +98,7 @@ pub const CapabilitySlot = packed struct {
     }
 
     pub fn deinit(self: @This()) void {
-        if (self.get()) |cap| {
+        if (self.getBorrow()) |cap| {
             cap.deinit();
         }
     }
