@@ -590,9 +590,8 @@ pub const Thread = struct {
 
         while (conf.DEBUG_UNHANDLED_FAULT) {}
 
-        // TODO: sigsegv
-
         proc.switchFrom(trap, self);
+        proc.switchNow(trap);
     }
 };
 

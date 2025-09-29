@@ -965,6 +965,7 @@ pub const Idt = extern struct {
 
                 if (!pfec.user_mode or cpuLocal().current_thread == null) std.debug.panic(
                     \\unhandled page fault 0x{x}
+                    \\ - thread: {*}
                     \\ - user: {any}
                     \\ - caused by write: {any}
                     \\ - instruction fetch: {any}
@@ -975,6 +976,7 @@ pub const Idt = extern struct {
                     \\{}
                 , .{
                     target_addr,
+                    cpuLocal().current_thread,
                     pfec.user_mode,
                     pfec.caused_by_write,
                     pfec.instruction_fetch,
