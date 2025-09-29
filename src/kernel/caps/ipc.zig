@@ -64,8 +64,6 @@ pub const Channel = struct {
 
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitRecv(self: *@This()) bool {
-        log.info("deinit recv", .{});
-
         self.lock.lock();
         std.debug.assert(self.recv_count == 1);
         self.recv_count = 0;
@@ -92,8 +90,6 @@ pub const Channel = struct {
 
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitSend(self: *@This()) bool {
-        log.info("deinit send", .{});
-
         self.lock.lock();
         std.debug.assert(self.send_count != 0);
         self.send_count -= 1;
