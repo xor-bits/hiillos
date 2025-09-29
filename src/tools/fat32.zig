@@ -21,7 +21,8 @@ pub fn writePartition(
     );
     defer tree.deinit(alloc);
 
-    info.total_clusters = @max(tree.clustersNeeded(), 65525);
+    const unusable_clusters = 2;
+    info.total_clusters = @max(tree.clustersNeeded() + unusable_clusters, 65525);
     // std.debug.print("{} clusters\n", .{info.total_clusters});
 
     // calculate how big the FATs can be,
@@ -45,7 +46,7 @@ pub fn writePartition(
     });
     std.debug.assert(ceilMultipleOf(fat_region_sectors, fats) == fat_region_sectors);
     info.fat_table_sectors = @divExact(fat_region_sectors, fats);
-    info.fat_table_len = info.fat_table_sectors * sector_size / @sizeOf(u32);
+    info.fat_table_len = @divExact(info.fat_table_sectors * sector_size, @sizeOf(u32));
 
     var sector_alloc: Bump = .{};
     info.boot_record_sector = sector_alloc.alloc(1);
@@ -61,7 +62,7 @@ pub fn writePartition(
     info.total_sectors = info.data_region_sector + data_region_sectors;
 
     var cluster_alloc: Bump = .{};
-    _ = cluster_alloc.alloc(2);
+    _ = cluster_alloc.alloc(unusable_clusters);
     for (tree.dirs.items) |*dir| {
         dir.cluster = cluster_alloc.alloc(1);
     }
