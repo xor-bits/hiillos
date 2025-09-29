@@ -115,28 +115,48 @@ test "ipc late cancel" {
     }
 }
 
+test "channel other end close" {
+    const rx, const _tx = try caps.channel();
+    defer rx.close();
+
+    abi.thread.spawn(struct {
+        fn f(tx: caps.Sender) !void {
+            tx.close();
+        }
+    }.f, .{_tx}) catch |e| {
+        _tx.close();
+        return e;
+    };
+
+    try std.testing.expectError(
+        Error.ChannelClosed,
+        rx.recv(),
+    );
+}
+
+test "channel same end close" {
+    const _rx, const _tx = try caps.channel();
+    defer _rx.close();
+    defer _tx.close();
+
+    try abi.thread.spawn(struct {
+        fn f(rx: caps.Receiver, tx: caps.Sender) !void {
+            _ = try tx.call(.{});
+            rx.close();
+        }
+    }.f, .{ _rx, _tx });
+
+    _ = try _rx.recv();
+
+    try std.testing.expectError(
+        Error.BadHandle,
+        _rx.replyRecv(.{}),
+    );
+}
+
 pub fn main() !void {
     try abi.caps.init();
     log.info("I am root", .{});
-
-    // const thread = try caps.Thread.create(caps.Process.self);
-    // var running: std.atomic.Value(bool) = .init(false);
-    // try abi.thread.spawnOptions(struct {
-    //     var lock = abi.lock.DebugLock{};
-    //     fn f(running_p: *std.atomic.Value(bool)) !void {
-    //         while (true) {
-    //             // making sure no other threads spawn out of nowhere
-    //             lock.lock();
-    //             defer lock.unlock();
-    //             running_p.store(true, .release);
-    //         }
-    //     }
-    // }.f, .{&running}, .{ .thread = thread });
-
-    // while (true) {
-    //     try thread.stop();
-    //     try thread.start();
-    // }
 
     try initfsd.init();
 

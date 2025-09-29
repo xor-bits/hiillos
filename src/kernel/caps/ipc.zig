@@ -92,14 +92,15 @@ pub const Channel = struct {
 
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitSend(self: *@This()) bool {
-        self.lock.lock();
-        defer self.lock.unlock();
-
         log.info("deinit send", .{});
 
+        self.lock.lock();
         std.debug.assert(self.send_count != 0);
         self.send_count -= 1;
-        if (self.send_count != 0) return false;
+        const was_last_sender = self.send_count != 0;
+        self.lock.unlock();
+
+        if (was_last_sender) return false;
 
         // wake up all threads waiting to receive messages (ChannelClosed)
         while (self.recv_queue.pop(&self.lock)) |listener| {
