@@ -53,6 +53,11 @@ pub export var import_ps2_status_port = abi.loader.Resource.new(.{
     .note = 0x64,
 });
 
+pub export var import_hpet = abi.loader.Resource.new(.{
+    .name = "hiillos.hpet.ipc",
+    .ty = .sender,
+});
+
 //
 
 pub fn main() !void {
