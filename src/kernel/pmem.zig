@@ -65,18 +65,11 @@ pub fn printInfo() void {
         overhead += level.value.bitmap.len * @sizeOf(u64);
     }
 
-    log.info("usable memory: {0any}B ({0any:.1024}B)", .{
-        abi.util.NumberPrefix(usize, .binary).new(usable_memory),
-    });
-    log.info("bootloader (reclaimable) overhead: {any}B", .{
-        abi.util.NumberPrefix(usize, .binary).new(reclaimable),
-    });
-    log.info("page allocator overhead: {any}B", .{
-        abi.util.NumberPrefix(usize, .binary).new(overhead),
-    });
-    log.info("kernel code overhead: {any}B", .{
-        abi.util.NumberPrefix(usize, .binary).new(kernel_usage),
-    });
+    // std.Io.Writer.print;
+    log.info("usable memory: {0Bi:.4}", .{usable_memory});
+    log.info("bootloader (reclaimable) overhead: {Bi:.4}", .{reclaimable});
+    log.info("page allocator overhead: {Bi:.4}", .{overhead});
+    log.info("kernel code overhead: {Bi:.4}", .{kernel_usage});
 }
 
 pub fn printBits(comptime print: bool) usize {
@@ -93,17 +86,19 @@ pub fn printBits(comptime print: bool) usize {
         }
         total_unused += unused * level.key.sizeBytes();
 
-        if (print)
-            log.info("free {}B chunks: {}", .{
-                abi.util.NumberPrefix(usize, .binary).new(level.key.sizeBytes()),
+        if (print) {
+            log.info("free {Bi:.0} chunks: {}", .{
+                level.key.sizeBytes(),
                 unused,
             });
+        }
     }
 
-    if (print)
-        log.info("total free: {}B", .{
-            abi.util.NumberPrefix(usize, .binary).new(total_unused),
+    if (print) {
+        log.info("total free: {Bi:.0}B", .{
+            total_unused,
         });
+    }
 
     return total_unused;
 }

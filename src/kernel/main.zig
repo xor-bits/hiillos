@@ -155,6 +155,7 @@ pub fn main() noreturn {
     pmem.init() catch |err| {
         std.debug.panic("failed to initialize PMM: {}", .{err});
     };
+    pmem.printInfo();
 
     all_cpu_locals = pmem.page_allocator.alloc(
         std.atomic.Value(?*CpuLocalStorage),
