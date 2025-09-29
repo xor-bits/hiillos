@@ -463,6 +463,7 @@ pub fn aabbIntersect(
 
 //
 
+// TODO: std.DoublyLinkedList is now a suitable replacement
 pub fn Queue(
     comptime T: type,
     comptime node_field: []const u8,
@@ -512,6 +513,10 @@ pub fn Queue(
                 self.tail = second_last;
             }
 
+            if (abi.conf.IS_DEBUG) {
+                @field(head, node_field) = .{};
+            }
+
             return tail;
         }
 
@@ -528,11 +533,17 @@ pub fn Queue(
                 self.head = second;
             }
 
+            if (abi.conf.IS_DEBUG) {
+                @field(head, node_field) = .{};
+            }
+
             return head;
         }
 
         pub fn remove(self: *@This(), node: *T) void {
-            defer @field(node, node_field) = .{};
+            defer if (abi.conf.IS_DEBUG) {
+                @field(node, node_field) = .{};
+            };
 
             const head = self.head.?;
             const tail = self.tail.?;
