@@ -586,7 +586,7 @@ pub const Framebuffer = struct {
 
     pub fn init(size: Size) !@This() {
         const shmem_info = try calculateFrameSize(size);
-        const shmem = try caps.Frame.create(shmem_info.bytes);
+        const shmem = try caps.Frame.create(shmem_info.bytes, .{});
 
         return .{
             .shmem = shmem,

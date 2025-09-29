@@ -109,7 +109,7 @@ fn framebufferSplash(
     const height = framebuffer_info.height;
     const pitch = framebuffer_info.pitch / 4;
 
-    const backbuffer_frame = try caps.Frame.create(@as(usize, 4) * FbInfo.width * FbInfo.height);
+    const backbuffer_frame = try caps.Frame.create(@as(usize, 4) * FbInfo.width * FbInfo.height, .{});
     defer backbuffer_frame.close();
 
     const backbuffer_addr = try vmem.map(

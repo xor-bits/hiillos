@@ -164,7 +164,7 @@ pub const Path = union(enum(u8)) {
             std.mem.copyForwards(u8, &short, s);
             return .{ .short = short };
         } else {
-            const frame = try caps.Frame.create(s.len);
+            const frame = try caps.Frame.create(s.len, .{});
             try frame.write(0, s);
             return .{ .long = .{
                 .frame = frame,

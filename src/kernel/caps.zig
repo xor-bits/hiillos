@@ -306,8 +306,8 @@ test "new VmemObject and FrameObject" {
 test "consecutive maps" {
     const vmem = try Vmem.init();
 
-    const frame0 = try Frame.init(0x10000);
-    const frame1 = try Frame.init(0x10000);
+    const frame0 = try Frame.init(0x10000, .{});
+    const frame1 = try Frame.init(0x10000, .{});
 
     _ = try vmem.map(
         frame0.clone(),

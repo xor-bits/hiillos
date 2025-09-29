@@ -208,7 +208,7 @@ pub const Vmem = struct {
         {
             frame.lock.lock();
             defer frame.lock.unlock();
-            if (pages + frame_first_page > frame.pages.len)
+            if (pages + frame_first_page > frame.chunks.len * frame.chunk_size.sizePages())
                 return Error.OutOfBounds;
         }
 
@@ -500,8 +500,8 @@ pub const Vmem = struct {
         const shootdown = try caps.TlbShootdown.init(
             .{ .unmap = thread },
             .{ .range = .{
-                vaddr,
-                addr.Virt.fromInt(vaddr.raw + pages * 0x1000),
+                .start = vaddr,
+                .n_4kib_pages = pages,
             } },
         );
         thread.lock.lock();
@@ -567,6 +567,7 @@ pub const Vmem = struct {
             return;
 
         const hal_vmem = self.halPageTable();
+        const page_size = frame.chunk_size.sizeBytes();
 
         for (self.mappings.items) |mapping| {
             if (mapping.frame != frame) continue;
@@ -579,12 +580,13 @@ pub const Vmem = struct {
             ) catch continue;
             if (mapping_idx >= mapping.pages) continue;
 
-            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + 0x1000 * mapping_idx);
+            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + page_size * mapping_idx);
 
             try refreshPageAndTlbShootdown(
                 frame,
                 hal_vmem,
                 vaddr,
+                page_size,
                 ipi_bitmap,
             );
         }
@@ -596,6 +598,7 @@ pub const Vmem = struct {
         frame: *caps.Frame,
         hal_vmem: *volatile caps.HalVmem,
         vaddr: addr.Virt,
+        page_size: u32,
         ipi_bitmap: *u256,
     ) !void {
         hal_vmem.canUnmapFrame(vaddr) catch |err| {
@@ -612,7 +615,10 @@ pub const Vmem = struct {
 
         const shootdown = try caps.TlbShootdown.init(
             .{ .transient = frame.clone() },
-            .{ .individual = vaddr },
+            .{ .range = .{
+                .start = vaddr,
+                .n_4kib_pages = page_size / 0x1000,
+            } },
         );
         defer _ = shootdown.deinit();
 
@@ -685,9 +691,17 @@ pub const Vmem = struct {
 
         // check if it is lazy mapping
 
-        const page_offs: u32 = @intCast((vaddr.raw - mapping.getVaddr().raw) / 0x1000);
+        const page_offs: u32 = @intCast((vaddr.raw - mapping.getVaddr().raw) / mapping.frame.chunk_size.sizeBytes());
         std.debug.assert(page_offs < mapping.pages);
         std.debug.assert(self.cr3 != 0);
+
+        if (mapping.frame.chunk_size.sizeBytes() != 0x1000) {
+            log.info("pf 0x{x:016}", .{vaddr.raw});
+            log.info("frame: {*}", .{mapping.frame});
+            log.info("mapping: 0x{x:016}", .{mapping.getVaddr().raw});
+            log.info("idx: {}", .{page_offs});
+            log.info("size: {}", .{mapping.frame.chunk_size.sizeBytes()});
+        }
 
         const hal_vmem = self.halPageTable();
         const entry = (try hal_vmem.entryFrame(vaddr)).*;

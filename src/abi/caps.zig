@@ -322,13 +322,13 @@ pub const Frame = extern struct {
         .transfer = true,
     };
 
-    pub fn create(size_bytes: usize) sys.Error!@This() {
-        const cap = try sys.frameCreate(size_bytes);
+    pub fn create(size_bytes: usize, flags: sys.FrameCreateFlags) sys.Error!@This() {
+        const cap = try sys.frameCreate(size_bytes, flags);
         return .{ .cap = cap };
     }
 
     pub fn init(bytes: []const u8) sys.Error!@This() {
-        const frame = try create(bytes.len);
+        const frame = try create(bytes.len, .{});
         try frame.write(0, bytes);
         return frame;
     }

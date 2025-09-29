@@ -335,6 +335,20 @@ pub const MapFlags = packed struct {
     }
 };
 
+pub const FrameCreateFlags = packed struct {
+    /// lazy allocation size hint, also enables the use of huge pages
+    page_size_hint: abi.ChunkSize = .@"4KiB",
+    _: u59 = 0,
+
+    pub fn encode(self: @This()) u64 {
+        return @bitCast(self);
+    }
+
+    pub fn decode(i: u64) @This() {
+        return @bitCast(i);
+    }
+};
+
 /// page fault access cause
 pub const FaultCause = enum(u8) {
     read,
@@ -672,8 +686,8 @@ pub fn kernelPanic() noreturn {
     unreachable;
 }
 
-pub fn frameCreate(size_bytes: usize) Error!u32 {
-    return @intCast(try syscall(.frame_create, .{size_bytes}, .{}));
+pub fn frameCreate(size_bytes: usize, flags: FrameCreateFlags) Error!u32 {
+    return @intCast(try syscall(.frame_create, .{ size_bytes, flags.encode() }, .{}));
 }
 
 pub fn frameGetSize(frame: u32) Error!usize {

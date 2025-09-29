@@ -53,7 +53,7 @@ pub fn Ring(comptime T: type) type {
 
         pub fn new(capacity: usize) !Self {
             const size_bytes = sizeOf(capacity);
-            const frame = try caps.Frame.create(size_bytes);
+            const frame = try caps.Frame.create(size_bytes, .{});
             errdefer frame.close();
 
             return try fromShared(.{

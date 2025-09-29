@@ -56,7 +56,9 @@ fn vmmVectorFree(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {}
 
 fn vmmVectorGrow(top: *usize, n_pages: usize) !void {
     for (0..n_pages) |_| {
-        const frame = try caps.Frame.create(0x10000);
+        const frame = try caps.Frame.create(0x10000, .{
+            .page_size_hint = .@"64KiB",
+        });
         defer frame.close();
         _ = try caps.ROOT_SELF_VMEM.map(
             frame,
@@ -150,7 +152,7 @@ fn openFileHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, c
 fn openFileHandlerInner(inode: u128) Error!caps.Frame {
     const file: []const u8 = readFile(@truncate(inode));
 
-    const frame = try caps.Frame.create(file.len);
+    const frame = try caps.Frame.create(file.len, .{});
     errdefer frame.close();
 
     try frame.write(0, file);
@@ -210,7 +212,7 @@ fn openDirHandlerInner(path: []const u8) Error!struct { caps.Frame, usize } {
     const text_size = size;
     size += @sizeOf(abi.Stat) * entries;
 
-    const frame = caps.Frame.create(size) catch unreachable;
+    const frame = caps.Frame.create(size, .{}) catch unreachable;
 
     const tmp_addr = caps.ROOT_SELF_VMEM.map(
         frame,

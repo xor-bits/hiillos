@@ -34,6 +34,10 @@ pub fn print(
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @branchHint(.cold);
 
+    std.log.scoped(.logs).err("kernel panic: {s}", .{
+        msg,
+    });
+
     // kill other CPUs too
     for (0..255) |i| {
         apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_PANIC);

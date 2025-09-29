@@ -46,7 +46,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
     };
 
     // map a stack
-    const stack = try caps.Frame.create(opts.stack_size);
+    const stack = try caps.Frame.create(opts.stack_size, .{});
     defer stack.close();
     var stack_ptr = try vmem.map(
         stack,

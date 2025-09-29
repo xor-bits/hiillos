@@ -23,7 +23,7 @@ pub fn bootInfoInstallFramebuffer(boot_info: *caps.Frame, thread: *caps.Thread) 
     const fb_size: usize = first_fb.height * first_fb.pitch * (std.math.divCeil(usize, first_fb.bpp, 8) catch unreachable);
 
     const fb_obj = try caps.Frame.initPhysical(fb_paddr, fb_size);
-    const fb_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame));
+    const fb_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame), .{});
 
     try fb_info_obj.initialWrite(0, std.mem.asBytes(&abi.FramebufferInfoFrame{
         .width = first_fb.width,

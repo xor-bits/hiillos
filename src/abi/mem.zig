@@ -24,7 +24,7 @@ const ServerPageAllocator = struct {
 
         const size = std.mem.alignForward(usize, len, 0x1000);
 
-        const frame = abi.caps.Frame.create(size) catch return null;
+        const frame = abi.caps.Frame.create(size, .{}) catch return null;
         defer frame.close();
 
         const addr = vmem.map(

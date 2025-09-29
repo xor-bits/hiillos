@@ -618,7 +618,7 @@ export fn zigMain() noreturn {
 fn mapStack() !usize {
     log.info("mapping stack", .{});
 
-    const frame = try caps.Frame.create(1024 * 256);
+    const frame = try caps.Frame.create(1024 * 256, .{});
     const stack_bottom = try caps.ROOT_SELF_VMEM.map(
         frame,
         0,

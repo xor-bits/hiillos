@@ -34,7 +34,7 @@ pub fn exec(a: args.Args) !void {
     init_thread.trap.rip = abi.ROOT_EXE;
 
     log.info("creating root boot_info", .{});
-    const boot_info = try caps.Frame.init(@sizeOf(abi.BootInfo));
+    const boot_info = try caps.Frame.init(@sizeOf(abi.BootInfo), .{});
 
     log.info("creating root x86_ioport_allocator", .{});
     const x86_ioport_allocator = try caps.X86IoPortAllocator.init();
@@ -94,7 +94,7 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
     try acpi.bootInfoInstallMcfg(boot_info, thread);
 
     log.info("creating root frame", .{});
-    const root_frame = try caps.Frame.init(data_len);
+    const root_frame = try caps.Frame.init(data_len, .{});
 
     var i: usize = 0;
     log.info("copying root data", .{});
@@ -114,7 +114,7 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
         root_frame,
         0,
         addr.Virt.fromInt(abi.ROOT_EXE),
-        @intCast(root_frame.pages.len),
+        @intCast(root_frame.chunks.len),
         .{
             .fixed = true,
             .write = true,
