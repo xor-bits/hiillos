@@ -154,6 +154,30 @@ test "channel same end close" {
     );
 }
 
+test "closing a process closes its handles" {
+    const rx, const tx = try caps.channel();
+    var tx_owned = true;
+    defer rx.close();
+    defer if (tx_owned) tx.close();
+
+    {
+        const new_proc = try caps.Process.create(caps.Vmem.self);
+        defer {
+            new_proc.close();
+            log.info("done", .{});
+        }
+
+        _ = try new_proc.giveHandle(tx);
+        tx_owned = false;
+    }
+
+    log.info("recv from closed", .{});
+    try std.testing.expectError(
+        Error.ChannelClosed,
+        rx.recv(),
+    );
+}
+
 pub fn main() !void {
     try abi.caps.init();
     log.info("I am root", .{});
