@@ -1,21 +1,17 @@
 const std = @import("std");
-const limine = @import("limine");
+
+const boot = @import("boot.zig");
 
 const log = std.log.scoped(.args);
 
 //
 
-pub export var kernel_file: limine.KernelFileRequest = .{};
-pub export var modules: limine.ModuleRequest = .{};
-
-//
-
 pub fn parse() !Args {
-    const kernel_file_response: *limine.KernelFileResponse = kernel_file.response orelse {
+    const kernel_file_response = boot.kernel_file.response orelse {
         return error.NoKernelFile;
     };
 
-    const cmdline = std.mem.sliceTo(kernel_file_response.kernel_file.cmdline, 0);
+    const cmdline = std.mem.sliceTo(kernel_file_response.executable_file.cmdline(), 0);
     log.info("cmdline: {s}", .{cmdline});
 
     var args: Args = .{};
@@ -35,7 +31,7 @@ pub fn parse() !Args {
         }
     }
 
-    const modules_response: *limine.ModuleResponse = modules.response orelse {
+    const modules_response = boot.modules.response orelse {
         return error.MissingModules;
     };
 

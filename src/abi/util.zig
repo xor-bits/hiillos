@@ -698,6 +698,8 @@ test "Queue.stress_test" {
 /// into a Client and Server based on the hiillos IPC system
 /// look at `VmProtocol` for an example
 pub fn Protocol(comptime spec: type) type {
+    @setEvalBranchQuota(100_000);
+
     const info = comptime @typeInfo(spec);
     if (info != .@"struct")
         @compileError("Protocol input has to be a struct");

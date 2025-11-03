@@ -8,6 +8,12 @@ const caps = abi.caps;
 const log = std.log.scoped(.tty);
 const Error = abi.sys.Error;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub export var manifest = abi.loader.Manifest.new(.{
@@ -111,9 +117,9 @@ pub fn main() !void {
         .cap = import_pm.handle,
     });
 
-    var stdout_reader = abi.escape.parser(
-        std.io.bufferedReader(stdout.reader()),
-    );
+    var buffer: [0x2000]u8 = undefined;
+    var stdout_reader_raw = stdout.reader(&buffer);
+    var stdout_reader = abi.escape.Parser.init(&stdout_reader_raw.interface);
 
     while (try stdout_reader.next()) |_token| {
         const token: abi.escape.Control = _token;

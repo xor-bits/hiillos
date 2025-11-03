@@ -122,7 +122,5 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
         },
     );
 
-    arch.flushTlb();
-
     log.info("root mapped and copied", .{});
 }

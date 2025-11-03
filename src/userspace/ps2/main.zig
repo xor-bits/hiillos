@@ -10,6 +10,12 @@ const caps = abi.caps;
 
 pub const log_level = .info;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 const log = std.log.scoped(.ps2);
 const Error = abi.sys.Error;
 const KeyEvent = abi.input.KeyEvent;
@@ -79,8 +85,8 @@ pub fn main() !void {
 }
 
 var waiting_lock: abi.thread.Mutex = .{};
-var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .init(abi.mem.slab_allocator);
-var event_queue: std.fifo.LinearFifo(abi.input.Event, .Dynamic) = .init(abi.mem.slab_allocator);
+var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .{};
+var event_queue: abi.Deque(abi.input.Event) = .{};
 
 pub fn pushEvent(ev: abi.input.Event) void {
     waiting_lock.lock();
@@ -96,7 +102,7 @@ pub fn pushEvent(ev: abi.input.Event) void {
         return;
     }
 
-    event_queue.writeItem(ev) catch |err| {
+    event_queue.pushBack(abi.mem.slab_allocator, ev) catch |err| {
         log.warn("input event dropped: {}", .{err});
     };
 }
@@ -105,12 +111,12 @@ pub fn popEvent(reply: *abi.lpc.Reply(abi.Ps2Protocol.Next.Response)) void {
     waiting_lock.lock();
     defer waiting_lock.unlock();
 
-    if (event_queue.readItem()) |ev| {
+    if (event_queue.popFront()) |ev| {
         reply.send(.{ .ok = ev });
         return;
     }
 
-    const new = waiting.addOne() catch |err| {
+    const new = waiting.addOne(abi.mem.slab_allocator) catch |err| {
         log.warn("input waiter dropped: {}", .{err});
         reply.send(.{ .err = .out_of_memory });
         return;

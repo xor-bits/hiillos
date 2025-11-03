@@ -5,6 +5,12 @@ const gui = @import("gui");
 const caps = abi.caps;
 const log = std.log.scoped(.calc);
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 const background_col = gui.Colour.hex("#000000") catch unreachable;
 const button_col = gui.Colour.hex("#353535") catch unreachable;
 const text_col = gui.Colour.hex("#ffffff") catch unreachable;
@@ -132,9 +138,9 @@ fn solve(calc: *Calculator) void {
     var tokens = Tokenizer{ .input = input };
 
     if (solveRoot(&tokens)) |ok| {
-        std.debug.assert(calc.text.len >= std.fmt.format_float.min_buffer_size);
+        comptime std.debug.assert(calc.text.len >= std.fmt.float.bufferSize(.decimal, f64));
 
-        const result = std.fmt.formatFloat(calc.text[0..], ok, .{
+        const result = std.fmt.float.render(calc.text[0..], ok, .{
             .mode = .decimal,
         }) catch unreachable;
         calc.text_len = @intCast(result.len);
@@ -149,7 +155,7 @@ const Calculator = struct {
     cursor: gui.Pos = .{ 0, 0 },
 
     text_len: u8 = 0,
-    text: [0xff]u8 = undefined,
+    text: [0x1ff]u8 = undefined,
 
     fb: gui.MappedFramebuffer,
 };

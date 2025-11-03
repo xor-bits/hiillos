@@ -109,9 +109,9 @@ pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame
     }
 
     var derived = try caps.Frame.create(size);
-    var derived_stream = derived.stream();
-    var derived_buf_stream = std.io.bufferedWriter(derived_stream.writer());
-    const derived_writer = derived_buf_stream.writer();
+    var buffer: [0x1000]u8 = undefined;
+    var derived_writer_raw = derived.writer(&buffer, size);
+    const derived_writer = &derived_writer_raw.interface;
 
     it = envs();
     while (it.next()) |env_var| {
@@ -134,7 +134,7 @@ pub fn deriveEnvMap(remove: []const []const u8, insert: []const Var) !caps.Frame
         });
     }
 
-    try derived_buf_stream.flush();
+    try derived_writer.flush();
     return derived;
 }
 

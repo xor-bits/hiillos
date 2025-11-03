@@ -9,6 +9,12 @@ const log = std.log.scoped(.vfs);
 const Error = abi.sys.Error;
 pub const log_level = .info;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub export var manifest = abi.loader.Manifest.new(.{
@@ -192,22 +198,23 @@ fn openDirInner(
 
     const frame = try caps.Frame.create(frame_size);
     errdefer frame.close();
+
+    var buffer: [0x1000]u8 = undefined;
+    var frame_writer = frame.writer(&buffer, frame_size);
+    const writer = &frame_writer.interface;
     frame_size = 0;
 
-    var frame_stream = frame.stream();
-    var frame_buffered_stream = std.io.bufferedWriter(frame_stream.writer());
-    var frame_writer = frame_buffered_stream.writer();
     it = dir.entries.iterator();
     while (it.next()) |entry| {
         const header = abi.fs.DirEntRawNoName{
             .entry_size = @intCast(@sizeOf(abi.fs.DirEntRawNoName) + entry.key_ptr.len + 1),
             .type = entry.value_ptr.entryType(),
         };
-        try frame_writer.writeAll(std.mem.asBytes(&header));
-        try frame_writer.writeAll(entry.key_ptr.*);
-        try frame_writer.writeAll(&.{0});
+        writer.writeAll(std.mem.asBytes(&header)) catch return Error.Internal;
+        writer.writeAll(entry.key_ptr.*) catch return Error.Internal;
+        writer.writeByte(0) catch return Error.Internal;
     }
-    try frame_buffered_stream.flush();
+    writer.flush() catch return Error.Internal;
 
     return .{
         .data = frame,
@@ -527,7 +534,7 @@ fn getSocket(
 }
 
 fn printTreeRec(dir: *DirNode) !void {
-    log.info("\n{}", .{
+    log.info("\n{f}", .{
         PrintTreeRec{ .dir = dir, .depth = 0 },
     });
 }
@@ -538,28 +545,26 @@ const PrintTreeRec = struct {
 
     pub fn format(
         self: @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
+        writer: *std.Io.Writer,
+    ) error{WriteFailed}!void {
         self.dir.cache_lock.lock();
         defer self.dir.cache_lock.unlock();
 
-        try self.dir.lazyLoadLocked();
+        self.dir.lazyLoadLocked() catch return error.WriteFailed;
 
         var it = self.dir.entries.iterator();
         while (it.next()) |entry| {
             for (0..self.depth) |_| {
-                try std.fmt.format(writer, "  ", .{});
+                try writer.print("  ", .{});
             }
 
-            try std.fmt.format(writer, "- '{s}': {s}\n", .{
+            try writer.print("- '{s}': {s}\n", .{
                 entry.key_ptr.*,
                 @tagName(entry.value_ptr.*),
             });
 
             switch (entry.value_ptr.*) {
-                .dir => |dir| try std.fmt.format(writer, "{}", .{
+                .dir => |dir| try writer.print("{f}", .{
                     PrintTreeRec{ .dir = dir, .depth = self.depth + 1 },
                 }),
                 else => {},

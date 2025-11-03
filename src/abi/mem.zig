@@ -127,14 +127,14 @@ pub const SlabAllocator = struct {
             // form a linked list out of the items
             // but keep one of them
             for (1..0x4000 / slab_size.sizeBytes() - 1) |item_idx| {
-                const prev = @as(*FreeList, @alignCast(@ptrCast(&chunk[item_idx * slab_size.sizeBytes()])));
-                const next = @as(*FreeList, @alignCast(@ptrCast(&chunk[(item_idx + 1) * slab_size.sizeBytes()])));
+                const prev = @as(*FreeList, @ptrCast(@alignCast(&chunk[item_idx * slab_size.sizeBytes()])));
+                const next = @as(*FreeList, @ptrCast(@alignCast(&chunk[(item_idx + 1) * slab_size.sizeBytes()])));
                 prev.next = next;
             }
 
-            const first = @as(*FreeList, @alignCast(@ptrCast(&chunk[0])));
-            const second = @as(*FreeList, @alignCast(@ptrCast(&chunk[1 * slab_size.sizeBytes()])));
-            const last = @as(*FreeList, @alignCast(@ptrCast(&chunk[(0x4000 / slab_size.sizeBytes() - 1) * slab_size.sizeBytes()])));
+            const first = @as(*FreeList, @ptrCast(@alignCast(&chunk[0])));
+            const second = @as(*FreeList, @ptrCast(@alignCast(&chunk[1 * slab_size.sizeBytes()])));
+            const last = @as(*FreeList, @ptrCast(@alignCast(&chunk[(0x4000 / slab_size.sizeBytes() - 1) * slab_size.sizeBytes()])));
 
             lock.lock();
             defer lock.unlock();
@@ -178,7 +178,7 @@ pub const SlabAllocator = struct {
             if (abi.conf.IS_DEBUG)
                 abi.util.fillVolatile(u8, mem.ptr[0..slab_size.sizeBytes()], 0xFA);
 
-            const new_head: *FreeList = @alignCast(@ptrCast(mem.ptr));
+            const new_head: *FreeList = @ptrCast(@alignCast(mem.ptr));
 
             lock.lock();
             defer lock.unlock();

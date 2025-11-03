@@ -2,36 +2,34 @@ const std = @import("std");
 const abi = @import("abi");
 
 const caps = abi.caps;
+const Ctx = @import("main.zig").Ctx;
 
 //
 
-pub fn main(ctx: @import("main.zig").Ctx) !void {
-    const stdin = abi.io.stdin.reader();
-    const stdout = abi.io.stdout.writer();
-
+pub fn main(ctx: Ctx) !void {
     const path = abi.process.env("PATH") orelse "initfs:///sbin/";
 
     const flag = ctx.args.next() orelse {
-        try runInteractive(stdin, stdout, path);
+        try runInteractive(ctx, path);
         return;
     };
 
     if (std.mem.eql(u8, flag, "-c")) {
-        const exit_code = try runLine(stdout, path, ctx.args.rest());
+        const exit_code = try runLine(ctx, path, ctx.args.rest());
         abi.process.exit(exit_code);
         return;
     }
 
     if (std.mem.eql(u8, flag, "--help")) {
-        try help();
+        try help(ctx);
         return;
     }
 
     if (flag.len != 0 and flag[0] == '-') {
-        try abi.io.stdout.writer().print("sh: {s}: invalid option\n", .{
+        try ctx.stderr.print("sh: {s}: invalid option\n", .{
             flag,
         });
-        try help();
+        try help(ctx);
         return;
     }
 
@@ -52,7 +50,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
     defer vmem.unmap(script_file_addr, script_file_len) catch unreachable;
 
     const script = @as([*]const u8, @ptrFromInt(script_file_addr))[0..script_file_len];
-    try runScript(stdout, path, script);
+    try runScript(ctx, path, script);
 }
 
 const Prompt = struct {
@@ -60,9 +58,7 @@ const Prompt = struct {
 
     pub fn format(
         self: @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         if (self.exit_code == 0) {
             try writer.print(
@@ -79,8 +75,7 @@ const Prompt = struct {
 };
 
 fn runInteractive(
-    stdin: abi.io.File.Reader,
-    stdout: abi.io.File.Writer,
+    ctx: Ctx,
     path: []const u8,
 ) !void {
     var command: [0x100]u8 = undefined;
@@ -88,18 +83,22 @@ fn runInteractive(
 
     var has_suggestions = false;
 
-    try stdout.print("{}", .{Prompt{}});
+    try ctx.stdout.print("{f}", .{Prompt{}});
 
     const programs, const names = try findAvailPrograms(abi.mem.slab_allocator, path);
     defer abi.mem.slab_allocator.free(programs);
     defer abi.mem.slab_allocator.free(names);
 
     while (true) {
-        const ch = try stdin.readSingle();
+        try ctx.stdout.flush();
+        const ch = ctx.stdin.takeByte() catch |err| switch (err) {
+            error.ReadFailed => return err,
+            error.EndOfStream => break,
+        };
 
         if (has_suggestions) {
             has_suggestions = false;
-            try stdout.print("{}{}{}{}", .{
+            try ctx.stdout.print("{f}{f}{f}{f}", .{
                 abi.escape.cursorPush(),
                 abi.escape.cursorNextLine(1),
                 abi.escape.eraseInDisplay(.cursor_to_end),
@@ -111,7 +110,7 @@ fn runInteractive(
             if (command_len == 0) continue;
             command_len -= 1;
             command[command_len] = ' ';
-            try stdout.print("{} {}", .{
+            try ctx.stdout.print("{f} {f}", .{
                 abi.escape.cursorLeft(1),
                 abi.escape.cursorLeft(1),
             });
@@ -121,7 +120,7 @@ fn runInteractive(
         if (ch == std.ascii.control_code.etx) { // ctrl+c
             if (command_len == 0) continue;
             command_len = 0;
-            try stdout.print("\n\n{}", .{
+            try ctx.stdout.print("\n\n{f}", .{
                 Prompt{},
             });
             continue;
@@ -131,15 +130,15 @@ fn runInteractive(
             var parts = std.mem.splitScalar(u8, command[0..command_len], ' ');
             const cmd_hint = parts.next().?;
 
-            try stdout.print("{}{}", .{
+            try ctx.stdout.print("{f}{f}", .{
                 abi.escape.cursorPush(),
                 abi.escape.cursorNextLine(1),
             });
             for (programs) |avail_program| {
                 if (!std.mem.startsWith(u8, avail_program, cmd_hint)) continue;
-                try stdout.print("{s} ", .{avail_program});
+                try ctx.stdout.print("{s} ", .{avail_program});
             }
-            try stdout.print("{}", .{
+            try ctx.stdout.print("{f}", .{
                 abi.escape.cursorPop(),
             });
             has_suggestions = true;
@@ -148,7 +147,7 @@ fn runInteractive(
                 std.mem.copyForwards(u8, command[0..], limited_autocomplete);
                 command_len = limited_autocomplete.len;
             }
-            try stdout.print("{}{}{}{s}", .{
+            try ctx.stdout.print("{f}{f}{f}{s}", .{
                 abi.escape.cursorNextLine(1),
                 abi.escape.cursorPrevLine(1),
                 Prompt{},
@@ -167,9 +166,10 @@ fn runInteractive(
 
         const raw_cli = command[0..command_len];
         command_len = 0;
-        try runScript(stdout, path, raw_cli);
+        try runScript(ctx, path, raw_cli);
 
-        try stdout.print("\n{}", .{Prompt{}});
+        try ctx.stdout.print("\n{f}", .{Prompt{}});
+        try ctx.stdout.flush();
     }
 }
 
@@ -239,18 +239,18 @@ fn findAvailPrograms(
 }
 
 fn runScript(
-    stdout: abi.io.File.Writer,
+    ctx: Ctx,
     path: []const u8,
     script: []const u8,
 ) !void {
     var lines = std.mem.splitScalar(u8, script, '\n');
     while (lines.next()) |line| {
-        _ = try runLine(stdout, path, line);
+        _ = try runLine(ctx, path, line);
     }
 }
 
 fn runLine(
-    stdout: abi.io.File.Writer,
+    ctx: Ctx,
     path: []const u8,
     raw_cli: []const u8,
 ) !usize {
@@ -263,7 +263,7 @@ fn runLine(
     const cmd = parts.next().?;
 
     const arg_map = createArgMap(path, cli) catch |err| {
-        try stdout.print("could not find command: {s} ({})\n", .{
+        try ctx.stdout.print("could not find command: {s} ({})\n", .{
             cmd, err,
         });
         return 1;
@@ -278,7 +278,7 @@ fn runLine(
     });
 
     const proc = result.asErrorUnion() catch |err| {
-        try stdout.print("unknown command: {s} ({})\n", .{
+        try ctx.stdout.print("unknown command: {s} ({})\n", .{
             cmd, err,
         });
         return 1;
@@ -294,9 +294,9 @@ fn createArgMap(
     const args = try caps.Frame.create(0x1000);
     errdefer args.close();
 
-    var args_stream = args.stream();
-    var args_buffered_stream = std.io.bufferedWriter(args_stream.writer());
-    var args_writer = args_buffered_stream.writer();
+    var buffer: [0x1000]u8 = undefined;
+    var args_writer_raw = args.writer(&buffer, 0x1000);
+    const args_writer = &args_writer_raw.interface;
 
     try args_writer.writeAll(path);
 
@@ -308,13 +308,12 @@ fn createArgMap(
         try args_writer.writeAll(&.{0});
     }
 
-    try args_buffered_stream.flush();
-
+    try args_writer.flush();
     return args;
 }
 
-fn help() !void {
-    try abi.io.stdout.writer().print(
+fn help(ctx: Ctx) !void {
+    try ctx.stdout.print(
         \\usage: sh [-c command]
         \\       sh script-file
         \\

@@ -8,6 +8,12 @@ const caps = abi.caps;
 const log = std.log.scoped(.pm);
 const Error = abi.sys.Error;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub export var manifest = abi.loader.Manifest.new(.{
@@ -132,9 +138,9 @@ const Context = struct {
 
 pub const System = struct {
     lock: abi.lock.Futex = .{},
-    processes: std.ArrayList(?Process) = .init(abi.mem.slab_allocator),
+    processes: std.ArrayList(?Process) = .{},
     // empty process ids into ↑
-    free_slots: std.fifo.LinearFifo(u32, .Dynamic) = .init(abi.mem.slab_allocator),
+    free_slots: abi.Deque(u32) = .{},
 
     pub fn exec(
         self: *System,
@@ -251,14 +257,14 @@ pub const System = struct {
     }
 
     fn allocPidLocked(self: *@This()) !u32 {
-        if (self.free_slots.readItem()) |pid| {
+        if (self.free_slots.popFront()) |pid| {
             return pid;
         } else {
             const pid = self.processes.items.len + 1;
             if (pid > std.math.maxInt(u32))
                 return error.TooManyActiveProcesses;
 
-            try self.processes.append(null);
+            try self.processes.append(abi.mem.slab_allocator, null);
             return @intCast(pid);
         }
     }
@@ -273,7 +279,7 @@ pub const System = struct {
     }
 
     fn freePidLocked(self: *@This(), pid: u32) !void {
-        try self.free_slots.writeItem(pid);
+        try self.free_slots.pushBack(abi.mem.slab_allocator, pid);
     }
 };
 

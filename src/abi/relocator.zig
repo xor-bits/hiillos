@@ -164,7 +164,7 @@ fn handleRel(
 
 fn bytesAsEntries(comptime Entry: type, raw: []const u8) ![]const Entry {
     if (raw.len % @sizeOf(Entry) != 0) return error.MalformedSection;
-    const ptr = @as([*]const Entry, @alignCast(@ptrCast(raw.ptr)));
+    const ptr = @as([*]const Entry, @ptrCast(@alignCast(raw.ptr)));
     return ptr[0 .. raw.len / @sizeOf(Entry)];
 }
 

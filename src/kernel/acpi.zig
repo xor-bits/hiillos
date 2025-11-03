@@ -1,18 +1,16 @@
 const abi = @import("abi");
 const std = @import("std");
-const limine = @import("limine");
 
 const addr = @import("addr.zig");
 const apic = @import("apic.zig");
 const arch = @import("arch.zig");
+const boot = @import("boot.zig");
 const caps = @import("caps.zig");
 const hpet = @import("hpet.zig");
 
 const log = std.log.scoped(.acpi);
 
 //
-
-pub export var rsdp_req: limine.RsdpRequest = .{};
 
 var maybe_mcfg: ?*const SdtHeader = null;
 
@@ -22,7 +20,7 @@ pub fn init() !void {
     if (arch.cpuId() == 0)
         log.info("init ACPI", .{});
 
-    const rsdp_resp: *limine.RsdpResponse = rsdp_req.response orelse {
+    const rsdp_resp = boot.rsdp.response orelse {
         return error.NoRsdp;
     };
 

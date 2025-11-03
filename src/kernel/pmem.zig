@@ -1,19 +1,15 @@
 const std = @import("std");
 const abi = @import("abi");
 const builtin = @import("builtin");
-const limine = @import("limine");
 
 const main = @import("main.zig");
+const boot = @import("boot.zig");
 const arch = @import("arch.zig");
 const addr = @import("addr.zig");
 
 const log = std.log.scoped(.pmem);
 const conf = abi.conf;
 const volat = abi.util.volat;
-
-//
-
-pub export var memory: limine.MemoryMapRequest = .{};
 
 //
 
@@ -35,7 +31,7 @@ pub const Page = [512]u64;
 //
 
 pub fn printInfo() void {
-    const memory_response: *limine.MemoryMapResponse = memory.response orelse {
+    const memory_response = boot.memory.response orelse {
         return;
     };
 
@@ -44,19 +40,18 @@ pub fn printInfo() void {
     var reclaimable: usize = 0;
     for (memory_response.entries()) |memory_map_entry| {
         const from = memory_map_entry.base;
-        const to = memory_map_entry.base + memory_map_entry.length;
-        const len = memory_map_entry.length;
+        const to = memory_map_entry.base + memory_map_entry.len;
+        const len = memory_map_entry.len;
 
-        if (memory_map_entry.kind == .kernel_and_modules) {
+        if (memory_map_entry.ty == .executable_and_modules) {
             kernel_usage += len;
-        } else if (memory_map_entry.kind == .usable) {
+        } else if (memory_map_entry.ty == .usable) {
             usable_memory += len;
-        } else if (memory_map_entry.kind == .bootloader_reclaimable) {
+        } else if (memory_map_entry.ty == .bootloader_reclaimable) {
             reclaimable += len;
         }
 
-        const ty = @tagName(memory_map_entry.kind);
-        log.info("{s:>22}: [ 0x{x:0>16}..0x{x:0>16} ]", .{ ty, from, to });
+        log.info("{t:>22}: [ 0x{x:0>16}..0x{x:0>16} ]", .{ memory_map_entry.ty, from, to });
     }
 
     var overhead: usize = 0;
@@ -272,7 +267,7 @@ pub fn init() !void {
 
     var usable_memory: usize = 0;
     var memory_top: usize = 0;
-    const memory_response: *limine.MemoryMapResponse = memory.response orelse {
+    const memory_response = boot.memory.response orelse {
         return error.NoMemoryResponse;
     };
 
@@ -280,16 +275,16 @@ pub fn init() !void {
         // const from = std.mem.alignBackward(usize, memory_map_entry.base, 1 << 12);
         // const to = std.mem.alignForward(usize, memory_map_entry.base + memory_map_entry.length, 1 << 12);
         // const len = to - from;
-        const to = memory_map_entry.base + memory_map_entry.length;
-        const len = memory_map_entry.length;
+        const to = memory_map_entry.base + memory_map_entry.len;
+        const len = memory_map_entry.len;
 
         // const ty = @tagName(memory_map_entry.kind);
         // log.info("{s:>22}: [ 0x{x:0>16}..0x{x:0>16} ]", .{ ty, from, to });
 
-        if (memory_map_entry.kind == .usable) {
+        if (memory_map_entry.ty == .usable) {
             usable_memory += len;
             memory_top = @max(to, memory_top);
-        } else if (memory_map_entry.kind == .bootloader_reclaimable) {
+        } else if (memory_map_entry.ty == .bootloader_reclaimable) {
             memory_top = @max(to, memory_top);
         }
     }
@@ -311,7 +306,7 @@ pub fn init() !void {
         const bitmap_bytes = initAlloc(memory_response.entries(), buckets * @sizeOf(u64), @alignOf(u64)) orelse {
             return error.NotEnoughContiguousMemory;
         };
-        const bitmap: []std.atomic.Value(u64) = @as([*]std.atomic.Value(u64), @alignCast(@ptrCast(bitmap_bytes)))[0..buckets];
+        const bitmap: []std.atomic.Value(u64) = @as([*]std.atomic.Value(u64), @ptrCast(@alignCast(bitmap_bytes)))[0..buckets];
 
         // log.info("bitmap from 0x{x} to 0x{x}", .{
         //     @intFromPtr(bitmap.ptr),
@@ -330,7 +325,7 @@ pub fn init() !void {
 
     log.info("freeing usable memory", .{});
     for (memory_response.entries()) |memory_map_entry| {
-        if (memory_map_entry.kind == .usable) {
+        if (memory_map_entry.ty == .usable) {
             // FIXME: a faster way would be to repeatedly deallocate chunks
             // from smallest to biggest and then to smallest again
             // ex: 1,2,3,7,8,8,8,8,8,8,8,8,8,8,5,4,1
@@ -338,11 +333,11 @@ pub fn init() !void {
             const base = std.mem.alignForward(usize, memory_map_entry.base, 0x1000);
             const waste = base - memory_map_entry.base;
             memory_map_entry.base += waste;
-            memory_map_entry.length -= waste;
-            memory_map_entry.length = std.mem.alignBackward(usize, memory_map_entry.length, 0x1000);
+            memory_map_entry.len -= waste;
+            memory_map_entry.len = std.mem.alignBackward(usize, memory_map_entry.len, 0x1000);
 
             const first_page: u32 = addr.Phys.fromInt(memory_map_entry.base).toParts().page;
-            const n_pages: u32 = @truncate(memory_map_entry.length >> 12);
+            const n_pages: u32 = @truncate(memory_map_entry.len >> 12);
             for (first_page..first_page + n_pages) |page| {
                 if (page == 0) {
                     // make sure the 0 phys page is not free
@@ -363,17 +358,17 @@ pub fn init() !void {
     printInfo();
 }
 
-fn initAlloc(entries: []*limine.MemoryMapEntry, size: usize, alignment: usize) ?[*]u8 {
+fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) ?[*]u8 {
     for (entries) |memory_map_entry| {
-        if (memory_map_entry.kind != .usable) {
+        if (memory_map_entry.ty != .usable) {
             continue;
         }
 
         const base = std.mem.alignForward(usize, memory_map_entry.base, alignment);
         const wasted = base - memory_map_entry.base;
-        if (wasted + size > memory_map_entry.length) continue;
+        if (wasted + size > memory_map_entry.len) continue;
 
-        memory_map_entry.length -= wasted + size;
+        memory_map_entry.len -= wasted + size;
         memory_map_entry.base = base + size;
 
         // log.debug("init alloc 0x{x} B from 0x{x}", .{ size, base });
@@ -405,31 +400,18 @@ pub fn free(chunk: addr.Phys, size: usize) void {
     return deallocChunk(true, chunk, _size);
 }
 
-pub fn isInMemoryKind(paddr: addr.Phys, size: usize, exp: ?limine.MemoryMapEntryType) bool {
-    for (memory.response.?.entries()) |entry| {
-        if (entry.kind != exp) continue;
+pub fn isInMemoryKind(paddr: addr.Phys, size: usize, exp: ?boot.LimineMemmapType) bool {
+    for (boot.memory.response.?.entries()) |entry| {
+        if (entry.ty != exp) continue;
 
         // TODO: also check if it even collides with some other entries
 
-        if (paddr.raw >= entry.base and paddr.raw + size <= entry.base + entry.length) {
+        if (paddr.raw >= entry.base and paddr.raw + size <= entry.base + entry.len) {
             return true;
         }
     }
 
     return exp == null;
-}
-
-pub fn memoryKind(paddr: addr.Phys, size: usize) bool {
-    for (memory.response.?.entries()) |entry| {
-
-        // TODO: also check if it even collides with some other entries
-
-        if (paddr.raw >= entry.base and paddr.raw + size <= entry.base + entry.length) {
-            return entry.kind;
-        }
-    }
-
-    return false;
 }
 
 fn _alloc(_: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {

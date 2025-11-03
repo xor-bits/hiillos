@@ -8,6 +8,12 @@ const caps = abi.caps;
 const log = std.log.scoped(.hpet);
 const Error = abi.sys.Error;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub export var manifest = abi.loader.Manifest.new(.{

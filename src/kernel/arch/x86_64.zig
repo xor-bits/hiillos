@@ -1,9 +1,9 @@
 const std = @import("std");
 const abi = @import("abi");
-const limine = @import("limine");
 
 const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
+const boot = @import("../boot.zig");
 const call = @import("../call.zig");
 const caps = @import("../caps.zig");
 const logs = @import("../logs.zig");
@@ -30,7 +30,6 @@ pub const KERNELGS_BASE = 0xC0000102;
 
 //
 
-pub export var smp: limine.SmpRequest = .{};
 var next: std.atomic.Value(usize) = .init(0);
 
 //
@@ -49,10 +48,10 @@ pub fn earlyInit() void {
     wrmsr(GS_BASE, 0);
 }
 
-pub fn initCpu(id: u32, smpinfo: ?*limine.SmpInfo) !void {
-    const lapic_id = if (smpinfo) |i|
+pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
+    const lapic_id = if (mp_info) |i|
         i.lapic_id
-    else if (smp.response) |resp|
+    else if (boot.mp.response) |resp|
         resp.bsp_lapic_id
     else
         0;
@@ -82,22 +81,22 @@ pub fn initCpu(id: u32, smpinfo: ?*limine.SmpInfo) !void {
 
 // launch 2 next processors (snowball)
 pub fn smpInit() void {
-    if (smp.response) |resp| {
+    if (boot.mp.response) |resp| {
         var idx = next.fetchAdd(2, .monotonic);
         const cpus = resp.cpus();
 
         if (idx >= cpus.len) return;
         if (cpus[idx].lapic_id != resp.bsp_lapic_id)
-            cpus[idx].goto_address = _smpstart;
+            cpus[idx].goto_address.store(_smpstart, .release);
 
         idx += 1;
         if (idx >= resp.cpus().len) return;
         if (cpus[idx].lapic_id != resp.bsp_lapic_id)
-            cpus[idx].goto_address = _smpstart;
+            cpus[idx].goto_address.store(_smpstart, .release);
     }
 }
 
-export fn _smpstart(smpinfo: *limine.SmpInfo) callconv(.C) noreturn {
+fn _smpstart(smpinfo: *boot.LimineMpInfo) callconv(.c) noreturn {
     earlyInit();
     main.smpmain(smpinfo);
 }
@@ -117,7 +116,7 @@ pub fn cpuIdSafe() ?u32 {
 }
 
 pub fn cpuCount() u32 {
-    return @intCast((smp.response orelse return 1).cpu_count);
+    return @intCast((boot.mp.response orelse return 1).cpu_count);
 }
 
 pub fn swapgs() void {
@@ -142,7 +141,7 @@ pub const ints = struct {
     }
 
     /// wait for the next interrupt
-    pub fn wait() callconv(.C) void {
+    pub fn wait() callconv(.c) void {
         // TODO: check held lock count before waiting, as as debug info
         asm volatile (
             \\ sti
@@ -221,8 +220,7 @@ pub fn setCs(sel: u64) void {
         \\ .reload_CS:
         :
         : [v] "N{dx}" (sel),
-        : "rax"
-    );
+        : .{ .rax = true });
 }
 
 pub fn setSs(sel: u16) void {
@@ -428,8 +426,7 @@ pub fn wrcr3(sel: u64) void {
         \\ mov %[v], %cr3
         :
         : [v] "N{rdx}" (sel),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn rdcr3() u64 {
@@ -450,8 +447,7 @@ pub fn flushTlbAddr(vaddr: usize) void {
         \\ invlpg (%[v])
         :
         : [v] "r" (vaddr),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 /// processor ID
@@ -628,12 +624,17 @@ pub const Entry = packed struct {
 
     const Self = @This();
 
-    pub fn new(int_handler: *const fn (*const InterruptStackFrame) callconv(.Interrupt) void) Self {
+    pub fn new(int_handler: *const fn (
+        *const InterruptStackFrame,
+    ) callconv(.{ .x86_64_interrupt = .{} }) void) Self {
         const isr = @intFromPtr(int_handler);
         return Self.newAny(isr);
     }
 
-    pub fn newWithEc(int_handler: *const fn (*const InterruptStackFrame, u64) callconv(.Interrupt) void) Self {
+    pub fn newWithEc(int_handler: *const fn (
+        *const InterruptStackFrame,
+        u64,
+    ) callconv(.{ .x86_64_interrupt = .{} }) void) Self {
         const isr = @intFromPtr(int_handler);
         return Self.newAny(isr);
     }
@@ -641,7 +642,9 @@ pub const Entry = packed struct {
     /// LLVM generated ISR
     pub fn generate(comptime handler: anytype) Self {
         const HandlerWrapper = struct {
-            fn interrupt(interrupt_stack_frame: *const InterruptStackFrame) callconv(.Interrupt) void {
+            fn interrupt(
+                interrupt_stack_frame: *const InterruptStackFrame,
+            ) callconv(.{ .x86_64_interrupt = .{} }) void {
                 const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (is_user) swapgs();
                 defer if (is_user) swapgs();
@@ -656,7 +659,10 @@ pub const Entry = packed struct {
     /// LLVM generated ISR
     pub fn generateWithEc(comptime handler: anytype) Self {
         const HandlerWrapper = struct {
-            fn interrupt(interrupt_stack_frame: *const InterruptStackFrame, ec: u64) callconv(.Interrupt) void {
+            fn interrupt(
+                interrupt_stack_frame: *const InterruptStackFrame,
+                ec: u64,
+            ) callconv(.{ .x86_64_interrupt = .{} }) void {
                 const is_user = interrupt_stack_frame.code_segment_selector == @as(u16, GdtDescriptor.user_code_selector);
                 if (is_user) swapgs();
                 defer if (is_user) swapgs();
@@ -683,7 +689,7 @@ pub const Entry = packed struct {
                 TrapRegs.exit();
             }
 
-            fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
+            fn wrapper(trap: *TrapRegs) callconv(.c) void {
                 if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
                     swapgs();
                     @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
@@ -711,7 +717,7 @@ pub const Entry = packed struct {
                 TrapRegs.exit();
             }
 
-            fn wrapper(trap: *TrapRegs) callconv(.SysV) void {
+            fn wrapper(trap: *TrapRegs) callconv(.c) void {
                 if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
                     swapgs();
                     @panic("swapgs desync, kernel code should always run with the correct GS_BASE");
@@ -834,7 +840,7 @@ pub const Idt = extern struct {
                     \\ - ip: 0x{x}
                     \\ - sp: 0x{x}
                     \\ - line:
-                    \\{}
+                    \\{f}
                 , .{
                     trap.isUser(),
                     trap.rip,
@@ -919,7 +925,7 @@ pub const Idt = extern struct {
                     \\ - ip: 0x{x}
                     \\ - sp: 0x{x}
                     \\ - line:
-                    \\{}
+                    \\{f}
                 , .{
                     trap.error_code,
                     trap.isUser(),
@@ -973,7 +979,7 @@ pub const Idt = extern struct {
                     \\ - sp: 0x{x}
                     \\ - pfec: {}
                     \\ - line:
-                    \\{}
+                    \\{f}
                 , .{
                     target_addr,
                     cpuLocal().current_thread,
@@ -1636,7 +1642,7 @@ pub const TrapRegs = extern struct {
     pub inline fn isrEntry(comptime dummy_error_code: bool) void {
         if (dummy_error_code) asm volatile (
             \\ pushq $0
-            ::: "memory");
+            ::: .{ .memory = true });
 
         asm volatile (std.fmt.comptimePrint(
                 // return type: iretq
@@ -1670,7 +1676,7 @@ pub const TrapRegs = extern struct {
             , .{
                 .code = @offsetOf(@This(), "code_segment_selector"),
                 .user_code = GdtDescriptor.user_code_selector,
-            }) ::: "memory");
+            }) ::: .{ .memory = true });
     }
 
     pub inline fn syscallEntry() void {
@@ -1715,7 +1721,7 @@ pub const TrapRegs = extern struct {
                 .rsp_kernel = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_kernel"),
                 .user_code = GdtDescriptor.user_code_selector,
                 .user_data = GdtDescriptor.user_data_selector,
-            }) ::: "memory");
+            }) ::: .{ .memory = true });
     }
 
     pub fn exitNow(trap: *const @This()) noreturn {
@@ -1724,8 +1730,7 @@ pub const TrapRegs = extern struct {
         asm volatile (""
             :
             : [trap] "{rsp}" (trap),
-            : "memory"
-        );
+            : .{ .memory = true });
 
         exit();
         unreachable;
@@ -1797,7 +1802,7 @@ pub const TrapRegs = extern struct {
                 // .return_mode = @offsetOf(@This(), "return_mode"),
                 .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
                 .user_code = GdtDescriptor.user_code_selector,
-            }) ::: "memory");
+            }) ::: .{ .memory = true });
     }
 };
 
@@ -1813,7 +1818,7 @@ fn syscallHandlerWrapperWrapper() callconv(.naked) noreturn {
     TrapRegs.exit();
 }
 
-fn syscallHandlerWrapper(args: *TrapRegs) callconv(.SysV) void {
+fn syscallHandlerWrapper(args: *TrapRegs) callconv(.c) void {
     if (conf.IS_DEBUG and rdmsr(GS_BASE) < 0x8000_0000_0000) {
         swapgs();
         @panic("swapgs desync, kernel code should always run with the correct GS_BASE");

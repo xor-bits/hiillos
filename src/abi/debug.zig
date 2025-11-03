@@ -4,7 +4,7 @@ const std = @import("std");
 
 pub fn printPanic(
     allocator: std.mem.Allocator,
-    writer: anytype,
+    writer: *std.Io.Writer,
     name: []const u8,
     msg: []const u8,
     iter: *std.debug.StackIterator,
@@ -35,31 +35,29 @@ pub fn printPanic(
 
 pub fn printSourceAtAddress(
     allocator: std.mem.Allocator,
-    writer: anytype,
+    writer: *std.Io.Writer,
     debug_info: *std.debug.Dwarf,
     address: usize,
     sources: []const SourceFile,
 ) !void {
     const sym = debug_info.getSymbol(allocator, address) catch {
-        try std.fmt.format(writer, "\x1B[90m0x{x}\x1B[0m\n", .{address});
+        try writer.print("\x1B[90m0x{x}\x1B[0m\n", .{address});
         return;
     };
     defer if (sym.source_location) |loc| allocator.free(loc.file_name);
 
-    try std.fmt.format(writer, "\x1B[1m", .{});
+    try writer.print("\x1B[1m", .{});
 
     if (sym.source_location) |*sl| {
-        try std.fmt.format(
-            writer,
+        try writer.print(
             "{s}:{d}:{d}",
             .{ sl.file_name, sl.line, sl.column },
         );
     } else {
-        try std.fmt.format(writer, "???:?:?", .{});
+        try writer.print("???:?:?", .{});
     }
 
-    try std.fmt.format(
-        writer,
+    try writer.print(
         "\x1B[0m: \x1B[90m0x{x} in {s} ({s})\x1B[0m\n",
         .{ address, sym.name, sym.compile_unit_name },
     );
@@ -75,11 +73,11 @@ pub fn printSourceAtAddress(
         source_line = lines_iter.next() orelse "<out-of-bounds>";
     }
 
-    try std.fmt.format(writer, "{s}\n", .{source_line});
+    try writer.print("{s}\n", .{source_line});
 
     const space_needed = @as(usize, @intCast(@max(loc.column, 1) - 1));
 
-    try writer.writeBytesNTimes(" ", space_needed);
+    try writer.splatBytesAll(" ", space_needed);
     try writer.writeAll("\x1B[92m^\x1B[0m\n");
 }
 
@@ -121,7 +119,7 @@ pub fn getSelfDwarf(
     allocator: std.mem.Allocator,
     elf_bin: []const u8,
 ) !std.debug.Dwarf {
-    var elf = std.io.fixedBufferStream(elf_bin);
+    var elf = std.Io.Reader.fixed(elf_bin);
 
     const header = try std.elf.Header.read(&elf);
 
@@ -193,7 +191,7 @@ fn getSectionData(bin: []const u8, shdr: std.elf.Elf64_Shdr) []const u8 {
 
 fn sectionsHeaders(bin: []const u8, header: std.elf.Header) []const std.elf.Elf64_Shdr {
     // FIXME: bounds checking maybe
-    const section_headers: [*]const std.elf.Elf64_Shdr = @alignCast(@ptrCast(bin.ptr + header.shoff));
+    const section_headers: [*]const std.elf.Elf64_Shdr = @ptrCast(@alignCast(bin.ptr + header.shoff));
     return section_headers[0..header.shnum];
 }
 

@@ -54,7 +54,7 @@ pub const Frame = struct {
             .is_physical = false,
             .pages = pages,
             .size_bytes = size_bytes,
-            .mappings = .init(caps.slab_allocator.allocator()),
+            .mappings = .{},
         };
         obj.lock.unlock();
 
@@ -109,7 +109,7 @@ pub const Frame = struct {
         }
 
         std.debug.assert(self.mappings.items.len == 0);
-        self.mappings.deinit();
+        self.mappings.deinit(caps.slab_allocator.allocator());
 
         caps.slab_allocator.allocator().free(self.pages);
         caps.slab_allocator.allocator().destroy(self);
@@ -565,12 +565,12 @@ pub const TlbShootdown = struct {
     pub fn deinit(self: *@This()) ?*caps.Thread {
         // log.debug("TLB (partial) flush", .{});
         switch (self.target) {
-            .individual => |vaddr| arch.flushTlbAddr(vaddr.raw),
+            .individual => |vaddr| arch.x86_64.flushTlbAddr(vaddr.raw),
             .range => |vaddr_range| {
                 for (vaddr_range[0].raw..vaddr_range[1].raw) |vaddr|
-                    arch.flushTlbAddr(vaddr);
+                    arch.x86_64.flushTlbAddr(vaddr);
             },
-            .whole => arch.flushTlb(),
+            .whole => arch.x86_64.flushTlb(),
         }
 
         if (!self.refcnt.dec()) return null;

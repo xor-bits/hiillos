@@ -199,7 +199,7 @@ pub fn main() !void {
     //     .info_frame = boot_info.mcfg_info,
     // });
 
-    var servers = std.ArrayList(Server).init(abi.mem.slab_allocator);
+    var servers: std.ArrayList(Server) = .{};
 
     var resources = std.ArrayHashMap(
         [99]u8,
@@ -300,7 +300,7 @@ fn collectAllServers(servers: *std.ArrayList(Server)) !void {
         };
 
         if (opt_manifest == null) continue;
-        try servers.append(.{ .bin = elf });
+        try servers.append(abi.mem.slab_allocator, .{ .bin = elf });
     }
 
     // virtual memory manager (system) (server)
@@ -592,7 +592,7 @@ const Server = struct {
 pub extern var __stack_end: u8;
 pub extern var __thread_stack_end: u8;
 
-pub export fn _start() linksection(".text._start") callconv(.Naked) noreturn {
+pub export fn _start() linksection(".text._start") callconv(.naked) noreturn {
     asm volatile (
         \\ subq $0x108, %rsp
         \\ jmp zigMain

@@ -402,62 +402,107 @@ pub const Frame = extern struct {
         }
     }
 
-    pub const Stream = struct {
+    pub const Reader = struct {
         frame: Frame, // borrowed frame
         read: usize = 0,
-        write: usize = 0,
+        size: usize,
+        interface: std.Io.Reader,
 
-        pub const Reader = struct {
-            stream: *Stream,
+        fn stream(
+            r: *std.Io.Reader,
+            w: *std.Io.Writer,
+            limit: std.Io.Limit,
+        ) std.Io.Reader.StreamError!usize {
+            if (limit == .nothing) return 0;
 
-            pub const Error = sys.Error;
+            const self: *@This() = @fieldParentPtr("interface", r);
 
-            pub fn read(self: @This(), buf: []u8) Error!usize {
-                try self.stream.frame.read(self.stream.read, buf);
-                self.stream.read += buf.len;
-                return buf.len;
-            }
+            const dest = limit.slice(try w.writableSliceGreedy(1));
 
-            pub fn flush(_: @This()) Error!void {}
-        };
+            const n = @min(dest.len, self.size -| self.read);
+            if (n == 0) return error.EndOfStream;
+            try self.frame.read(self.read, dest[0..n]);
+            self.read += n;
 
-        pub fn reader(this: *@This()) Reader {
-            return .{ .stream = this };
+            w.advance(n);
+            return n;
         }
 
-        pub const Writer = struct {
-            stream: *Stream,
+        fn discard(r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
+            const self: *@This() = @fieldParentPtr("interface", r);
 
-            pub const Error = sys.Error;
+            const n = @min(self.size -| self.read, @intFromEnum(limit));
+            self.read += n;
 
-            pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-                try std.fmt.format(self, fmt, args);
-            }
-
-            pub fn write(self: @This(), bytes: []const u8) Error!usize {
-                try self.stream.frame.write(self.stream.write, bytes);
-                self.stream.write += bytes.len;
-                return bytes.len;
-            }
-
-            pub fn writeAll(self: @This(), bytes: []const u8) Error!void {
-                _ = try self.write(bytes);
-            }
-
-            pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-                for (0..n) |_| try self.writeAll(bytes);
-            }
-
-            pub fn flush(_: @This()) Error!void {}
-        };
-
-        pub fn writer(this: *@This()) Writer {
-            return .{ .stream = this };
+            return n;
         }
     };
 
-    pub fn stream(this: @This()) Stream {
-        return .{ .frame = this };
+    pub fn reader(this: @This(), buffer: []u8, frame_size: usize) Reader {
+        return .{
+            .frame = this,
+            .size = frame_size,
+            .interface = .{
+                .buffer = buffer,
+                .vtable = &.{
+                    .stream = Reader.stream,
+                    .discard = Reader.discard,
+                },
+            },
+        };
+    }
+
+    pub const Writer = struct {
+        frame: Frame, // borrowed frame
+        write: usize = 0,
+        size: usize,
+        interface: std.Io.Writer,
+
+        fn wr(self: *@This(), bytes: []const u8) error{WriteFailed}!usize {
+            const n = @min(bytes.len, self.size -| self.write);
+            if (n != 0) {
+                self.frame.write(self.write, bytes[0..n]) catch return error.WriteFailed;
+            }
+            return n;
+        }
+
+        fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+            const self: *@This() = @fieldParentPtr("interface", w);
+
+            {
+                const written = self.wr(w.buffer[0..w.end]) catch return error.WriteFailed;
+                if (written != w.end) return error.WriteFailed;
+                w.end = 0;
+            }
+
+            const pattern = data[data.len - 1];
+            var n: usize = 0;
+
+            for (data[0 .. data.len - 1]) |bytes| {
+                const written = try self.wr(bytes);
+                if (written == 0) return n;
+                n += written;
+            }
+            for (0..splat) |_| {
+                const written = try self.wr(pattern);
+                if (written == 0) return n;
+                n += written;
+            }
+            return n;
+        }
+    };
+
+    pub fn writer(this: @This(), buffer: []u8, frame_size: usize) Writer {
+        return .{
+            .frame = this,
+            .size = frame_size,
+            .interface = .{
+                .buffer = buffer,
+                .vtable = &.{
+                    .drain = Writer.drain,
+                },
+            },
+        };
     }
 
     pub fn dummyAccess(this: @This(), offset_byte: usize, mode: sys.FaultCause) sys.Error!void {

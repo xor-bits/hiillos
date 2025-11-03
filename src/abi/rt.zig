@@ -97,7 +97,7 @@ fn signalHandler() callconv(.naked) noreturn {
     );
 }
 
-fn signalHandlerWrapper(regs: *SignalRegs) callconv(.SysV) void {
+fn signalHandlerWrapper(regs: *SignalRegs) callconv(.c) void {
     const signal = sys.selfGetSignal() catch unreachable;
     regs.return_addr = signal.ip;
 
@@ -107,6 +107,6 @@ fn signalHandlerWrapper(regs: *SignalRegs) callconv(.SysV) void {
     });
 }
 
-fn _start() callconv(.SysV) noreturn {
+fn _start() callconv(.c) noreturn {
     thread.callFn(root.main, .process, .{});
 }

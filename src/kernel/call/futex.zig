@@ -170,7 +170,7 @@ fn physAddr(
     // so the acquired chunk should always be long enough and aligned
     std.debug.assert(futex_phys_ptr.len >= size);
 
-    return @alignCast(@volatileCast(@ptrCast(futex_phys_ptr.ptr)));
+    return @ptrCast(@alignCast(@volatileCast(futex_phys_ptr.ptr)));
 }
 
 // just some load balancing, no dos resistance

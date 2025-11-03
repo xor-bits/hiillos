@@ -4,153 +4,152 @@ const util = @import("util.zig");
 
 //
 
-pub fn parser(reader: anytype) Parser(@TypeOf(reader)) {
-    return .{ .inner = reader };
-}
+pub const Parser = struct {
+    reader: *std.Io.Reader,
 
-pub fn Parser(comptime T: type) type {
-    return struct {
-        inner: T,
+    pub const Error = std.Io.Reader.Error;
 
-        pub const Error = T.Error;
+    pub fn init(reader: *std.Io.Reader) @This() {
+        return .{ .reader = reader };
+    }
 
-        pub fn next(self: *@This()) Error!?Control {
-            const State = enum {
-                restart,
-                start,
-                /// \x1b
-                esc,
-                /// \x1b[
-                csi,
-                /// \x1b[..m
-                cmd_sgr,
-                /// \x1b[..A/B/C/D/E/F/J/s/u
-                cmd_simple,
-            };
+    pub fn next(self: *@This()) Error!?Control {
+        const State = enum {
+            restart,
+            start,
+            /// \x1b
+            esc,
+            /// \x1b[
+            csi,
+            /// \x1b[..m
+            cmd_sgr,
+            /// \x1b[..A/B/C/D/E/F/J/s/u
+            cmd_simple,
+        };
 
-            var numbers: NumArrayBuilder = undefined;
-            var byte: u8 = undefined;
+        var numbers: NumArrayBuilder = undefined;
+        var byte: u8 = undefined;
 
-            state: switch (State.restart) {
-                .restart => {
-                    // discard the whole sequence and restart
+        state: switch (State.restart) {
+            .restart => {
+                // discard the whole sequence and restart
+                byte = try self.pop() orelse return null;
+                numbers = .{};
+                continue :state .start;
+            },
+            .start => {
+                switch (byte) {
+                    0x1b => {
+                        byte = try self.pop() orelse return null;
+                        continue :state .esc;
+                    },
+                    else => return .{ .ch = byte },
+                }
+            },
+            .esc => {
+                if (byte == '[') {
                     byte = try self.pop() orelse return null;
-                    numbers = .{};
-                    continue :state .start;
-                },
-                .start => {
-                    switch (byte) {
-                        0x1b => {
-                            byte = try self.pop() orelse return null;
-                            continue :state .esc;
-                        },
-                        else => return .{ .ch = byte },
-                    }
-                },
-                .esc => {
-                    if (byte == '[') {
+                    continue :state .csi;
+                }
+
+                continue :state .restart;
+            },
+            .csi => {
+                if (std.ascii.isDigit(byte)) {
+                    numbers.pushDigit(byte - '0');
+                    byte = try self.pop() orelse return null;
+                    continue :state .csi;
+                }
+
+                numbers.push();
+                switch (byte) {
+                    ';' => {
                         byte = try self.pop() orelse return null;
                         continue :state .csi;
-                    }
+                    },
+                    'm' => continue :state .cmd_sgr,
+                    'A'...'F', 'J', 's', 'u' => continue :state .cmd_simple,
+                    else => continue :state .restart,
+                }
+            },
+            .cmd_sgr => {
+                const args = numbers.all();
+                std.debug.assert(args.len != 0);
 
-                    continue :state .restart;
-                },
-                .csi => {
-                    if (std.ascii.isDigit(byte)) {
-                        numbers.pushDigit(byte - '0');
-                        byte = try self.pop() orelse return null;
-                        continue :state .csi;
-                    }
+                // https://en.wikipedia.org/wiki/ANSI_escape_code#Select_Graphic_Rendition_parameters
+                const sgr = args[0] orelse 0;
 
-                    numbers.push();
-                    switch (byte) {
-                        ';' => {
-                            byte = try self.pop() orelse return null;
-                            continue :state .csi;
-                        },
-                        'm' => continue :state .cmd_sgr,
-                        'A'...'F', 'J', 's', 'u' => continue :state .cmd_simple,
-                        else => continue :state .restart,
-                    }
-                },
-                .cmd_sgr => {
-                    const args = numbers.all();
-                    std.debug.assert(args.len != 0);
+                switch (sgr) {
+                    0 => return .{ .reset = {} },
+                    38 => {
+                        if (args.len == 3 and args[1] == '5') {
+                            // 5;n
+                            // TODO: indexed colours
+                            continue :state .restart;
+                        } else if (args.len == 5 and args[1] == '2') {
+                            // 2;r;g;b
+                            return .{ .fg_colour = util.Pixel{
+                                .red = @truncate(args[2] orelse 0),
+                                .green = @truncate(args[3] orelse 0),
+                                .blue = @truncate(args[4] orelse 0),
+                            } };
+                        } else {
+                            continue :state .restart;
+                        }
+                    },
+                    48 => {
+                        if (args.len == 3 and args[1] == '5') {
+                            // 5;n
+                            // TODO: indexed colours
+                            continue :state .restart;
+                        } else if (args.len == 5 and args[1] == '2') {
+                            // 2;r;g;b
+                            return .{ .bg_colour = util.Pixel{
+                                .red = @truncate(args[2] orelse 0),
+                                .green = @truncate(args[3] orelse 0),
+                                .blue = @truncate(args[4] orelse 0),
+                            } };
+                        } else {
+                            continue :state .restart;
+                        }
+                    },
 
-                    // https://en.wikipedia.org/wiki/ANSI_escape_code#Select_Graphic_Rendition_parameters
-                    const sgr = args[0] orelse 0;
+                    // TODO: implement more of these
+                    else => continue :state .restart,
+                }
+            },
+            .cmd_simple => {
+                const args = numbers.all();
+                std.debug.assert(args.len != 0);
 
-                    switch (sgr) {
-                        0 => return .{ .reset = {} },
-                        38 => {
-                            if (args.len == 3 and args[1] == '5') {
-                                // 5;n
-                                // TODO: indexed colours
-                                continue :state .restart;
-                            } else if (args.len == 5 and args[1] == '2') {
-                                // 2;r;g;b
-                                return .{ .fg_colour = util.Pixel{
-                                    .red = @truncate(args[2] orelse 0),
-                                    .green = @truncate(args[3] orelse 0),
-                                    .blue = @truncate(args[4] orelse 0),
-                                } };
-                            } else {
-                                continue :state .restart;
-                            }
-                        },
-                        48 => {
-                            if (args.len == 3 and args[1] == '5') {
-                                // 5;n
-                                // TODO: indexed colours
-                                continue :state .restart;
-                            } else if (args.len == 5 and args[1] == '2') {
-                                // 2;r;g;b
-                                return .{ .bg_colour = util.Pixel{
-                                    .red = @truncate(args[2] orelse 0),
-                                    .green = @truncate(args[3] orelse 0),
-                                    .blue = @truncate(args[4] orelse 0),
-                                } };
-                            } else {
-                                continue :state .restart;
-                            }
-                        },
+                const arg_0_default_1 = args[0] orelse 1;
+                const arg_0_default_0 = args[0] orelse 0;
 
-                        // TODO: implement more of these
-                        else => continue :state .restart,
-                    }
-                },
-                .cmd_simple => {
-                    const args = numbers.all();
-                    std.debug.assert(args.len != 0);
-
-                    const arg_0_default_1 = args[0] orelse 1;
-                    const arg_0_default_0 = args[0] orelse 0;
-
-                    switch (byte) {
-                        'A' => return .{ .cursor_up = arg_0_default_1 },
-                        'B' => return .{ .cursor_down = arg_0_default_1 },
-                        'C' => return .{ .cursor_right = arg_0_default_1 },
-                        'D' => return .{ .cursor_left = arg_0_default_1 },
-                        'E' => return .{ .cursor_next_line = arg_0_default_1 },
-                        'F' => return .{ .cursor_prev_line = arg_0_default_1 },
-                        'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch
-                            continue :state .restart },
-                        's' => return .cursor_push,
-                        'u' => return .cursor_pop,
-                        else => continue :state .restart,
-                    }
-                },
-            }
+                switch (byte) {
+                    'A' => return .{ .cursor_up = arg_0_default_1 },
+                    'B' => return .{ .cursor_down = arg_0_default_1 },
+                    'C' => return .{ .cursor_right = arg_0_default_1 },
+                    'D' => return .{ .cursor_left = arg_0_default_1 },
+                    'E' => return .{ .cursor_next_line = arg_0_default_1 },
+                    'F' => return .{ .cursor_prev_line = arg_0_default_1 },
+                    'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch
+                        continue :state .restart },
+                    's' => return .cursor_push,
+                    'u' => return .cursor_pop,
+                    else => continue :state .restart,
+                }
+            },
         }
+    }
 
-        fn pop(self: *@This()) Error!?u8 {
-            var ch: [1]u8 = undefined;
-            const n: usize = try self.inner.read(&ch);
-            if (n == 0) return null;
-            return ch[0];
-        }
-    };
-}
+    fn pop(self: *@This()) Error!?u8 {
+        const byte = self.reader.takeByte() catch |err| switch (err) {
+            error.ReadFailed => return err,
+            error.EndOfStream => return null,
+        };
+        return byte;
+    }
+};
 
 const NumArrayBuilder = struct {
     n: usize = 0,
@@ -276,73 +275,59 @@ pub const Control = union(enum) {
 
     pub fn format(
         self: @This(),
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         switch (self) {
             .ch => |c| try writer.writeAll(&.{c}),
 
-            .fg_colour => |c| try std.fmt.format(
-                writer,
+            .fg_colour => |c| try writer.print(
                 "\x1b[38;2;{};{};{}m",
                 .{ c.red, c.green, c.blue },
             ),
-            .bg_colour => |c| try std.fmt.format(
-                writer,
+            .bg_colour => |c| try writer.print(
                 "\x1b[48;2;{};{};{}m",
                 .{ c.red, c.green, c.blue },
             ),
-            .reset => try std.fmt.format(
-                writer,
+            .reset => try writer.print(
                 "\x1b[m",
                 .{},
             ),
 
-            .cursor_up => |c| try std.fmt.format(
-                writer,
+            .cursor_up => |c| try writer.print(
                 "\x1b[{}A",
                 .{c},
             ),
-            .cursor_down => |c| try std.fmt.format(
-                writer,
+            .cursor_down => |c| try writer.print(
                 "\x1b[{}B",
                 .{c},
             ),
-            .cursor_right => |c| try std.fmt.format(
-                writer,
+            .cursor_right => |c| try writer.print(
                 "\x1b[{}C",
                 .{c},
             ),
-            .cursor_left => |c| try std.fmt.format(
-                writer,
+            .cursor_left => |c| try writer.print(
                 "\x1b[{}D",
                 .{c},
             ),
-            .cursor_next_line => |c| try std.fmt.format(
-                writer,
+            .cursor_next_line => |c| try writer.print(
                 "\x1b[{}E",
                 .{c},
             ),
-            .cursor_prev_line => |c| try std.fmt.format(
-                writer,
+            .cursor_prev_line => |c| try writer.print(
                 "\x1b[{}F",
                 .{c},
             ),
 
-            .erase_in_display => |mode| try std.fmt.format(
-                writer,
+            .erase_in_display => |mode| try writer.print(
                 "\x1b[{}J",
                 .{@intFromEnum(mode)},
             ),
 
-            .cursor_push => try std.fmt.format(
-                writer,
+            .cursor_push => try writer.print(
                 "\x1b[s",
                 .{},
             ),
-            .cursor_pop => try std.fmt.format(
-                writer,
+            .cursor_pop => try writer.print(
                 "\x1b[u",
                 .{},
             ),
@@ -352,8 +337,8 @@ pub const Control = union(enum) {
 
 test "simple cursor_right decode" {
     const input: []const u8 = "\x1b[4C";
-    var input_stream = std.io.fixedBufferStream(input);
-    var output = parser(input_stream.reader());
+    var input_stream = std.Io.Reader.fixed(input);
+    var output = Parser.init(input_stream.reader());
 
     try std.testing.expect((try output.next()).?.cursor_right == 4);
 }
@@ -361,8 +346,8 @@ test "simple cursor_right decode" {
 test "escape fuzz" {
     try std.testing.fuzz({}, struct {
         fn testOne(_: void, input: []const u8) anyerror!void {
-            var input_stream = std.io.fixedBufferStream(input);
-            var output = parser(input_stream.reader());
+            var input_stream = std.Io.Reader.fixed(input);
+            var output = Parser.init(input_stream.reader());
 
             while (try output.next()) |tok| {
                 _ = tok;

@@ -37,7 +37,7 @@ pub const Vmem = struct {
         obj.* = .{
             .lock = .locked(),
             .cr3 = 0,
-            .mappings = .init(caps.slab_allocator.allocator()),
+            .mappings = .{},
         };
         obj.lock.unlock();
 
@@ -56,8 +56,9 @@ pub const Vmem = struct {
             mapping.deinit();
         }
 
-        self.mappings.deinit();
-        caps.slab_allocator.allocator().destroy(self);
+        const gpa = caps.slab_allocator.allocator();
+        self.mappings.deinit(gpa);
+        gpa.destroy(self);
     }
 
     pub fn clone(self: *@This()) *@This() {
@@ -252,6 +253,8 @@ pub const Vmem = struct {
         if (fixed_vaddr.raw == 0)
             return Error.InvalidAddress;
 
+        const gpa = caps.slab_allocator.allocator();
+
         const mapping = try caps.Mapping.init(
             frame.clone(),
             self,
@@ -261,7 +264,7 @@ pub const Vmem = struct {
             flags,
         );
 
-        try frame.mappings.ensureUnusedCapacity(1);
+        try frame.mappings.ensureUnusedCapacity(gpa, 1);
 
         if (self.find(fixed_vaddr)) |idx| {
             const old_mapping = self.mappings.items[idx];
@@ -276,19 +279,20 @@ pub const Vmem = struct {
             } else if (old_mapping.getVaddr().raw < fixed_vaddr.raw) {
                 // log.debug("insert new mapping after 0x{x}", .{old_mapping.getVaddr().raw});
                 // insert new mapping
-                try self.mappings.insert(idx + 1, mapping);
+                try self.mappings.insert(gpa, idx + 1, mapping);
             } else {
                 // log.debug("insert new mapping before {} 0x{x}", .{ idx, old_mapping.getVaddr().raw });
                 // insert new mapping
-                try self.mappings.insert(idx, mapping);
+                try self.mappings.insert(gpa, idx, mapping);
             }
         } else {
             // log.debug("push new mapping", .{});
             // push new mapping
-            try self.mappings.append(mapping);
+            try self.mappings.append(gpa, mapping);
         }
 
-        frame.mappings.append(mapping) catch unreachable; // NOTE: ensureUnusedCapacity above
+        // NOTE: ensureUnusedCapacity above
+        frame.mappings.appendAssumeCapacity(mapping);
 
         return fixed_vaddr;
     }
@@ -374,6 +378,7 @@ pub const Vmem = struct {
         std.debug.assert(self.check());
         defer std.debug.assert(self.check());
 
+        const gpa = caps.slab_allocator.allocator();
         const vaddr: addr.Virt = .fromInt(std.mem.alignBackward(usize, unaligned_vaddr.raw, 0x1000));
 
         if (conf.LOG_OBJ_CALLS)
@@ -402,7 +407,7 @@ pub const Vmem = struct {
             // cut the mapping into 0, 1 or 2 mappings
 
             const a_beg: usize = mapping.getVaddr().raw;
-            const a_end: usize = mapping.getVaddr().raw + mapping.pages * 0x1000;
+            const a_end: usize = mapping.getVaddr().raw + @as(usize, mapping.pages) * 0x1000;
             const b_beg: usize = vaddr.raw;
             const b_end: usize = vaddr.raw + pages * 0x1000;
 
@@ -445,8 +450,8 @@ pub const Vmem = struct {
                 // cases 1,2,3 already cover equal start/end bounds
 
                 // log.debug("unmap case 4", .{});
-                try self.mappings.ensureUnusedCapacity(1);
-                try mapping.frame.mappings.ensureUnusedCapacity(1);
+                try self.mappings.ensureUnusedCapacity(gpa, 1);
+                try mapping.frame.mappings.ensureUnusedCapacity(gpa, 1);
 
                 const cloned = try mapping.clone();
 
@@ -459,9 +464,9 @@ pub const Vmem = struct {
                 cloned.frame_first_page += shift;
 
                 cloned.frame.lock.lock();
-                cloned.frame.mappings.append(cloned) catch unreachable;
+                cloned.frame.mappings.append(gpa, cloned) catch unreachable;
                 cloned.frame.lock.unlock();
-                self.mappings.insert(idx + 1, cloned) catch unreachable;
+                self.mappings.insert(gpa, idx + 1, cloned) catch unreachable;
 
                 std.debug.assert(cloned.pages != 0);
                 std.debug.assert(mapping.pages != 0);
@@ -616,7 +621,7 @@ pub const Vmem = struct {
 
             if (locals == arch.cpuLocal()) {
                 // no need to send a self IPI
-                arch.flushTlbAddr(vaddr.raw);
+                arch.x86_64.flushTlbAddr(vaddr.raw);
             } else {
                 locals.pushTlbShootdown(shootdown.clone());
                 ipi_bitmap.* |= @as(u256, 1) << @as(u8, @intCast(i));
@@ -729,7 +734,7 @@ pub const Vmem = struct {
             vaddr,
             flags,
         );
-        arch.flushTlbAddr(vaddr.raw);
+        arch.x86_64.flushTlbAddr(vaddr.raw);
     }
 
     pub fn dump(self: *@This()) void {

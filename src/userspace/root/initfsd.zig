@@ -24,7 +24,7 @@ const vmm_vector = std.mem.Allocator{
 var vmm_vector_top: usize = 0x5000_0000_0000;
 
 fn vmmVectorAlloc(_top: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
-    const top: *usize = @alignCast(@ptrCast(_top));
+    const top: *usize = @ptrCast(@alignCast(_top));
     const ptr: [*]u8 = @ptrFromInt(top.*);
     vmmVectorGrow(top, std.math.divCeil(
         usize,
@@ -39,7 +39,7 @@ fn vmmVectorResize(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: us
 }
 
 fn vmmVectorRemap(_top: *anyopaque, memory: []u8, _: std.mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
-    const top: *usize = @alignCast(@ptrCast(_top));
+    const top: *usize = @ptrCast(@alignCast(_top));
     const current_len = top.* - 0x5000_0000_0000;
     if (current_len < new_len) {
         vmmVectorGrow(top, std.math.divCeil(
@@ -69,7 +69,7 @@ fn vmmVectorGrow(top: *usize, n_pages: usize) !void {
     }
 }
 
-var initfs_tar: std.ArrayList(u8) = .init(vmm_vector);
+var initfs_tar: std.ArrayList(u8) = .{};
 
 //
 
@@ -127,25 +127,17 @@ fn run() !void {
 
 fn decompress() !void {
     const initfs: []const u8 = getBootInfoAddr().initfsData();
-    var initfs_tar_zst = std.io.fixedBufferStream(initfs);
+    var initfs_tar_zst = std.Io.Reader.fixed(initfs);
 
-    const buf = try abi.mem.server_page_allocator.alloc(
-        u8,
-        std.compress.zstd.DecompressorOptions.default_window_buffer_len,
-    );
-    defer abi.mem.server_page_allocator.free(buf);
+    var initfs_tar_writer = std.Io.Writer.Allocating.init(vmm_vector);
 
-    var zstd_decompressor = std.compress.zstd.decompressor(
-        initfs_tar_zst.reader(),
-        .{ .window_buffer = buf },
-    );
-    try zstd_decompressor.reader().readAllArrayList(
-        &initfs_tar,
-        0x2000_0000_0000,
-    );
-    // try std.compress.flate.inflate.decompress(.gzip, initfs_tar_gz.reader(), initfs_tar.writer(),);
-    std.debug.assert(std.mem.eql(u8, initfs_tar.items[257..][0..8], "ustar\x20\x20\x00"));
+    var zstd_decompressor = std.compress.zstd.Decompress.init(&initfs_tar_zst, "", .{});
+    _ = try zstd_decompressor.reader.streamRemaining(&initfs_tar_writer.writer);
+
+    initfs_tar = initfs_tar_writer.toArrayList();
+
     log.info("decompressed initfs size: 0x{x}", .{initfs_tar.items.len});
+    std.debug.assert(std.mem.eql(u8, initfs_tar.items[257..][0..8], "ustar\x20\x20\x00"));
 }
 
 fn openFileHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, caps.Frame } {

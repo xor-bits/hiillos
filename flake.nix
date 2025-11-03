@@ -18,10 +18,10 @@
         devShells.default = pkgs.mkShell rec {
           buildInputs = with pkgs; [
             pkg-config
+            gnumake
             zig
             zls
-            # QEMU/KVM has to be installed externally :(
-            # qemu_full
+            qemu_full
           ];
 
           OVMF_FD = "${pkgs.OVMF.fd}/FV/OVMF.fd";

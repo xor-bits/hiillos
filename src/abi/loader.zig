@@ -315,7 +315,7 @@ pub const Elf = struct {
 
         return @as(
             [*]const std.elf.Elf64_Sym,
-            @alignCast(@ptrCast(symbol_table)),
+            @ptrCast(@alignCast(symbol_table)),
         )[0 .. symbol_table.len / @sizeOf(std.elf.Elf64_Sym)];
     }
 
@@ -342,7 +342,7 @@ pub const Elf = struct {
     pub fn getHeader(self: *@This()) !std.elf.Header {
         if (self.header) |h| return h;
 
-        var stream = std.io.fixedBufferStream(self.data);
+        var stream = std.Io.Reader.fixed(self.data);
         self.header = try std.elf.Header.read(&stream);
         return self.header.?;
     }
@@ -431,7 +431,7 @@ pub const Elf = struct {
         ) catch return error.OutOfBounds)
             return error.OutOfBounds;
 
-        const program_headers: [*]const std.elf.Elf64_Phdr = @alignCast(@ptrCast(bin.ptr + header.phoff));
+        const program_headers: [*]const std.elf.Elf64_Phdr = @ptrCast(@alignCast(bin.ptr + header.phoff));
         return program_headers[0..header.phnum];
     }
 
@@ -445,7 +445,7 @@ pub const Elf = struct {
         ) catch return error.OutOfBounds)
             return error.OutOfBounds;
 
-        const section_headers: [*]const std.elf.Elf64_Shdr = @alignCast(@ptrCast(bin.ptr + header.shoff));
+        const section_headers: [*]const std.elf.Elf64_Shdr = @ptrCast(@alignCast(bin.ptr + header.shoff));
         return section_headers[0..header.shnum];
     }
 };

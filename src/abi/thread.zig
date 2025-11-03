@@ -39,7 +39,7 @@ pub fn spawnOptions(comptime function: anytype, args: anytype, opts: SpawnOption
     const Instance = struct {
         args: Args,
 
-        fn entryFn(raw_arg: usize) callconv(.SysV) noreturn {
+        fn entryFn(raw_arg: usize) callconv(.c) noreturn {
             const self: *volatile @This() = @ptrFromInt(raw_arg);
             callFn(function, .thread, self.*.args);
         }

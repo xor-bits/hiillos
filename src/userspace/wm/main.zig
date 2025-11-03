@@ -6,6 +6,12 @@ const caps = abi.caps;
 const log = std.log.scoped(.wm);
 const gpa = abi.mem.slab_allocator;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 /// in pixels
 const window_borders = 1;
 
@@ -15,8 +21,6 @@ const min_window_size: gui.Pos = @splat(10);
 const unfocused_border_colour = gui.Colour.hex("#252525") catch unreachable;
 const focused_border_colour = gui.Colour.hex("#31c0f0") catch unreachable;
 const background_colour = gui.Colour.hex("#1a1a27") catch unreachable;
-
-const WindowNode = std.DoublyLinkedList(Window).Node;
 
 //
 
@@ -296,7 +300,7 @@ const Connection = struct {
     next_client_window_id: usize = 1,
     window_server_ids: std.AutoHashMap(usize, usize) = .init(abi.mem.slab_allocator),
 
-    event_queue: std.fifo.LinearFifo(gui.Event, .Dynamic) = .init(abi.mem.slab_allocator),
+    event_queue: abi.Deque(gui.Event) = .{},
     reply: ?abi.lpc.DetachedReply(gui.WmDisplayProtocol.NextEvent.Response) = null,
 
     pub fn pushEvent(
@@ -311,7 +315,7 @@ const Connection = struct {
             return;
         }
 
-        self.event_queue.writeItem(ev) catch |err| {
+        self.event_queue.pushBack(abi.mem.slab_allocator, ev) catch |err| {
             log.warn("input event dropped: {}", .{err});
         };
     }
@@ -325,7 +329,7 @@ const Connection = struct {
             return;
         }
 
-        if (self.event_queue.readItem()) |ev| {
+        if (self.event_queue.popFront()) |ev| {
             reply.send(.{ .ok = ev });
             return;
         }
@@ -342,6 +346,8 @@ const Window = struct {
     fb: ?Framebuffer = null,
 
     conn: *Connection,
+
+    window_list_node: std.DoublyLinkedList.Node = .{},
 
     pub fn deinit(self: @This()) void {
         if (self.fb) |fb| fb.deinit();
@@ -469,7 +475,7 @@ const System = struct {
 
     next_server_window_id: usize = 0,
     windows_map: std.AutoHashMap(usize, *Window) = .init(abi.mem.slab_allocator),
-    windows_list: std.DoublyLinkedList(Window) = .{},
+    windows_list: std.DoublyLinkedList = .{},
 
     damage: gui.Damage = .{},
 
@@ -573,9 +579,8 @@ const System = struct {
     /// the returned pointer is valid as long as the `windows` hashmap is not modified
     fn findHoveredWindow(self: *@This()) ?*Window {
         var it = self.windows_list.last;
-        while (it) |node| {
-            it = node.prev;
-            const window = &node.data;
+        while (it) |node| : (it = node.prev) {
+            const window: *Window = @fieldParentPtr("window_list_node", node);
 
             const window_aabb = window.rect.asAabb();
 
@@ -687,15 +692,9 @@ const System = struct {
         self.next_server_window_id += 1;
         errdefer self.next_server_window_id = server_id;
 
-        const window_node = try gpa.create(WindowNode);
+        const window_node = try gpa.create(Window);
         errdefer gpa.destroy(window_node);
-
-        const old_focused_window = self.focusedWindow();
-
-        self.windows_list.append(window_node);
-        errdefer std.debug.assert(self.windows_list.pop() == window_node);
-
-        window_node.data = .{
+        window_node.* = .{
             .client_id = client_id,
             .server_id = server_id,
             .rect = .{
@@ -706,14 +705,19 @@ const System = struct {
             // the window is closed before the connection, so the pointer stays valid
             .conn = conn,
         };
-        try window_node.data.attach(shmem);
 
-        try self.windows_map.putNoClobber(server_id, &window_node.data);
+        const old_focused_window = self.focusedWindow();
+        self.windows_list.append(&window_node.window_list_node);
+        errdefer std.debug.assert(self.windows_list.pop() == &window_node.window_list_node);
+
+        try window_node.attach(shmem);
+
+        try self.windows_map.putNoClobber(server_id, window_node);
         try conn.window_server_ids.putNoClobber(client_id, server_id);
 
         if (old_focused_window) |prev|
             self.damage.addRect(prev.rect.border(window_borders));
-        system.damage.addRect(window_node.data.rect.border(window_borders));
+        system.damage.addRect(window_node.rect.border(window_borders));
 
         return .{ .client_id = client_id, .server_id = server_id };
     }
@@ -725,7 +729,7 @@ const System = struct {
         if (self.focusedWindow()) |prev|
             self.damage.addRect(prev.rect.border(window_borders));
 
-        const node: *WindowNode = @fieldParentPtr("data", window);
+        const node = &window.window_list_node;
         self.windows_list.remove(node);
         self.windows_list.append(node);
         self.damage.addRect(window.rect.border(window_borders));
@@ -735,7 +739,7 @@ const System = struct {
         self: *@This(),
     ) ?*Window {
         const node = self.windows_list.last orelse return null;
-        return &node.data;
+        return @fieldParentPtr("window_list_node", node);
     }
 
     fn draw(self: *@This()) void {
@@ -753,9 +757,9 @@ const System = struct {
 
         // draw all windows in the damaged area
         var it = self.windows_list.first;
-        while (it) |node| {
-            it = node.next;
-            const window = &node.data;
+        while (it) |node| : (it = node.next) {
+            const window: *Window = @fieldParentPtr("window_list_node", node);
+
             window.resize() catch |err| {
                 log.err("failed to resize a window: {}", .{err});
             };

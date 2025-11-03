@@ -15,22 +15,44 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
     init();
     if (!initialized.load(.acquire)) return;
 
-    const UartWriter = struct {
-        pub const Error = error{};
-        pub const Self = @This();
+    const Uart = struct {
+        interface: std.io.Writer,
 
-        pub fn writeAll(_: *const Self, bytes: []const u8) !void {
-            writeBytes(bytes);
+        const vtable: std.io.Writer.VTable = .{
+            .drain = drain,
+        };
+
+        pub fn init(buffer: []u8) @This() {
+            return .{ .interface = .{
+                .vtable = &vtable,
+                .buffer = buffer,
+            } };
         }
 
-        pub fn writeBytesNTimes(self: *const Self, bytes: []const u8, n: usize) !void {
-            for (0..n) |_| {
-                try self.writeAll(bytes);
+        fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) error{WriteFailed}!usize {
+            writeBytes(w.buffer[0..w.end]);
+            w.end = 0;
+
+            const pattern = data[data.len - 1];
+            var n: usize = 0;
+
+            for (data[0 .. data.len - 1]) |bytes| {
+                writeBytes(bytes);
+                n += bytes.len;
             }
+            for (0..splat) |_| {
+                writeBytes(pattern);
+            }
+            return n + splat * pattern.len;
         }
     };
 
-    std.fmt.format(UartWriter{}, fmt, args) catch {};
+    var buffer: [256]u8 = undefined;
+    var uart = Uart.init(&buffer);
+    const writer = &uart.interface;
+
+    writer.print(fmt, args) catch {};
+    writer.flush() catch {};
 }
 
 const PORT: u16 = 0x3f8;

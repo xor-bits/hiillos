@@ -6,7 +6,7 @@ const Ctx = @import("main.zig").Ctx;
 
 //
 
-pub fn main(_: Ctx) !void {
+pub fn main(ctx: Ctx) !void {
     const nanos = abi.time.nanoTimestamp();
 
     const uptime_secs = nanos / 1_000_000_000;
@@ -15,7 +15,7 @@ pub fn main(_: Ctx) !void {
     const uptime_days = uptime_hours / 60;
 
     // TODO: RTC clock
-    try abi.io.stdout.writer().print(
+    try ctx.stdout.print(
         \\ 00:00:00 up {} days, {d:02}:{d:02}
         \\
     , .{ uptime_days, uptime_hours, uptime_mins });

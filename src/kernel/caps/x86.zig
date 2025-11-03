@@ -17,7 +17,7 @@ const volat = abi.util.volat;
 //
 
 pub fn init() !void {
-    const cr3 = arch.Cr3.read();
+    const cr3 = arch.x86_64.Cr3.read();
     const level4 = addr.Phys.fromParts(.{ .page = @truncate(cr3.pml4_phys_base) })
         .toHhdm().toPtr(*volatile Vmem);
 
@@ -104,11 +104,9 @@ pub const MappingIterator = struct {
 
         pub fn format(
             self: @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
-            try std.fmt.format(writer, "{s}R{s}{s} [ 0x{x:0>16}..0x{x:0>16} ] => 0x{x:0>16} (0x{x}B)", .{
+            try writer.print("{s}R{s}{s} [ 0x{x:0>16}..0x{x:0>16} ] => 0x{x:0>16} (0x{x}B)", .{
                 if (self.user) "U" else "-",
                 if (self.write) "W" else "-",
                 if (self.exec) "X" else "-",
@@ -327,12 +325,12 @@ pub const Vmem = struct {
     }
 
     pub fn switchTo(self: addr.Phys) void {
-        const cur = arch.Cr3.read();
+        const cur = arch.x86_64.Cr3.read();
         if (cur.pml4_phys_base == self.toParts().page) {
             return;
         }
 
-        (arch.Cr3{
+        (arch.x86_64.Cr3{
             .pml4_phys_base = self.toParts().page,
         }).write();
 
@@ -346,7 +344,7 @@ pub const Vmem = struct {
 
         var it = self.mappings(true);
         while (try it.next()) |mapping| {
-            log.info(" - {}", .{mapping});
+            log.info(" - {f}", .{mapping});
         }
     }
 
@@ -869,7 +867,7 @@ pub const X86IoPort = struct {
     // pub fn disable() void {}
 
     pub fn inb(self: *@This()) u32 {
-        const byte = arch.inb(self.port);
+        const byte = arch.x86_64.inb(self.port);
 
         if (conf.LOG_OBJ_CALLS)
             log.info("X86IoPort.inb port={} byte={}", .{ self.port, byte });
@@ -881,7 +879,7 @@ pub const X86IoPort = struct {
         if (conf.LOG_OBJ_CALLS)
             log.info("X86IoPort.outb port={} byte={}", .{ self.port, byte });
 
-        arch.outb(self.port, byte);
+        arch.x86_64.outb(self.port, byte);
     }
 };
 

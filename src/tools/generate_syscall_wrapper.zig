@@ -13,8 +13,11 @@ pub fn main() !void {
     var output_file = try std.fs.cwd().createFile(args[1], .{});
     defer output_file.close();
 
-    const output = FileFmt{ .file = output_file };
-    defer output_file.sync() catch unreachable;
+    var buffer: [0x2000]u8 = undefined;
+
+    var output_writer = output_file.writer(&buffer);
+    const output = &output_writer.interface;
+    defer output.flush() catch unreachable;
 
     // std.fmt.format(, , )
     try output.writeAll(
@@ -38,13 +41,13 @@ pub fn main() !void {
     };
 
     for (0..7) |ic| for (0..7) |oc| {
-        try std.fmt.format(output,
+        try output.print(
             \\    if (ic == {[ic]} and oc == {[oc]}) {{
             \\
         , .{ .ic = ic, .oc = oc });
 
         for (0..oc) |i| {
-            try std.fmt.format(output,
+            try output.print(
                 \\        // zig cant output from asm to arbitrary places
                 \\        var _out{}: usize = undefined;
                 \\
@@ -58,7 +61,7 @@ pub fn main() !void {
         );
 
         for (0..oc) |i| {
-            try std.fmt.format(output,
+            try output.print(
                 \\              [out{[i]}] "={{{[reg]s}}}" (_out{[i]}),
                 \\
             , .{ .i = i, .reg = x86_64_syscall_args_regs[i] });
@@ -70,20 +73,20 @@ pub fn main() !void {
         );
 
         for (0..ic) |i| {
-            try std.fmt.format(output,
+            try output.print(
                 \\              [in{[i]}] "{{{[reg]s}}}" (in[{[i]}]),
                 \\
             , .{ .i = i, .reg = x86_64_syscall_args_regs[i] });
         }
 
         try output.writeAll(
-            \\            : "rcx", "r11", "memory" // rcx becomes rip and r11 becomes rflags
+            \\            : .{ .rcx = true, .r11 = true, .memory = true } // rcx becomes rip and r11 becomes rflags
             \\        );
             \\
         );
 
         for (0..oc) |i| {
-            try std.fmt.format(output,
+            try output.print(
                 \\        // zig cant output from asm to arbitrary places
                 \\        out[{[i]}] = _out{[i]};
                 \\
@@ -103,16 +106,3 @@ pub fn main() !void {
         \\
     );
 }
-
-const FileFmt = struct {
-    file: std.fs.File,
-    pub const Error = std.fs.File.WriteError;
-    pub fn writeAll(self: *const FileFmt, bytes: []const u8) Error!void {
-        try self.file.writeAll(bytes);
-    }
-    pub fn writeBytesNTimes(self: *const FileFmt, bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| {
-            try self.file.writeAll(bytes);
-        }
-    }
-};

@@ -16,8 +16,13 @@ pub fn main() !void {
     var output_file = try std.fs.cwd().createFile(args[2], .{});
     defer output_file.close();
 
+    var buffer: [0x2000]u8 = undefined;
+
+    var output_writer = output_file.writer(&buffer);
+    const output = &output_writer.interface;
+
     // std.fmt.format(, , )
-    try output_file.writeAll(
+    try output.writeAll(
         \\pub const Glyph = struct {
         \\    img: [16]u16,
         \\    wide: bool,
@@ -27,37 +32,26 @@ pub fn main() !void {
         \\
     );
     for (glyphs) |glyph| {
-        try output_file.writeAll("    .{");
-        try output_file.writeAll(".wide=");
+        try output.writeAll("    .{");
+        try output.writeAll(".wide=");
         if (glyph.wide) {
-            try output_file.writeAll("true,");
+            try output.writeAll("true,");
         } else {
-            try output_file.writeAll("false,");
+            try output.writeAll("false,");
         }
-        try output_file.writeAll(".img=.{");
+        try output.writeAll(".img=.{");
         for (glyph.img) |row| {
-            try std.fmt.format(FileFmt{ .file = output_file }, "{d}", .{row});
-            try output_file.writeAll(",");
+            try output.print("{d}", .{row});
+            try output.writeAll(",");
         }
-        try output_file.writeAll("}");
-        try output_file.writeAll("},\n");
+        try output.writeAll("}");
+        try output.writeAll("},\n");
     }
-    // try std.fmt.format(FileFmt{ .file = output_file }, "{any}", .{glyphs});
-    try output_file.writeAll("};");
-}
+    // try output.print("{any}", .{glyphs});
+    try output.writeAll("};");
 
-const FileFmt = struct {
-    file: std.fs.File,
-    pub const Error = std.fs.File.WriteError;
-    pub fn writeAll(self: *const FileFmt, bytes: []const u8) Error!void {
-        try self.file.writeAll(bytes);
-    }
-    pub fn writeBytesNTimes(self: *const FileFmt, bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| {
-            try self.file.writeAll(bytes);
-        }
-    }
-};
+    try output.flush();
+}
 
 const Glyph = struct {
     img: [16]u16,

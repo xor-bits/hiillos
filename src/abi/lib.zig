@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const root = @import("root");
 
 // pub const relocator = @import("relocator.zig");
@@ -23,6 +24,7 @@ pub const rt = @import("rt.zig");
 pub const sys = @import("sys.zig");
 pub const thread = @import("thread.zig");
 pub const util = @import("util.zig");
+pub const Deque = @import("deque.zig").Deque;
 
 //
 
@@ -40,14 +42,7 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
 
-    var bw = std.io.bufferedWriter(UnifiedLog{});
-    const writer = bw.writer();
-
-    // FIXME: lock the log
-    nosuspend {
-        writer.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
-        bw.flush() catch return;
-    }
+    unilog(level_txt ++ prefix2 ++ format ++ "\n", args);
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
@@ -58,8 +53,9 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     else
         "<unknown>";
 
-    var panic_printer = std.io.bufferedWriter(UnifiedLog{});
-    const writer = panic_printer.writer();
+    var buffer: [256]u8 = undefined;
+    var log = UnifiedLog.init(&buffer);
+    const writer = &log.interface;
 
     var iter = std.debug.StackIterator.init(
         @returnAddress(),
@@ -74,7 +70,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         getSelfDwarf(),
         &.{},
     ) catch {};
-    panic_printer.flush() catch {};
+    writer.flush() catch {};
 
     process.exit(1);
 }
@@ -279,62 +275,98 @@ pub const BootInfo = extern struct {
 //
 
 pub fn unilog(comptime fmt: []const u8, args: anytype) void {
-    var bw = std.io.bufferedWriter(UnifiedLog{});
-    const writer = bw.writer();
+    var buffer: [256]u8 = undefined;
+    var log = UnifiedLog.init(&buffer);
+    const writer = &log.interface;
 
     // FIXME: lock the log
-    nosuspend {
-        writer.print(fmt ++ "\n", args) catch return;
-        bw.flush() catch return;
-    }
+    writer.print(fmt ++ "\n", args) catch return;
+    writer.flush() catch return;
 }
 
 pub const UnifiedLog = struct {
-    pub const Error = error{};
-    pub fn write(self: @This(), bytes: []const u8) Error!usize {
-        try self.writeAll(bytes);
-        return bytes.len;
+    interface: std.io.Writer,
+
+    const vtable: std.io.Writer.VTable = .{
+        .drain = drain,
+    };
+
+    pub fn init(buffer: []u8) @This() {
+        return .{ .interface = .{
+            .vtable = &vtable,
+            .buffer = buffer,
+        } };
     }
-    pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
-        sys.log(bytes);
-        io.stdout.writer().writeAll(bytes) catch {};
+
+    fn drain(
+        w: *std.Io.Writer,
+        data: []const []const u8,
+        splat: usize,
+    ) error{WriteFailed}!usize {
+        sys.log(w.buffer[0..w.end]);
+        _ = io.stdout.write(w.buffer[0..w.end]) catch 0;
+        w.end = 0;
+
+        const pattern = data[data.len - 1];
+        var n: usize = 0;
+
+        for (data[0 .. data.len - 1]) |bytes| {
+            sys.log(bytes);
+            _ = io.stdout.write(bytes) catch 0;
+            n += bytes.len;
+        }
+        for (0..splat) |_| {
+            sys.log(pattern);
+            _ = io.stdout.write(pattern) catch 0;
+        }
+        return n + splat * pattern.len;
     }
-    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| try self.writeAll(bytes);
-    }
-    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-        try std.fmt.format(self, fmt, args);
-    }
-    pub fn flush(_: @This()) Error!void {}
 };
 
 pub fn syslog(comptime fmt: []const u8, args: anytype) void {
-    var bw = std.io.bufferedWriter(SysLog{});
-    const writer = bw.writer();
+    var buffer: [256]u8 = undefined;
+    var log = SysLog.init(&buffer);
+    const writer = &log.interface;
 
     // FIXME: lock the log
-    nosuspend {
-        writer.print(fmt ++ "\n", args) catch return;
-        bw.flush() catch return;
-    }
+    writer.print(fmt ++ "\n", args) catch return;
+    writer.flush() catch return;
 }
 
 pub const SysLog = struct {
-    pub const Error = error{};
-    pub fn write(self: @This(), bytes: []const u8) Error!usize {
-        try self.writeAll(bytes);
-        return bytes.len;
+    interface: std.Io.Writer,
+
+    const vtable: std.Io.Writer.VTable = .{
+        .drain = drain,
+    };
+
+    pub fn init(buffer: []u8) @This() {
+        return .{ .interface = .{
+            .vtable = &vtable,
+            .buffer = buffer,
+        } };
     }
-    pub fn writeAll(_: @This(), bytes: []const u8) Error!void {
-        sys.log(bytes);
+
+    fn drain(
+        w: *std.Io.Writer,
+        data: []const []const u8,
+        splat: usize,
+    ) error{WriteFailed}!usize {
+        sys.log(w.buffer[0..w.end]);
+        w.end = 0;
+
+        const pattern = data[data.len - 1];
+        var n: usize = 0;
+
+        for (data[0 .. data.len - 1]) |bytes| {
+            sys.log(bytes);
+            n += bytes.len;
+        }
+        for (0..splat) |_| {
+            sys.log(pattern);
+        }
+        return n + splat * pattern.len;
     }
-    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| try self.writeAll(bytes);
-    }
-    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-        try std.fmt.format(self, fmt, args);
-    }
-    pub fn flush(_: @This()) Error!void {}
 };
 
 //

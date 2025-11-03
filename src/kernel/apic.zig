@@ -46,10 +46,10 @@ const APIC_TIMER_DIV: u32 = 0b0010; // div by 8
 //
 
 /// all I/O APICs
-var ioapics = std.ArrayList(IoApicInfo).init(pmem.page_allocator);
+var ioapics: std.ArrayList(IoApicInfo) = .{};
 var ioapic_lock: abi.lock.SpinMutex = .{};
 /// all Local APIC IDs that I/O APICs can use as interrupt destinations
-var ioapic_lapics = std.ArrayList(IoApicLapic).init(pmem.page_allocator);
+var ioapic_lapics: std.ArrayList(IoApicLapic) = .{};
 
 var ioapic_lapic_lock: abi.lock.SpinMutex = .{};
 
@@ -218,6 +218,8 @@ const IoApicLapic = struct {
 pub fn init(madt: *const acpi.Madt) !void {
     log.info("init APIC-{}", .{arch.cpuId()});
 
+    const gpa = pmem.page_allocator;
+
     if (builtin.target.cpu.arch == .x86_64) {
         disablePic();
     }
@@ -238,7 +240,7 @@ pub fn init(madt: *const acpi.Madt) !void {
                 if (arch.cpuId() != 0) continue;
 
                 log.info("found I/O APIC addr: 0x{x}", .{entry.io_apic_addr});
-                try ioapics.append(.{
+                try ioapics.append(gpa, .{
                     .addr = addr.Phys.fromInt(entry.io_apic_addr).toHhdm().toPtr(*IoApicRegs),
                     .io_apic_id = entry.io_apic_id,
                     .global_system_interrupt_base = entry.global_system_interrupt_base,
@@ -266,7 +268,7 @@ pub fn init(madt: *const acpi.Madt) !void {
     const cpu_features = arch.CpuFeatures.read();
     if (cpu_features.x2apic) {
         log.info("x2APIC mode", .{});
-        locals.lapic.regs = .{ .x2apic = @ptrFromInt(arch.IA32_X2APIC) };
+        locals.lapic.regs = .{ .x2apic = @ptrFromInt(arch.x86_64.IA32_X2APIC) };
     } else if (cpu_features.apic) {
         log.info("legacy xAPIC mode", .{});
         locals.lapic.regs = .{ .xapic = addr.Phys.fromInt(lapic_addr).toHhdm().toPtr(*LocalXApicRegs) };
@@ -290,6 +292,8 @@ fn enableAny(
     regs: anytype,
     comptime mode: @FieldType(ApicBaseMsr, "lapic_mode"),
 ) !void {
+    const gpa = pmem.page_allocator;
+
     // enable APIC
     var base = ApicBaseMsr.read();
     base.lapic_mode = mode;
@@ -300,7 +304,7 @@ fn enableAny(
     if (lapic_id <= 0xF) {
         ioapic_lapic_lock.lock();
         defer ioapic_lapic_lock.unlock();
-        try ioapic_lapics.append(.{
+        try ioapic_lapics.append(gpa, .{
             .lapic_id = @truncate(lapic_id),
             .locals = arch.cpuLocal(),
         });
@@ -555,11 +559,11 @@ pub const ApicBaseMsr = packed struct {
     reserved2: u28,
 
     pub fn read() @This() {
-        return @bitCast(arch.rdmsr(arch.IA32_APIC_BASE));
+        return @bitCast(arch.x86_64.rdmsr(arch.x86_64.IA32_APIC_BASE));
     }
 
     pub fn write(self: @This()) void {
-        arch.wrmsr(arch.IA32_APIC_BASE, @bitCast(self));
+        arch.x86_64.wrmsr(arch.x86_64.IA32_APIC_BASE, @bitCast(self));
     }
 };
 
@@ -714,7 +718,7 @@ pub fn X2ApicReg(comptime mode: RegisterMode) type {
             std.debug.assert(0x800 <= msr and msr <= 0x8FF);
 
             if (conf.LOG_APIC) log.debug("x2apic read from {x}H", .{msr});
-            return arch.rdmsr(@truncate(msr));
+            return arch.x86_64.rdmsr(@truncate(msr));
         }
 
         pub fn writeIcr(self: *@This(), val: u64) void {
@@ -724,7 +728,7 @@ pub fn X2ApicReg(comptime mode: RegisterMode) type {
             std.debug.assert(0x800 <= msr and msr <= 0x8FF);
 
             if (conf.LOG_APIC) log.debug("x2apic write to {x}H", .{msr});
-            arch.wrmsr(@truncate(msr), val);
+            arch.x86_64.wrmsr(@truncate(msr), val);
         }
     };
 }

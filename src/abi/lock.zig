@@ -139,7 +139,7 @@ pub const Futex = extern struct {
             if (conf.IS_DEBUG) {
                 counter += 1;
                 if (counter % 100 == 0) {
-                    log.warn("possible deadlock", .{});
+                    // log.warn("possible deadlock", .{});
                 }
             }
 
@@ -304,7 +304,7 @@ pub const SpinMutex = extern struct {
                 if (conf.IS_DEBUG) {
                     counter += 1;
                     if (counter % 1_000_000 == 0) {
-                        log.warn("possible deadlock", .{});
+                        // log.warn("possible deadlock", .{});
                     }
                 }
                 std.atomic.spinLoopHint();

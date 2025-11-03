@@ -3,6 +3,7 @@ const std = @import("std");
 
 const apic = @import("apic.zig");
 const arch = @import("arch.zig");
+const boot = @import("boot.zig");
 const fb = @import("fb.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
@@ -44,13 +45,21 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 
     // TODO: maybe `std.debug.Dwarf.ElfModule` contains everything?
 
+    var buffer: [256]u8 = undefined;
+    var writer = std.Io.Writer{
+        .vtable = &.{
+            .drain = panic_printer_drain,
+        },
+        .buffer = &buffer,
+    };
+
     var iter = std.debug.StackIterator.init(
         @returnAddress(),
         @frameAddress(),
     );
     abi.debug.printPanic(
         pmem.page_allocator,
-        panic_printer,
+        &writer,
         "kernel",
         msg,
         &iter,
@@ -58,16 +67,16 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         &source_files,
     ) catch {};
 
-    panic_printer.writeAll("\n") catch {};
+    writer.writeAll("\n") catch {};
     arch.hcf();
 }
 
 pub const Addr2Line = struct {
     addr: usize,
 
-    pub fn format(self: Addr2Line, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Addr2Line, writer: *std.Io.Writer) !void {
         var dwarf = getSelfDwarf() catch |err| {
-            try std.fmt.format(writer, "failed to open DWARF info: {}\n", .{err});
+            try writer.print("failed to open DWARF info: {}\n", .{err});
             return;
         };
         defer dwarf.deinit(pmem.page_allocator);
@@ -129,28 +138,34 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
 }
 
 var log_lock: abi.lock.SpinMutex = .{};
+fn panic_printer_drain(
+    w: *std.Io.Writer,
+    data: []const []const u8,
+    splat: usize,
+) error{WriteFailed}!usize {
+    log_lock.lock();
+    defer log_lock.unlock();
 
-const panic_printer = struct {
-    pub const Error = error{};
+    print_to_uart_and_fb("{s}", .{w.buffer[0..w.end]});
+    w.end = 0;
 
-    pub fn writeAll(_: @This(), lit: []const u8) Error!void {
-        log_lock.lock();
-        defer log_lock.unlock();
-        uart.print("{s}", .{lit});
-        if (conf.KERNEL_PANIC_RSOD)
-            fb.print("{s}", .{lit});
+    const pattern = data[data.len - 1];
+    var n: usize = 0;
+
+    for (data[0 .. data.len - 1]) |bytes| {
+        print_to_uart_and_fb("{s}", .{bytes});
+        n += bytes.len;
     }
-
-    pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-        for (0..n) |_| {
-            try self.writeAll(bytes);
-        }
+    for (0..splat) |_| {
+        print_to_uart_and_fb("{s}", .{pattern});
     }
-
-    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-        try std.fmt.format(self, fmt, args);
-    }
-}{};
+    return n + splat * pattern.len;
+}
+fn print_to_uart_and_fb(comptime fmt: []const u8, args: anytype) void {
+    uart.print(fmt, args);
+    if (conf.KERNEL_PANIC_RSOD)
+        fb.print(fmt, args);
+}
 
 const sources = @import("sources");
 const source_files: [sources.sources.len]abi.debug.SourceFile = b: {
@@ -171,8 +186,8 @@ fn open(comptime path: []const u8) abi.debug.SourceFile {
 }
 
 fn getSelfDwarf() !std.debug.Dwarf {
-    const kernel_file = @import("args.zig").kernel_file.response orelse return error.NoKernelFile;
-    const elf_bin = kernel_file.kernel_file.data();
+    const kernel_file = boot.kernel_file.response orelse return error.NoKernelFile;
+    const elf_bin = kernel_file.executable_file.data();
 
     return try abi.debug.getSelfDwarf(pmem.page_allocator, elf_bin);
 }

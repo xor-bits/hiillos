@@ -2,6 +2,7 @@ const std = @import("std");
 const abi = @import("abi");
 
 const caps = abi.caps;
+const Ctx = @import("main.zig").Ctx;
 
 //
 
@@ -11,13 +12,13 @@ const Subcommand = enum {
 
 //
 
-pub fn main(ctx: @import("main.zig").Ctx) !void {
+pub fn main(ctx: Ctx) !void {
     const subcmd_name = ctx.args.next() orelse {
-        try help();
+        try help(ctx);
         return;
     };
     const subcmd = std.meta.stringToEnum(Subcommand, subcmd_name) orelse {
-        try help();
+        try help(ctx);
         return;
     };
 
@@ -25,7 +26,7 @@ pub fn main(ctx: @import("main.zig").Ctx) !void {
         .install => {
             try install();
 
-            try abi.io.stdout.writer().print(
+            try ctx.stdout.print(
                 \\coreutils installed
                 \\
             , .{});
@@ -65,8 +66,8 @@ fn installAs(comptime name: []const u8) !void {
     try result.asErrorUnion();
 }
 
-fn help() !void {
-    try abi.io.stdout.writer().print(
+fn help(ctx: Ctx) !void {
+    try ctx.stdout.print(
         \\Hiillos Coreutils v0.0.2
         \\usage: coreutils [install]
         \\

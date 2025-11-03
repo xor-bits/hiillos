@@ -120,7 +120,7 @@ pub fn Ring(comptime T: type) type {
         // }
 
         pub fn marker(self: *const Self) *Marker {
-            return @volatileCast(@alignCast(@ptrCast(self.mapped_data.ptr)));
+            return @ptrCast(@alignCast(@volatileCast(self.mapped_data.ptr)));
         }
 
         pub fn storage(self: *const Self) []volatile T {
@@ -290,48 +290,78 @@ pub fn Ring(comptime T: type) type {
 
         pub const Reader = struct {
             ring: *const Self,
+            interface: std.Io.Reader,
 
-            pub const Error = RingError;
+            fn stream(
+                r: *std.Io.Reader,
+                w: *std.Io.Writer,
+                limit: std.Io.Limit,
+            ) std.Io.Reader.StreamError!usize {
+                if (limit == .nothing) return 0;
+                const self: *@This() = @fieldParentPtr("interface", r);
 
-            pub fn read(self: @This(), buf: []T) Error!usize {
-                const got = try self.ring.readWait(buf);
-                return got.len;
+                const dest = limit.slice(try w.writableSliceGreedy(1));
+
+                const n = (self.ring.readWait(dest) catch return error.ReadFailed).len;
+                w.advance(n);
+                return n;
             }
-
-            pub fn flush(_: @This()) Error!void {}
         };
 
-        pub fn reader(self: *const Self) Reader {
-            return Reader{ .ring = self };
+        pub fn reader(self: *const Self, buffer: []u8) Reader {
+            return .{
+                .ring = self,
+                .interface = .{
+                    .buffer = buffer,
+                    .seek = 0,
+                    .end = 0,
+                    .vtable = &.{
+                        .stream = Reader.stream,
+                    },
+                },
+            };
         }
 
         pub const Writer = struct {
             ring: *const Self,
+            interface: std.Io.Writer,
 
-            pub const Error = RingError;
+            fn drain(
+                w: *std.Io.Writer,
+                data: []const []const u8,
+                splat: usize,
+            ) std.Io.Writer.Error!usize {
+                const self: *@This() = @fieldParentPtr("interface", w);
 
-            pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-                try std.fmt.format(self, fmt, args);
+                {
+                    self.ring.writeWait(w.buffer[0..w.end]) catch return error.WriteFailed;
+                    w.end = 0;
+                }
+
+                const pattern = data[data.len - 1];
+                var n: usize = 0;
+
+                for (data[0 .. data.len - 1]) |bytes| {
+                    self.ring.writeWait(bytes) catch return error.WriteFailed;
+                    n += bytes.len;
+                }
+                for (0..splat) |_| {
+                    self.ring.writeWait(pattern) catch return error.WriteFailed;
+                }
+                return n + splat * pattern.len;
             }
-
-            pub fn write(self: @This(), bytes: []const T) Error!usize {
-                try self.writeAll(bytes);
-                return bytes.len;
-            }
-
-            pub fn writeAll(self: @This(), bytes: []const T) Error!void {
-                try self.ring.writeWait(bytes);
-            }
-
-            pub fn writeBytesNTimes(self: @This(), bytes: []const T, n: usize) Error!void {
-                for (0..n) |_| try self.writeAll(bytes);
-            }
-
-            pub fn flush(_: @This()) Error!void {}
         };
 
-        pub fn writer(self: *const Self) Writer {
-            return Writer{ .ring = self };
+        pub fn writer(self: *const Self, buffer: []u8) Writer {
+            return Writer{
+                .ring = self,
+                .interface = .{
+                    .buffer = buffer,
+                    .vtable = &.{
+                        .drain = Writer.drain,
+                    },
+                },
+            };
         }
     };
 }

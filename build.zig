@@ -263,8 +263,10 @@ fn createIso(
     // tool that generates the ISO file with everything
     const wrapper = b.addExecutable(.{
         .name = "xorriso_limine_wrapper",
-        .root_source_file = b.path("src/tools/xorriso_limine_wrapper.zig"),
-        .target = opts.native_target,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/xorriso_limine_wrapper.zig"),
+            .target = opts.native_target,
+        }),
     });
 
     // create virtual iso root
@@ -376,37 +378,25 @@ fn createInitfsTarZstProcess(
         name,
     });
 
-    const proc = b.addModule(name, .{
-        .root_source_file = b.path(source),
-        .imports = &.{
-            .{ .name = "abi", .module = abi },
-            .{ .name = "gui", .module = gui },
-        },
-    });
-    proc.addImport("abi", abi);
-
-    const wf = b.addWriteFiles();
-    const userspace_entry_wrapper_zig = wf.add("userspace_entry_wrapper.zig",
-        \\pub usingnamespace @import("proc");
-        \\comptime { @import("abi").rt.installRuntime(); }
-        \\pub const std_options = @import("abi").std_options;
-        \\pub const panic = @import("abi").panic;
-    );
-
-    const userspace_entry_wrapper = b.addExecutable(.{
+    const proc = b.addExecutable(.{
         .name = name,
-        .root_source_file = userspace_entry_wrapper_zig,
-        .target = opts.user_target,
-        .optimize = opts.optimize,
-        .pic = true,
-        .strip = false,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(source),
+            .imports = &.{
+                .{ .name = "abi", .module = abi },
+                .{ .name = "gui", .module = gui },
+            },
+            .target = opts.user_target,
+            .optimize = opts.optimize,
+            .pic = true,
+            .strip = false,
+        }),
+        .use_llvm = true,
     });
-    userspace_entry_wrapper.root_module.addImport("abi", abi);
-    userspace_entry_wrapper.root_module.addImport("proc", proc);
 
-    b.installArtifact(userspace_entry_wrapper);
+    b.installArtifact(proc);
 
-    _ = initfs.addCopyFile(userspace_entry_wrapper.getEmittedBin(), path);
+    _ = initfs.addCopyFile(proc.getEmittedBin(), path);
 }
 
 fn createInitfsTarZstAssets(
@@ -457,10 +447,10 @@ fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {
 fn generateSourcesZig(b: *std.Build) !*std.Build.Module {
     // collect all kernel source files for the stack tracer
 
-    var sources_zig_contents = std.ArrayList(u8).init(b.allocator);
-    errdefer sources_zig_contents.deinit();
+    var sources_zig_contents: std.ArrayList(u8) = .{};
+    errdefer sources_zig_contents.deinit(b.allocator);
 
-    const sources_zig_writer = sources_zig_contents.writer();
+    const sources_zig_writer = sources_zig_contents.writer(b.allocator);
     try sources_zig_writer.writeAll(
         \\pub const sources: []const []const u8 = &.{
         \\
@@ -501,7 +491,6 @@ fn createKernelElf(
         .optimize = opts.optimize,
         .code_model = .kernel,
     });
-    kernel_module.addImport("limine", b.dependency("limine", .{}).module("limine"));
     kernel_module.addImport("abi", abi);
     kernel_module.addImport("git-rev", git_rev_mod);
     kernel_module.addImport("sources", try generateSourcesZig(b));
@@ -515,6 +504,7 @@ fn createKernelElf(
             // .root_source_file = b.path("src/kernel/test.zig"),
             .test_runner = .{ .path = b.path("src/kernel/test.zig"), .mode = .simple },
             .root_module = kernel_module,
+            .use_llvm = true,
         });
 
         testkernel_elf_step.setLinkerScript(b.path("src/kernel/link/x86_64.ld"));
@@ -529,6 +519,7 @@ fn createKernelElf(
         const kernel_elf_step = b.addExecutable(.{
             .name = "kernel",
             .root_module = kernel_module,
+            .use_llvm = true,
         });
 
         kernel_elf_step.setLinkerScript(b.path("src/kernel/link/x86_64.ld"));
@@ -549,9 +540,12 @@ fn createRootBin(
 ) std.Build.LazyPath {
     const root_elf_step = b.addExecutable(.{
         .name = "root",
-        .root_source_file = b.path("src/userspace/root/main.zig"),
-        .target = opts.user_target,
-        .optimize = opts.optimize_root,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/userspace/root/main.zig"),
+            .target = opts.user_target,
+            .optimize = opts.optimize_root,
+        }),
+        .use_llvm = true,
     });
     root_elf_step.root_module.addImport("abi", abi);
     root_elf_step.setLinkerScript(b.path("src/userspace/root/link.ld"));
@@ -573,8 +567,10 @@ fn createRootBin(
 fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
     const syscall_generator_tool = b.addExecutable(.{
         .name = "generate_syscall_wrapper",
-        .root_source_file = b.path("src/tools/generate_syscall_wrapper.zig"),
-        .target = opts.native_target,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/generate_syscall_wrapper.zig"),
+            .target = opts.native_target,
+        }),
     });
 
     const syscall_generator_tool_run = b.addRunArtifact(syscall_generator_tool);
@@ -617,8 +613,10 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 fn createFont(b: *std.Build, opts: *const Opts) *std.Build.Module {
     const font_tool = b.addExecutable(.{
         .name = "generate_font",
-        .root_source_file = b.path("src/tools/generate_font.zig"),
-        .target = opts.native_target,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/generate_font.zig"),
+            .target = opts.native_target,
+        }),
     });
 
     const font_tool_run = b.addRunArtifact(font_tool);

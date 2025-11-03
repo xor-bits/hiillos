@@ -101,85 +101,131 @@ pub const File = union(enum) {
         }
     }
 
+    pub const ReadError = ring.RingError || sys.Error;
+
+    pub fn read(self: *Self, dst: []u8) ReadError!usize {
+        switch (self.*) {
+            .ring => |*v| {
+                const got = try v.readWait(dst);
+                return got.len;
+            },
+            .file => |*v| {
+                // TODO: read non-zero chunks instead of everything at once
+                const cursor = v.cursor.fetchAdd(dst.len, .monotonic);
+                if (cursor >= v.limit) return 0;
+                const limit = @min(v.limit - cursor, dst.len);
+                try v.frame.read(cursor, dst[0..limit]);
+                return limit;
+            },
+            .none => return 0,
+        }
+    }
+
+    pub const WriteError = ring.RingError || sys.Error;
+
+    pub fn write(self: *Self, src: []const u8) WriteError!usize {
+        switch (self.*) {
+            .ring => |*v| {
+                try v.writeWait(src);
+                return src.len;
+            },
+            .file => |*v| {
+                const cursor = v.cursor.fetchAdd(src.len, .monotonic);
+                if (cursor >= v.limit) {
+                    // FIXME: resize
+                    return 0;
+                }
+                const limit = @min(v.limit - cursor, src.len);
+                try v.frame.write(cursor, src[0..limit]);
+                return limit;
+            },
+            .none => return src.len,
+        }
+    }
+
     pub const Reader = struct {
         self: *Self,
+        interface: std.Io.Reader,
 
-        pub const Error = ring.RingError || sys.Error;
-
-        pub fn read(self: @This(), buf: []u8) Error!usize {
-            switch (self.self.*) {
-                .ring => |*v| {
-                    const got = try v.readWait(buf);
-                    return got.len;
-                },
-                .file => |*v| {
-                    // TODO: read non-zero chunks instead of everything at once
-                    const cursor = v.cursor.fetchAdd(buf.len, .monotonic);
-                    if (cursor >= v.limit) return 0;
-                    const limit = @min(v.limit - cursor, buf.len);
-                    try v.frame.read(cursor, buf[0..limit]);
-                    return limit;
-                },
-                .none => return 0,
-            }
+        fn read(self: *@This(), dst: []u8) std.Io.Reader.StreamError!usize {
+            const n = self.self.read(dst) catch return error.ReadFailed;
+            if (n == 0) return error.EndOfStream;
+            return n;
         }
 
-        pub fn readSingle(self: @This()) Error!u8 {
-            var buf: [1]u8 = undefined;
-            const c = try self.read(&buf);
-            std.debug.assert(c == 1);
-            // if (c == 0) return Error.ReadZero;
-            return buf[0];
-        }
+        fn stream(
+            r: *std.Io.Reader,
+            w: *std.Io.Writer,
+            limit: std.Io.Limit,
+        ) std.Io.Reader.StreamError!usize {
+            if (limit == .nothing) return 0;
+            const self: *@This() = @fieldParentPtr("interface", r);
 
-        pub fn flush(_: @This()) Error!void {}
+            const dst = limit.slice(try w.writableSliceGreedy(1));
+            const n = try self.read(dst);
+            w.advance(n);
+            return n;
+        }
     };
 
-    pub fn reader(self: *Self) Reader {
-        return .{ .self = self };
+    pub fn reader(self: *Self, buffer: []u8) Reader {
+        return .{
+            .self = self,
+            .interface = .{
+                .buffer = buffer,
+                .end = 0,
+                .seek = 0,
+                .vtable = &.{
+                    .stream = Reader.stream,
+                },
+            },
+        };
     }
 
     pub const Writer = struct {
         self: *Self,
+        interface: std.Io.Writer,
 
-        pub const Error = ring.RingError || sys.Error;
+        fn drain(
+            w: *std.Io.Writer,
+            data: []const []const u8,
+            splat: usize,
+        ) error{WriteFailed}!usize {
+            const self: *@This() = @fieldParentPtr("interface", w);
 
-        pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) Error!void {
-            try std.fmt.format(self, fmt, args);
-        }
-
-        pub fn write(self: @This(), buf: []const u8) Error!usize {
-            try self.writeAll(buf);
-            return buf.len;
-        }
-
-        pub fn writeAll(self: @This(), buf: []const u8) Error!void {
-            switch (self.self.*) {
-                .ring => |*v| {
-                    try v.writeWait(buf);
-                },
-                .file => |*v| {
-                    const cursor = v.cursor.fetchAdd(buf.len, .monotonic);
-                    if (cursor >= v.limit) {
-                        // FIXME: resize
-                        return;
-                    }
-                    const limit = @min(v.limit - cursor, buf.len);
-                    try v.frame.write(cursor, buf[0..limit]);
-                },
-                .none => {},
+            {
+                const written = self.self.write(w.buffer[0..w.end]) catch return error.WriteFailed;
+                if (written != w.end) return error.WriteFailed;
+                w.end = 0;
             }
-        }
 
-        pub fn writeBytesNTimes(self: @This(), bytes: []const u8, n: usize) Error!void {
-            for (0..n) |_| try self.writeAll(bytes);
-        }
+            const pattern = data[data.len - 1];
+            var n: usize = 0;
 
-        pub fn flush(_: @This()) Error!void {}
+            for (data[0 .. data.len - 1]) |bytes| {
+                const written = self.self.write(bytes) catch return error.WriteFailed;
+                if (written == 0) return n;
+                n += written;
+            }
+            for (0..splat) |_| {
+                const written = self.self.write(pattern) catch return error.WriteFailed;
+                if (written == 0) return n;
+                n += written;
+            }
+            return n;
+        }
     };
 
-    pub fn writer(self: *Self) Writer {
-        return .{ .self = self };
+    pub fn writer(self: *Self, buffer: []u8) Writer {
+        return .{
+            .self = self,
+            .interface = .{
+                .buffer = buffer,
+                .vtable = &.{
+                    .drain = Writer.drain,
+                },
+            },
+        };
     }
 };
 

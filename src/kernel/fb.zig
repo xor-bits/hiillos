@@ -4,6 +4,7 @@ const std = @import("std");
 
 const addr = @import("addr.zig");
 const arch = @import("arch.zig");
+const boot = @import("boot.zig");
 const caps = @import("caps.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
@@ -12,15 +13,12 @@ const font = abi.font;
 
 //
 
-pub export var framebuffer: limine.FramebufferRequest = .{};
-
-//
-
 pub fn bootInfoInstallFramebuffer(boot_info: *caps.Frame, thread: *caps.Thread) !void {
-    const resp = framebuffer.response orelse return;
-    if (resp.framebuffer_count == 0) return;
+    const resp = boot.framebuffer.response orelse return;
+    const framebuffers = resp.framebuffers();
+    if (framebuffers.len == 0) return;
 
-    const first_fb = resp.framebuffers()[0];
+    const first_fb = framebuffers[0];
     const fb_paddr = addr.Virt.fromPtr(first_fb.address).hhdmToPhys();
     const fb_size: usize = first_fb.height * first_fb.pitch * (std.math.divCeil(usize, first_fb.bpp, 8) catch unreachable);
 
@@ -68,21 +66,43 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
     if (!initialized) return;
 
     const FbWriter = struct {
-        pub const Error = error{};
-        pub const Self = @This();
+        interface: std.io.Writer,
 
-        pub fn writeAll(_: *const Self, bytes: []const u8) Error!void {
-            writeBytes(bytes);
+        const vtable: std.io.Writer.VTable = .{
+            .drain = drain,
+        };
+
+        pub fn init(buffer: []u8) @This() {
+            return .{ .interface = .{
+                .vtable = &vtable,
+                .buffer = buffer,
+            } };
         }
 
-        pub fn writeBytesNTimes(_: *const Self, bytes: []const u8, n: usize) Error!void {
-            for (0..n) |_| {
+        fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) error{WriteFailed}!usize {
+            writeBytes(w.buffer[0..w.end]);
+            w.end = 0;
+
+            const pattern = data[data.len - 1];
+            var n: usize = 0;
+
+            for (data[0 .. data.len - 1]) |bytes| {
                 writeBytes(bytes);
+                n += bytes.len;
             }
+            for (0..splat) |_| {
+                writeBytes(pattern);
+            }
+            return n + splat * pattern.len;
         }
     };
 
-    std.fmt.format(FbWriter{}, fmt, args) catch {};
+    var buffer: [256]u8 = undefined;
+    var fb_writer = FbWriter.init(&buffer);
+    const writer = &fb_writer.interface;
+
+    writer.print(fmt, args) catch {};
+    writer.flush() catch {};
     flush();
 }
 
@@ -111,17 +131,18 @@ fn init_fb() void {
     }
     defer once.complete();
 
-    const framebuffer_response = framebuffer.response orelse {
+    const framebuffer_response = boot.framebuffer.response orelse {
         uart.print("failed to init fb log: no fb response", .{});
         return;
     };
+    const framebuffers = framebuffer_response.framebuffers();
 
-    if (framebuffer_response.framebuffer_count < 1) {
+    if (framebuffers.len == 0) {
         uart.print("failed to init fb log: no fbs", .{});
         return;
     }
 
-    const fb_raw = framebuffer_response.framebuffers()[0];
+    const fb_raw = framebuffers[0];
     fb = abi.util.Image([*]volatile u8){
         .width = @intCast(fb_raw.width),
         .height = @intCast(fb_raw.height),

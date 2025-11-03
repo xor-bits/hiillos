@@ -7,6 +7,12 @@ const caps = abi.caps;
 
 pub const log_level = .info;
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 const log = std.log.scoped(.pci);
 const Error = abi.sys.Error;
 const KeyEvent = abi.input.KeyEvent;

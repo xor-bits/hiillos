@@ -8,27 +8,27 @@ const Ctx = @import("main.zig").Ctx;
 
 pub fn main(ctx: Ctx) !void {
     if (ctx.args.next()) |path| {
-        try tryLsPath(path);
+        try tryLsPath(ctx, path);
     } else {
-        try tryLsPath("initfs:///sbin/");
+        try tryLsPath(ctx, "initfs:///sbin/");
         return;
     }
 
     while (ctx.args.next()) |path| {
-        try tryLsPath(path);
+        try tryLsPath(ctx, path);
     }
 }
 
-fn tryLsPath(path: []const u8) !void {
-    lsPath(path) catch |err| {
-        try abi.io.stdout.writer().print(
+fn tryLsPath(ctx: Ctx, path: []const u8) !void {
+    lsPath(ctx, path) catch |err| {
+        try ctx.stderr.print(
             "cannot open {s}: {}\n",
             .{ path, err },
         );
     };
 }
 
-fn lsPath(path: []const u8) !void {
+fn lsPath(ctx: Ctx, path: []const u8) !void {
     const dir = try abi.fs.openDirAbsolute(path, .{});
     defer dir.deinit();
 
@@ -36,7 +36,7 @@ fn lsPath(path: []const u8) !void {
     defer it.deinit();
 
     while (it.next()) |entry| {
-        try abi.io.stdout.writer().print(
+        try ctx.stdout.print(
             "{s}\n",
             .{entry.name},
         );

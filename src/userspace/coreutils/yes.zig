@@ -6,9 +6,9 @@ const Ctx = @import("main.zig").Ctx;
 
 //
 
-pub fn main(_: Ctx) !void {
+pub fn main(ctx: Ctx) !void {
     while (true) {
-        try abi.io.stdout.writer().writeAll("y\n");
+        try ctx.stdout.writeAll("y\n");
         abi.time.sleep(100_000);
         // abi.sys.selfYield();
     }

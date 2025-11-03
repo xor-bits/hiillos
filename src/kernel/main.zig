@@ -1,20 +1,20 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi");
-const limine = @import("limine");
 
 const acpi = @import("acpi.zig");
 const addr = @import("addr.zig");
 const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const args = @import("args.zig");
+const boot = @import("boot.zig");
+const call = @import("call.zig");
 const caps = @import("caps.zig");
 const copy = @import("copy.zig");
 const init = @import("init.zig");
 const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
-const call = @import("call.zig");
 
 //
 
@@ -26,10 +26,7 @@ const volat = abi.util.volat;
 
 //
 
-pub export var base_revision: limine.BaseRevision = .{ .revision = 2 };
-pub export var hhdm: limine.HhdmRequest = .{};
 pub var all_cpu_locals: []CpuLocalStorage = &.{};
-
 pub var hhdm_offset: usize = 0xFFFF_8000_0000_0000;
 
 pub const CpuLocalStorage = struct {
@@ -51,8 +48,11 @@ pub const CpuLocalStorage = struct {
     lapic_id: u32,
     lapic: apic.Locals = .{},
 
-    tlb_shootdown_queue: std.fifo.LinearFifo(*caps.TlbShootdown, .{ .Static = 16 }) = .init(),
+    tlb_shootdown_queue: [16]*caps.TlbShootdown = undefined,
+    tlb_shootdown_queue_head: u4 = 0,
+    tlb_shootdown_queue_len: u4 = 0,
     tlb_shootdown_queue_lock: abi.lock.SpinMutex = .{},
+
     initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
@@ -70,7 +70,12 @@ pub const CpuLocalStorage = struct {
         self.tlb_shootdown_queue_lock.lock();
         defer self.tlb_shootdown_queue_lock.unlock();
 
-        return self.tlb_shootdown_queue.readItem();
+        if (self.tlb_shootdown_queue_len == 0) return null;
+        self.tlb_shootdown_queue_len -= 1;
+        defer self.tlb_shootdown_queue_head +%= 1;
+
+        defer self.tlb_shootdown_queue[self.tlb_shootdown_queue_head] = undefined;
+        return self.tlb_shootdown_queue[self.tlb_shootdown_queue_head];
     }
 
     pub fn pushTlbShootdown(self: *@This(), owned_ptr: *caps.TlbShootdown) void {
@@ -86,13 +91,17 @@ pub const CpuLocalStorage = struct {
         self.tlb_shootdown_queue_lock.lock();
         defer self.tlb_shootdown_queue_lock.unlock();
 
-        return !std.meta.isError(self.tlb_shootdown_queue.writeItem(owned_ptr));
+        if (self.tlb_shootdown_queue_len == self.tlb_shootdown_queue.len) return false;
+        const idx = (self.tlb_shootdown_queue_head + self.tlb_shootdown_queue_len) % self.tlb_shootdown_queue.len;
+        self.tlb_shootdown_queue[idx] = owned_ptr;
+        self.tlb_shootdown_queue_len += 1;
+        return true;
     }
 };
 
 //
 
-export fn _start() callconv(.C) noreturn {
+export fn _start() callconv(.c) noreturn {
     arch.earlyInit();
     main();
 }
@@ -101,12 +110,12 @@ pub fn main() noreturn {
     const log = std.log.scoped(.main);
 
     // crash if bootloader is unsupported
-    if (!base_revision.is_supported()) {
+    if (!boot.base_revision.isSupported()) {
         log.err("bootloader unsupported", .{});
         arch.hcf();
     }
 
-    const hhdm_response = hhdm.response orelse {
+    const hhdm_response = boot.hhdm.response orelse {
         log.err("no HHDM", .{});
         arch.hcf();
     };
@@ -175,7 +184,7 @@ pub fn main() noreturn {
 }
 
 // the actual _smpstart is in arch/x86_64.zig
-pub fn smpmain(smpinfo: *limine.SmpInfo) noreturn {
+pub fn smpmain(smpinfo: *boot.LimineMpInfo) noreturn {
     const log = std.log.scoped(.main);
 
     // boot up a few processors

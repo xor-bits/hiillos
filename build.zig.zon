@@ -2,10 +2,6 @@
     .name = .hiillos,
     .version = "0.0.2",
     .dependencies = .{
-        .limine = .{
-            .url = "https://github.com/48cf/limine-zig/archive/7b29b6e6f6d35052f01ed3831085a39aae131705.tar.gz",
-            .hash = "1220f946f839eab2ec49dca1c805ce72ac3e3ef9c47b3afcdecd1c05a7b35f66d277",
-        },
         .limine_bootloader = .{
             .url = "https://github.com/limine-bootloader/limine/archive/refs/tags/v8.3.2-binary.tar.gz",
             .hash = "1220691d9f8b2dfbc5e2727e3400d983b88db37ad7b2468735932ec12b37d304c90e",

@@ -8,6 +8,12 @@ const spinner = @import("spinner.zig");
 const caps = abi.caps;
 const log = std.log.scoped(.init);
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub fn main() !void {

@@ -5,6 +5,12 @@ const gui = @import("gui");
 const caps = abi.caps;
 const log = std.log.scoped(.term);
 
+pub const std_options = abi.std_options;
+pub const panic = abi.panic;
+comptime {
+    abi.rt.installRuntime();
+}
+
 //
 
 pub fn main() !void {
@@ -52,9 +58,9 @@ pub fn main() !void {
         },
     }, caps.COMMON_PM);
 
-    var stdout_reader = abi.escape.parser(
-        std.io.bufferedReader(sh_stdout.reader()),
-    );
+    var buffer: [0x2000]u8 = undefined;
+    var stdout_reader_raw = sh_stdout.reader(&buffer);
+    var stdout_reader = abi.escape.Parser.init(&stdout_reader_raw.interface);
 
     while (try stdout_reader.next()) |_token| {
         const token: abi.escape.Control = _token;
