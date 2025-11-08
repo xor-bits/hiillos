@@ -188,8 +188,9 @@ fn openDirInner(
     while (it.next()) |entry| {
         frame_size += @sizeOf(abi.fs.DirEntRawNoName) + entry.key_ptr.len + 1;
     }
+    frame_size = @min(frame_size, 0x1000);
 
-    const frame = try caps.Frame.create(@max(frame_size, 0x1000));
+    const frame = try caps.Frame.create(frame_size);
     errdefer frame.close();
     frame_size = 0;
 
