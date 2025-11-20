@@ -169,6 +169,7 @@ pub const Process = struct {
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {
+        std.debug.assert(self.lock.isLocked());
         const free = self.free;
 
         if (free != 0) {
@@ -191,6 +192,7 @@ pub const Process = struct {
     }
 
     fn freeSlotLocked(self: *@This(), handle: u32) void {
+        std.debug.assert(self.lock.isLocked());
         self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
         self.free = handle;
     }
@@ -248,9 +250,7 @@ pub const Process = struct {
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
 
-        if (min_rights) |_min_rights|
-            if (!slot.rights.contains(_min_rights))
-                return Error.PermissionDenied;
+        try slot.checkPrivileges(min_rights);
 
         const cap = slot.take() orelse return Error.BadHandle;
         self.freeSlotLocked(handle);
@@ -294,7 +294,11 @@ pub const Process = struct {
 
         const ptr = cap.as(caps.Reply) orelse return Error.InvalidCapability;
         const rights = cap.rights;
+
+        self.lock.lock();
+        defer self.lock.unlock();
         self.freeSlotLocked(handle);
+
         return .{ ptr, rights };
     }
 };

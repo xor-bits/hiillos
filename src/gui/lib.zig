@@ -596,6 +596,15 @@ pub const Framebuffer = struct {
         };
     }
 
+    pub fn clone(self: @This()) !@This() {
+        return .{
+            .shmem = try self.shmem.clone(),
+            .pitch = self.pitch,
+            .size = self.size,
+            .bytes = self.bytes,
+        };
+    }
+
     pub fn calculateFrameSize(size: Size) error{Overflow}!struct { pitch: u32, bytes: u32 } {
         const real_width = try std.math.ceilPowerOfTwo(u32, size[0]);
         const bytes = try std.math.mul(

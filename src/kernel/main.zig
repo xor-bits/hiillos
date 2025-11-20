@@ -92,7 +92,7 @@ pub const CpuLocalStorage = struct {
         defer self.tlb_shootdown_queue_lock.unlock();
 
         if (self.tlb_shootdown_queue_len == self.tlb_shootdown_queue.len) return false;
-        const idx = (self.tlb_shootdown_queue_head + self.tlb_shootdown_queue_len) % self.tlb_shootdown_queue.len;
+        const idx = self.tlb_shootdown_queue_head +% self.tlb_shootdown_queue_len;
         self.tlb_shootdown_queue[idx] = owned_ptr;
         self.tlb_shootdown_queue_len += 1;
         return true;

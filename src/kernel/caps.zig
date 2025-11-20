@@ -142,6 +142,15 @@ pub const CapabilitySlot = packed struct {
         self.rights = new.rights;
     }
 
+    pub fn checkPrivileges(self: *@This(), min_rights: ?abi.sys.Rights) Error!void {
+        if (self.type == .null)
+            return Error.BadHandle;
+
+        if (min_rights) |_min_rights|
+            if (!self.rights.contains(_min_rights))
+                return Error.PermissionDenied;
+    }
+
     pub fn unwrap(self: @This()) ?Capability {
         var s = self;
         return s.take();

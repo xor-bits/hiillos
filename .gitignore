@@ -1,5 +1,4 @@
 .direnv/
 .zig-cache/
 zig-out/
-build/
 .gdb_history

@@ -463,12 +463,22 @@ const Framebuffer = struct {
         } else if (try self.shmem.update(size)) |new| {
             self.deinit();
             self.* = try Framebuffer.init(new);
+            self.shmem.shmem.cap = 0; // the only capability will be sent over IPC
 
             resize_event_conn.pushEvent(.{ .window = .{
                 .window_id = resize_event_window_id,
                 .event = .{ .resize = new },
             } });
         } else {
+            // log.info("resize reuse old={}b old={}x{} new={}x{} cap={} pixels={*}", .{
+            //     self.shmem.bytes,
+            //     self.shmem.size[0],
+            //     self.shmem.size[1],
+            //     size[0],
+            //     size[1],
+            //     self.shmem.shmem.cap,
+            //     self.fb.pixel_array,
+            // });
             self.fb.width = size[0];
             self.fb.height = size[1];
             self.shmem.size = size;

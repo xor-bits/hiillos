@@ -167,7 +167,8 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "-machine",
         "q35",
         "-cpu",
-        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid",
+        "host",
+        // "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pmu,+perfctr_core,+tsc,+invtsc",
         "-m",
         "1g", // 3m is the absolute minimum right now
         "-no-reboot",
@@ -192,8 +193,8 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
     if (opts.kvm) {
         qemu_step.addArgs(&.{
             "-enable-kvm",
-            "-M",
-            "smm=off,accel=kvm",
+            // "-M",
+            // "smm=off,accel=kvm",
         });
     }
 

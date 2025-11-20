@@ -42,7 +42,7 @@ pub const DEBUG_UNHANDLED_FAULT: bool = false;
 /// FIFO vs. FILO physical memory free lists
 pub const CYCLE_PHYSICAL_MEMORY: bool = false;
 
-pub const IPC_BENCHMARK: bool = false;
+pub const IPC_BENCHMARK: bool = true;
 pub const SCHED_STRESS_TEST: bool = false;
 pub const FUTEX_STRESS_TEST: bool = false;
 

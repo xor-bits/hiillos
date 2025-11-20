@@ -45,6 +45,13 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
             pub const MIN: usize = MAX / 2;
         };
 
+        comptime {
+            std.debug.assert(@sizeOf(LeafNode) <= cfg.node_size);
+            std.debug.assert(@sizeOf(BranchNode) <= cfg.node_size);
+            if (LeafNode.MIN == 0 or BranchNode.MIN == 0)
+                @compileError("node_size too small");
+        }
+
         const Node = struct {
             ptr: usize,
             used: *usize,
@@ -100,14 +107,6 @@ pub fn BTreeMap(comptime K: type, comptime V: type, comptime cfg: Config) type {
             const val = arr[i];
             std.mem.copyForwards(T, arr[i .. len - 1], arr[i + 1 .. len]);
             return val;
-        }
-
-        comptime {
-            std.debug.assert(@sizeOf(LeafNode) <= cfg.node_size);
-            std.debug.assert(@sizeOf(BranchNode) <= cfg.node_size);
-
-            if (LeafNode.MIN == 0 or BranchNode.MIN == 0)
-                @compileError("node_size too small");
         }
 
         const IndexResult = union(enum) {
