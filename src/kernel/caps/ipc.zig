@@ -237,6 +237,7 @@ pub const Channel = struct {
         thread.moveExtra(sender, @truncate(msg.extra));
     }
 
+    var last_count: std.atomic.Value(u64) = .init(0);
     pub fn replyRecv(
         self: *@This(),
         thread: *caps.Thread,
@@ -245,6 +246,17 @@ pub const Channel = struct {
     ) Error!void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Channel.replyRecv", .{});
+
+        if (conf.IPC_BENCHMARK) {
+            const count1: u64 = arch.x86_64.rdpmc();
+
+            const count0 = last_count.load(.acquire);
+            log.info("RTT cycles: {}", .{count1 - count0});
+
+            // record the stored PMC counter again to skip the log call
+            const count2: u64 = arch.x86_64.rdpmc();
+            last_count.store(count2, .release);
+        }
 
         const sender_opt = try replyGetSender(thread, msg);
         try self.recv(thread, trap);

@@ -69,6 +69,8 @@ while (true) {
 }
 ```
 
+Full RTT: ~4181 cycles
+
 |                | Bare metal | QEMU+KVM            |
 |---------------:|:-----------|:--------------------|
 | Intel i7-8750H | ?          | 481ns (2 078 811Hz) |

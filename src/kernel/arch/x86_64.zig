@@ -17,16 +17,23 @@ const Error = abi.sys.Error;
 
 //
 
-pub const IA32_APIC_BASE = 0x1B;
-pub const IA32_PAT_MSR = 0x277;
-pub const IA32_X2APIC = 0x800; // the low MSR, goes from 0x800 to 0x8FF
-pub const IA32_TCS_AUX = 0xC0000103;
-pub const EFER = 0xC0000080;
-pub const STAR = 0xC0000081;
-pub const LSTAR = 0xC0000082;
-pub const SFMASK = 0xC0000084;
-pub const GS_BASE = 0xC0000101;
-pub const KERNELGS_BASE = 0xC0000102;
+pub const IA32_APIC_BASE: u32 = 0x1B;
+pub const IA32_PAT_MSR: u32 = 0x277;
+pub const IA32_X2APIC: u32 = 0x800; // the low MSR, goes from 0x800 to 0x8FF
+pub const IA32_TCS_AUX: u32 = 0xC0000103;
+pub const EFER: u32 = 0xC0000080;
+pub const STAR: u32 = 0xC0000081;
+pub const LSTAR: u32 = 0xC0000082;
+pub const SFMASK: u32 = 0xC0000084;
+pub const GS_BASE: u32 = 0xC0000101;
+pub const KERNELGS_BASE: u32 = 0xC0000102;
+
+pub const IA32_PERFEVTSEL0: u32 = 0x186;
+pub const IA32_PMC0: u32 = 0xC1;
+pub const IA32_FIXED_CTR_CTRL: u32 = 0x38d;
+pub const IA32_PERF_GLOBAL_CTRL: u32 = 0x38f;
+pub const MSR_K7_EVNTSEL0: u32 = 0xC0010000;
+pub const MSR_K7_PERFCTR0: u32 = 0xC0010004;
 
 //
 
@@ -70,13 +77,30 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
 
     wrmsr(GS_BASE, @intFromPtr(tls));
     wrmsr(KERNELGS_BASE, 0);
+    tls.initialized.store(true, .release);
 
     // the PAT MSR value is set so that the old modes stay the same
     // log.info("default PAT = 0x{x}", .{rdmsr(IA32_PAT_MSR)});
     wrmsr(IA32_PAT_MSR, abi.sys.CacheType.patMsr());
     // log.info("PAT = 0x{x}", .{abi.sys.CacheType.patMsr()});
 
-    tls.initialized.store(true, .release);
+    log.info("CPU vendor: {s}", .{CpuFeatures.readVendor()});
+
+    const avail_features = CpuFeatures.read();
+    // avail_features.assertExists(.acpi);
+    // avail_features.assertExists(.apic);
+    // avail_features.assertExists(.osxsave);
+    // avail_features.assertExists(.xsave);
+    // avail_features.assertExists(.pcid);
+    avail_features.assertExists(.pat);
+    // avail_features.assertExists(.rdrand);
+    // avail_features.assertExists(.tsc_ecx);
+    // avail_features.assertExists(.tsc_edx);
+    // avail_features.assertExists(.x2apic);}
+
+    if (conf.IPC_BENCHMARK) {
+        PerfEvtSel.write();
+    }
 }
 
 // launch 2 next processors (snowball)
@@ -324,6 +348,19 @@ pub fn rdtscp() RdTscpRes {
     };
 }
 
+pub fn rdpmc() u64 {
+    var lo: u32 = undefined;
+    var hi: u32 = undefined;
+    const pmc: u32 = 0;
+    asm volatile (
+        \\rdpmc
+        : [val_hi] "={edx}" (hi),
+          [val_lo] "={eax}" (lo),
+        : [pmc] "{ecx}" (pmc),
+    );
+    return @bitCast([2]u32{ lo, hi });
+}
+
 pub const Cpuid = struct { eax: u32, ebx: u32, ecx: u32, edx: u32 };
 
 /// cpuid instruction
@@ -415,9 +452,34 @@ pub const CpuFeatures = packed struct {
     ia64: bool,
     pbe: bool,
 
+    pub fn readVendor() [12]u8 {
+        const result = cpuid(0, 0);
+        return @bitCast([3]u32{ result.ebx, result.edx, result.ecx });
+    }
+
     pub fn read() @This() {
         const result = cpuid(1, 0);
         return @bitCast([2]u32{ result.ecx, result.edx });
+    }
+
+    pub fn assertExists(self: @This(), name: @TypeOf(.enum_literal)) void {
+        if (@field(self, @tagName(name))) {
+            return;
+        }
+        log.err("missing CPU feature: {}", .{name});
+        @panic("missing CPU features");
+    }
+};
+
+pub const ArchitecturalPerformanceMonitoringLeaf = packed struct {
+    version: u8,
+    counters_per_cpu: u8,
+    counter_bit_width: u8,
+    ebx_length: u8,
+
+    pub fn read() @This() {
+        const result = cpuid(0x0A, 0);
+        return @bitCast([1]u32{result.eax});
     }
 };
 
@@ -1273,6 +1335,8 @@ pub const CpuConfig = struct {
         cr4.osfxsr = 1;
         cr4.osxmmexcpt = 1;
         cr4.page_global_enable = 1;
+        // cr4.machine_check_exception = 1;
+        cr4.performance_monitoring_counter_enable = 1;
         cr4.write();
         log.debug("cr4={}", .{Cr4.read()});
 
@@ -1826,6 +1890,85 @@ fn syscallHandlerWrapper(args: *TrapRegs) callconv(.c) void {
 
     call.syscall(args);
 }
+
+pub const PerfEvtSel = packed struct {
+    event_select: enum(u8) {
+        unhalted_core_cycles_intel = 0x3c,
+        unhalted_core_cycles_amd = 0x76,
+        _,
+    },
+    unit_mask: enum(u8) {
+        unhalted_core_cycles = 0x00,
+        _,
+    } = .unhalted_core_cycles,
+    user_mode: bool = true,
+    kernel_mode: bool = true,
+    edge_detect: bool = false,
+    pin_control: bool = false,
+    overflow_apic_interrupt_enable: bool = false,
+    _pad0: bool = false,
+    enable_counters: bool = true,
+    invert_counter_mask: bool = false,
+    counter_mask: u8 = 0,
+    _pad1: u32 = 0,
+
+    pub fn write() void {
+        const is_amd = std.mem.eql(u8, &CpuFeatures.readVendor(), "AuthenticAMD");
+        const version = ArchitecturalPerformanceMonitoringLeaf.read().version;
+
+        const msr = if (is_amd and version <= 1)
+            MSR_K7_EVNTSEL0
+        else
+            IA32_PERFEVTSEL0;
+
+        const event_select: @FieldType(PerfEvtSel, "event_select") = if (is_amd)
+            .unhalted_core_cycles_amd
+        else
+            .unhalted_core_cycles_intel;
+
+        wrmsr(msr, @bitCast(PerfEvtSel{
+            .event_select = event_select,
+        }));
+    }
+};
+
+// const FixedCtrCtrl = packed struct {
+//     counter0_enable: enum(u2) {
+//         disable,
+//         kernel,
+//         user,
+//         all,
+//     } = .all,
+//     _pad0: u1 = 0,
+//     counter0_overflow_interrupt: bool = false,
+//     counter1_enable: enum(u2) {
+//         disable,
+//         kernel,
+//         user,
+//         all,
+//     } = .all,
+//     _pad1: u1 = 0,
+//     counter1_overflow_interrupt: bool = false,
+//     counter2_enable: enum(u2) {
+//         disable,
+//         kernel,
+//         user,
+//         all,
+//     } = .all,
+//     _pad2: u1 = 0,
+//     counter2_overflow_interrupt: bool = false,
+//     _pad3: u52 = 0,
+// };
+
+// const PerfGlobalCtrl = packed struct {
+//     pmc0_enable: bool = true,
+//     pmc1_enable: bool = false,
+//     _pad0: u30 = 0,
+//     fixed_counter0_enable: bool = false,
+//     fixed_counter1_enable: bool = false,
+//     fixed_counter2_enable: bool = false,
+//     _pad1: u29 = 0,
+// };
 
 test "structure sizes" {
     try std.testing.expectEqual(8, @sizeOf(GdtDescriptor));
