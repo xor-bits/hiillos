@@ -34,11 +34,13 @@ pub const Reply = caps_ipc.Reply;
 pub const Sender = caps_ipc.Sender;
 pub const Notify = caps_ipc.Notify;
 pub const X86IoPortAllocator = caps_x86.X86IoPortAllocator;
+// TODO: use IOPB in the TSS for this
 pub const X86IoPort = caps_x86.X86IoPort;
 pub const X86IrqAllocator = caps_x86.X86IrqAllocator;
 pub const X86Irq = caps_x86.X86Irq;
 
-pub const HalVmem = caps_x86.Vmem;
+pub const HalVmem = caps_x86.HalVmem;
+// pub const PcidLru = HalVmem.PcidLru;
 
 //
 

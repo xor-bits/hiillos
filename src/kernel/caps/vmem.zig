@@ -20,8 +20,8 @@ pub const Vmem = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     lock: abi.lock.SpinMutex = .{},
-    cr3: u32,
-    mappings: std.ArrayList(*caps.Mapping),
+    hal_vmem: ?caps.HalVmem = null,
+    mappings: std.ArrayList(*caps.Mapping) = .{},
     // bitset of all cpus that have used this vmem
     // cpus: u256 = 0,
 
@@ -34,11 +34,7 @@ pub const Vmem = struct {
             caps.incCount(.vmem);
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{
-            .lock = .locked(),
-            .cr3 = 0,
-            .mappings = .{},
-        };
+        obj.* = .{ .lock = .locked() };
         obj.lock.unlock();
 
         return obj;
@@ -59,6 +55,10 @@ pub const Vmem = struct {
         const gpa = caps.slab_allocator.allocator();
         self.mappings.deinit(gpa);
         gpa.destroy(self);
+
+        if (self.hal_vmem) |*hal_vmem| {
+            hal_vmem.deinit();
+        }
     }
 
     pub fn clone(self: *@This()) *@This() {
@@ -67,12 +67,6 @@ pub const Vmem = struct {
 
         self.refcnt.inc();
         return self;
-    }
-
-    pub fn halPageTable(self: *const @This()) *volatile caps.HalVmem {
-        return addr.Phys.fromParts(.{ .page = self.cr3 })
-            .toHhdm()
-            .toPtr(*volatile caps.HalVmem);
     }
 
     pub fn DataIterator(comptime is_write: bool) type {
@@ -154,22 +148,17 @@ pub const Vmem = struct {
         current_vmem_ptr.* = self.clone();
         defer if (previous_vmem) |prev| prev.deinit();
 
-        std.debug.assert(self.cr3 != 0);
-        caps.HalVmem.switchTo(addr.Phys.fromParts(
-            .{ .page = self.cr3 },
-        ));
+        self.hal_vmem.?.switchTo();
     }
 
     pub fn start(self: *@This()) Error!void {
-        if (self.cr3 != 0) {
+        if (self.hal_vmem != null) {
             return;
         } else {
             @branchHint(.cold);
         }
 
-        const new_cr3 = try caps.HalVmem.alloc(null);
-        caps.HalVmem.init(new_cr3);
-        self.cr3 = new_cr3.toParts().page;
+        self.hal_vmem = try caps.HalVmem.init();
     }
 
     pub fn map(
@@ -482,9 +471,7 @@ pub const Vmem = struct {
             }
         }
 
-        if (self.cr3 == 0)
-            return;
-        const hal_vmem = self.halPageTable();
+        const hal_vmem = &(self.hal_vmem orelse return);
 
         // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
         const ipi_bitmap: u256 = ~@as(u256, 0);
@@ -563,10 +550,7 @@ pub const Vmem = struct {
         if (self != dont_lock_if) self.lock.lock();
         defer if (self != dont_lock_if) self.lock.unlock();
 
-        if (self.cr3 == 0)
-            return;
-
-        const hal_vmem = self.halPageTable();
+        const hal_vmem = &(self.hal_vmem orelse return);
 
         for (self.mappings.items) |mapping| {
             if (mapping.frame != frame) continue;
@@ -594,7 +578,7 @@ pub const Vmem = struct {
 
     fn refreshPageAndTlbShootdown(
         frame: *caps.Frame,
-        hal_vmem: *volatile caps.HalVmem,
+        hal_vmem: *caps.HalVmem,
         vaddr: addr.Virt,
         ipi_bitmap: *u256,
     ) !void {
@@ -687,9 +671,8 @@ pub const Vmem = struct {
 
         const page_offs: u32 = @intCast((vaddr.raw - mapping.getVaddr().raw) / 0x1000);
         std.debug.assert(page_offs < mapping.pages);
-        std.debug.assert(self.cr3 != 0);
 
-        const hal_vmem = self.halPageTable();
+        const hal_vmem = &(self.hal_vmem.?);
         const entry = (try hal_vmem.entryFrame(vaddr)).*;
 
         // accessing a page with a write also immediately makes it readable/executable

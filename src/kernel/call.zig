@@ -379,13 +379,15 @@ fn handle_syscall(
             }
         },
         .vmem_dump => {
-            const vmem, _ = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
+            const vmem: *caps.Vmem, _ = try thread.proc.getObject(caps.Vmem, @truncate(trap.arg0));
             defer vmem.deinit();
 
             vmem.lock.lock();
             defer vmem.lock.unlock();
 
-            log.info("vmem: {*} cr3=0x{x}", .{ vmem, vmem.cr3 });
+            const hal_vmem = &(vmem.hal_vmem orelse return);
+
+            log.info("vmem: {*} cr3=0x{x}", .{ vmem, hal_vmem.pml4.raw });
             for (vmem.mappings.items) |mapping| {
                 log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
                     mapping.getVaddr().raw,
@@ -394,7 +396,7 @@ fn handle_syscall(
                 });
             }
             log.info("halvmem", .{});
-            try vmem.halPageTable().printMappings();
+            try hal_vmem.printMappings();
         },
 
         .proc_create => {

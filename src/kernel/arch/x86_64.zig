@@ -69,6 +69,7 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
         .cpu_config = undefined,
         .id = id,
         .lapic_id = @truncate(lapic_id),
+        // .pcid_lru = null,
         .initialized = .init(false),
     };
     std.debug.assert(std.mem.isAligned(@intFromPtr(tls), 0x1000));
@@ -97,6 +98,14 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
     // avail_features.assertExists(.tsc_ecx);
     // avail_features.assertExists(.tsc_edx);
     // avail_features.assertExists(.x2apic);}
+
+    // if (avail_features.pcid) {
+    //     // TODO: move all CR0/CR4 manipulation to initCpu (here)
+    //     var cr4 = Cr4.read();
+    //     cr4.pcid_enable = 1;
+    //     cr4.write();
+    //     tls.pcid_lru = try caps.PcidLru.init();
+    // }
 
     if (conf.IPC_BENCHMARK) {
         PerfEvtSel.write();
@@ -509,6 +518,50 @@ pub fn flushTlbAddr(vaddr: usize) void {
         \\ invlpg (%[v])
         :
         : [v] "r" (vaddr),
+        : .{ .memory = true });
+}
+
+const InvPcidDesc = struct {
+    pcid: u64 = 0,
+    addr: u64 = 0,
+};
+
+pub fn flushTlbPcidAll() void {
+    if (conf.ANTI_TLB_MODE) return flushTlb();
+
+    const desc: InvPcidDesc = .{};
+
+    asm volatile (
+        \\ invpcid 3, (%[desc])
+        :
+        : [v] "m" (desc),
+        : .{ .memory = true });
+}
+
+pub fn flushTlbPcid(pcid: u12) void {
+    if (conf.ANTI_TLB_MODE) return flushTlb();
+
+    const desc: InvPcidDesc = .{ .pcid = pcid };
+
+    asm volatile (
+        \\ invpcid 1, (%[desc])
+        :
+        : [v] "m" (desc),
+        : .{ .memory = true });
+}
+
+pub fn flushTlbPcidAddr(vaddr: usize, pcid: u12) void {
+    if (conf.ANTI_TLB_MODE) return flushTlb();
+
+    const desc: InvPcidDesc = .{
+        .pcid = pcid,
+        .addr = vaddr,
+    };
+
+    asm volatile (
+        \\ invpcid 0, (%[desc])
+        :
+        : [v] "m" (desc),
         : .{ .memory = true });
 }
 
@@ -1431,7 +1484,7 @@ pub const Cr3 = packed struct {
     // page_level_cache_disable: u1,
     // reserved1: u7,
     pcid: u12 = 0,
-    pml4_phys_base: u52,
+    pml4_phys_base: u52 = 0,
 
     const Self = @This();
 
