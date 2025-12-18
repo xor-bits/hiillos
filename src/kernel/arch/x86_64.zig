@@ -109,7 +109,7 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
         tls.pcid_lru.?.lock.unlock();
     }
 
-    if (conf.IPC_BENCHMARK) {
+    if (conf.IPC_BENCHMARK and conf.IPC_BENCHMARK_PERFMON) {
         PerfEvtSel.write();
     }
 }

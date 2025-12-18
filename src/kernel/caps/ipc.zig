@@ -247,7 +247,7 @@ pub const Channel = struct {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Channel.replyRecv", .{});
 
-        if (conf.IPC_BENCHMARK) {
+        if (conf.IPC_BENCHMARK and conf.IPC_BENCHMARK_PERFMON) {
             const count1: u64 = arch.x86_64.rdpmc();
 
             const count0 = last_count.load(.acquire);
