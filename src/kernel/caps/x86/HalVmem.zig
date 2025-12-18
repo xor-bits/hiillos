@@ -14,58 +14,85 @@ const volat = abi.util.volat;
 
 const HalVmem = @This();
 
+//
+
 pml4: addr.Phys = .{ .raw = 0 },
-// active_pcids: []PcidEntry,
+active_pcids: []PcidEntry,
 
-// pub const PcidEntry = struct {
-//     pcid: ?u12,
-//     node: std.DoublyLinkedList.Node,
-// };
+pub const PcidEntry = packed struct {
+    pcid: u12 = 0,
+    is_null: bool = true,
 
-// pub const PcidLru = struct {
-//     lock: abi.lock.SpinMutex = .{},
-//     used: std.DoublyLinkedList = .{},
-//     free: std.ArrayList(u12),
+    pub fn write(self: *@This(), pcid: u12) void {
+        self.is_null = false;
+        self.pcid = pcid;
+    }
 
-//     pub fn init(alloc: std.mem.Allocator) @This() {
-//         return .{
-//             .free = .initCapacity(alloc, 0x1000),
-//         };
-//     }
+    pub fn read(self: *@This()) ?u12 {
+        return if (self.is_null)
+            null
+        else
+            self.pcid;
+    }
+};
 
-//     pub fn next(self: *@This(), entry: *PcidEntry) void {
-//         self.lock.lock();
-//         defer self.lock.unlock();
+comptime {
+    std.debug.assert(@sizeOf(PcidEntry) == 2);
+}
 
-//         if (self.free.pop()) |free| {
-//             entry.pcid = free;
-//             self.used.prepend(&entry.node);
+// assumes that old HalVmems might have had the same CR3 physical pages,
+// but the current HalVmem with it either has an outdated pcid (cr3 phys page mismatch)
+// or the pcid is up to date (cr3 phys page match + pcid match)
+//
+// if the same cr3 is allocated, the specific PCID will be null
+pub const PcidLru = struct {
+    lock: abi.lock.SpinMutex = .{},
+    lru: abi.IdLru(u12, 0x1000),
+    cur_or_prev_cr3: *[0x1000]u32,
 
-//             // return .{
-//             //     .pcid = free,
-//             //     .node = ,
-//             // };
-//         }
+    pub fn init(alloc: std.mem.Allocator) !@This() {
+        return .{
+            .lock = .locked(),
+            .lru = try .init(alloc),
+            .cur_or_prev_cr3 = try alloc.create([0x1000]u32),
+        };
+    }
 
-//         if (self.used.pop()) |evicted| {
-//             self.used.prepend(&entry.node);
-//         }
-//     }
-// };
+    pub fn update(self: *@This(), entry: *PcidEntry, for_cr3: u32) u12 {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const pcid = entry.read() orelse {
+            @branchHint(.cold);
+
+            // this CPU has never used this HalVmem yet
+            const pcid = self.lru.allocate();
+            entry.write(pcid);
+            arch.x86_64.flushTlbPcid(pcid);
+            self.cur_or_prev_cr3[pcid] = for_cr3;
+            return pcid;
+        };
+
+        if (self.cur_or_prev_cr3[pcid] != for_cr3) {
+            @branchHint(.cold);
+
+            // this CPU has reused the PCID for something else
+            self.lru.update(pcid);
+            arch.x86_64.flushTlbPcid(pcid);
+            self.cur_or_prev_cr3[pcid] = for_cr3;
+            return pcid;
+        }
+
+        // CR3 could match only if it is the old correct PCID OR
+        // if the HalVmem is newly allocated and happens to have reused the same CR3
+        // BUT if the HalVmem was newly allocated, the PCID would have been null
+        return pcid;
+    }
+};
 
 //
 
-pub fn deinit(self: *HalVmem) void {
-    _ = self;
-    // for (self.active_pcids, main.all_cpu_locals) |*entry, *cpu_locals| {
-    // }
-}
-
 pub fn init_global() !void {
-    // for (0..0x1000) |pcid| {
-    //     pcid_free.appendAssumeCapacity(@intCast(pcid));
-    // }
-
     const cr3 = arch.x86_64.Cr3.read();
     const level4 = addr.Phys.fromParts(.{ .page = @truncate(cr3.pml4_phys_base) })
         .toHhdm().toPtr(*volatile PageTableLevel4);
@@ -129,7 +156,11 @@ pub fn init() !@This() {
     if (conf.LOG_OBJ_CALLS)
         log.info("HalVmem.init", .{});
 
-    const self: @This() = .{ .pml4 = allocTable() };
+    const active_pcids = try caps.slab_allocator.allocator().alloc(PcidEntry, arch.cpuCount());
+    const self: @This() = .{
+        .pml4 = allocTable(),
+        .active_pcids = active_pcids,
+    };
 
     const lvl4 = self.pml4.toHhdm().toPtr(*volatile PageTableLevel4);
     abi.util.fillVolatile(Entry, lvl4.entries[0..256], .{});
@@ -143,16 +174,33 @@ pub fn init() !@This() {
     return self;
 }
 
+pub fn deinit(_: *HalVmem) void {
+    if (conf.LOG_OBJ_STATS)
+        caps.decCount(.frame);
+}
+
 pub fn switchTo(self: *@This()) void {
-    const cur = arch.x86_64.Cr3.read();
-    if (cur.pml4_phys_base == self.pml4.toParts().page) {
+    const cpu_local = arch.cpuLocal();
+    const pml4_phys_base = self.pml4.toParts().page;
+
+    const new_cr3: arch.x86_64.Cr3 = if (cpu_local.pcid_lru) |*pcid_lru| b: {
+        const pcid = pcid_lru.update(&self.active_pcids[cpu_local.id], pml4_phys_base);
+        break :b .{
+            .pml4_phys_base = pml4_phys_base,
+            .pcid = pcid,
+        };
+    } else b: {
+        break :b .{
+            .pml4_phys_base = pml4_phys_base,
+        };
+    };
+
+    const cur_cr3 = arch.x86_64.Cr3.read();
+    if (cur_cr3 == new_cr3) {
         return;
     }
 
-    (arch.x86_64.Cr3{
-        .pml4_phys_base = self.pml4.toParts().page,
-    }).write();
-
+    new_cr3.write();
     if (conf.LOG_CTX_SWITCHES)
         log.debug("context switched to 0x{x}", .{self.raw});
 }

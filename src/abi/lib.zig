@@ -25,6 +25,7 @@ pub const sys = @import("sys.zig");
 pub const thread = @import("thread.zig");
 pub const util = @import("util.zig");
 pub const Deque = @import("deque.zig").Deque;
+pub const IdLru = @import("id_lru.zig").IdLru;
 
 //
 

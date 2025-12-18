@@ -48,7 +48,7 @@ pub const CpuLocalStorage = struct {
     lapic_id: u32,
     lapic: apic.Locals = .{},
 
-    // pcid_lru: ?caps.PcidLru,
+    pcid_lru: ?caps.PcidLru,
 
     tlb_shootdown_queue: [16]*caps.TlbShootdown = undefined,
     tlb_shootdown_queue_head: u4 = 0,

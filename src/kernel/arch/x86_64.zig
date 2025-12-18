@@ -69,7 +69,7 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
         .cpu_config = undefined,
         .id = id,
         .lapic_id = @truncate(lapic_id),
-        // .pcid_lru = null,
+        .pcid_lru = null,
         .initialized = .init(false),
     };
     std.debug.assert(std.mem.isAligned(@intFromPtr(tls), 0x1000));
@@ -99,13 +99,15 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
     // avail_features.assertExists(.tsc_edx);
     // avail_features.assertExists(.x2apic);}
 
-    // if (avail_features.pcid) {
-    //     // TODO: move all CR0/CR4 manipulation to initCpu (here)
-    //     var cr4 = Cr4.read();
-    //     cr4.pcid_enable = 1;
-    //     cr4.write();
-    //     tls.pcid_lru = try caps.PcidLru.init();
-    // }
+    if (avail_features.pcid) {
+        // TODO: move all CR0/CR4 manipulation to initCpu (here)
+        var cr4 = Cr4.read();
+        cr4.pcid_enable = 1;
+        cr4.write();
+
+        tls.pcid_lru = try caps.PcidLru.init(pmem.page_allocator);
+        tls.pcid_lru.?.lock.unlock();
+    }
 
     if (conf.IPC_BENCHMARK) {
         PerfEvtSel.write();
@@ -521,7 +523,7 @@ pub fn flushTlbAddr(vaddr: usize) void {
         : .{ .memory = true });
 }
 
-const InvPcidDesc = struct {
+const InvPcidDesc = extern struct {
     pcid: u64 = 0,
     addr: u64 = 0,
 };
@@ -532,9 +534,9 @@ pub fn flushTlbPcidAll() void {
     const desc: InvPcidDesc = .{};
 
     asm volatile (
-        \\ invpcid 3, (%[desc])
+        \\ invpcid 3, %[desc]
         :
-        : [v] "m" (desc),
+        : [desc] "r" (&desc),
         : .{ .memory = true });
 }
 
@@ -544,9 +546,9 @@ pub fn flushTlbPcid(pcid: u12) void {
     const desc: InvPcidDesc = .{ .pcid = pcid };
 
     asm volatile (
-        \\ invpcid 1, (%[desc])
+        \\ invpcid 1, %[desc]
         :
-        : [v] "m" (desc),
+        : [desc] "r" (&desc),
         : .{ .memory = true });
 }
 
@@ -559,9 +561,9 @@ pub fn flushTlbPcidAddr(vaddr: usize, pcid: u12) void {
     };
 
     asm volatile (
-        \\ invpcid 0, (%[desc])
+        \\ invpcid 0, %[desc]
         :
-        : [v] "m" (desc),
+        : [v] "r" (&desc),
         : .{ .memory = true });
 }
 

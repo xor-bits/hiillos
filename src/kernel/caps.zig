@@ -40,7 +40,7 @@ pub const X86IrqAllocator = caps_x86.X86IrqAllocator;
 pub const X86Irq = caps_x86.X86Irq;
 
 pub const HalVmem = caps_x86.HalVmem;
-// pub const PcidLru = HalVmem.PcidLru;
+pub const PcidLru = HalVmem.PcidLru;
 
 //
 

@@ -108,7 +108,7 @@ fn options(b: *std.Build) Opts {
         // QEMU virtio-sound device
         .sound = b.option(bool, "sound",
             \\Add virtio-sound device to QEMU
-        ) orelse true,
+        ) orelse false,
 
         // initfs compression level
         .comp_level = b.option(u8, "zst_l",
@@ -167,7 +167,9 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "-machine",
         "q35",
         "-cpu",
-        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid",
+        // "host",
+        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid",
+        // "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+pmu,+perfctr_core,+tsc,+invtsc",
         "-m",
         "1g", // 3m is the absolute minimum right now
         "-no-reboot",
