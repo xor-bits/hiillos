@@ -523,33 +523,33 @@ pub fn flushTlbAddr(vaddr: usize) void {
         : .{ .memory = true });
 }
 
-const InvPcidDesc = extern struct {
-    pcid: u64 = 0,
+const InvPcidDesc = packed struct {
+    pcid: u12 = 0,
+    _: u52 = 0,
     addr: u64 = 0,
 };
+
+fn invpcid(kind: u64, desc: *const InvPcidDesc) void {
+    asm volatile (
+        \\ invpcid (%[desc]), %[kind]
+        :
+        : [kind] "r" (kind),
+          [desc] "r" (desc),
+        : .{ .memory = true });
+}
 
 pub fn flushTlbPcidAll() void {
     if (conf.ANTI_TLB_MODE) return flushTlb();
 
     const desc: InvPcidDesc = .{};
-
-    asm volatile (
-        \\ invpcid 3, %[desc]
-        :
-        : [desc] "r" (&desc),
-        : .{ .memory = true });
+    invpcid(3, &desc);
 }
 
 pub fn flushTlbPcid(pcid: u12) void {
     if (conf.ANTI_TLB_MODE) return flushTlb();
 
     const desc: InvPcidDesc = .{ .pcid = pcid };
-
-    asm volatile (
-        \\ invpcid 1, %[desc]
-        :
-        : [desc] "r" (&desc),
-        : .{ .memory = true });
+    invpcid(1, &desc);
 }
 
 pub fn flushTlbPcidAddr(vaddr: usize, pcid: u12) void {
@@ -559,12 +559,7 @@ pub fn flushTlbPcidAddr(vaddr: usize, pcid: u12) void {
         .pcid = pcid,
         .addr = vaddr,
     };
-
-    asm volatile (
-        \\ invpcid 0, %[desc]
-        :
-        : [v] "r" (&desc),
-        : .{ .memory = true });
+    invpcid(0, &desc);
 }
 
 /// processor ID
