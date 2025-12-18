@@ -80,11 +80,14 @@ fn stdoutJob(stdout: std.fs.File, args: []const [:0]const u8) !void {
     var address_map: std.AutoArrayHashMap(usize, usize) = .init(gpa.allocator());
     defer address_map.deinit();
 
+    var buf: [0x1000]u8 = undefined;
+    var stdout_reader = stdout.reader(&buf);
+    const reader = &stdout_reader.interface;
+
     var timer = try std.time.Timer.start();
 
-    var buf: [0x1000]u8 = undefined;
     while (true) {
-        const line = stdout.reader().readUntilDelimiter(&buf, '\n') catch return;
+        const line = reader.takeDelimiter('\n') catch return orelse return;
         // std.log.info("readline: '{s}'", .{line});
         const rip_eq = std.mem.indexOf(u8, line, "RIP=") orelse continue;
         const rip_val = line[rip_eq + 4 ..];
@@ -125,8 +128,21 @@ fn printHotSpots(
 
     std.debug.print("\n50 most hit addresses:\n", .{});
     const count = @min(entries.len, 50);
+
     var source_lines: [50]std.ArrayListUnmanaged(u8) = [1]std.ArrayListUnmanaged(u8){.{}} ** 50;
+    defer for (&source_lines) |*source_line| {
+        defer source_line.deinit(gpa.allocator());
+    };
+
+    var stderr = std.ArrayListUnmanaged(u8){};
+    defer stderr.deinit(gpa.allocator());
+
     var addr2line_processes: [50]?std.process.Child = undefined;
+    defer for (0..count) |i| {
+        const addr2line = &(addr2line_processes[i] orelse continue);
+        _ = addr2line.wait() catch {};
+    };
+
     for (0..count) |i| {
         const entry = entries.get(i);
         var rip_buf: [100]u8 = undefined;
@@ -138,6 +154,12 @@ fn printHotSpots(
         );
         const rip_str = rip_buf_writer.getWritten();
 
+        // std.debug.print("{s} {s} {s} {s}\n", .{
+        //     "addr2line",
+        //     "-e",
+        //     args[2],
+        //     rip_str,
+        // });
         var addr2line = std.process.Child.init(&.{
             "addr2line",
             "-e",
@@ -159,7 +181,7 @@ fn printHotSpots(
         addr2line.collectOutput(
             gpa.allocator(),
             &source_lines[i],
-            &source_lines[i],
+            &stderr,
             std.math.maxInt(usize),
         ) catch {
             try source_lines[i].appendSlice(gpa.allocator(), unknown);
