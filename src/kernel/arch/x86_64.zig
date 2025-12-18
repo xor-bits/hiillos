@@ -1981,49 +1981,56 @@ pub const PerfEvtSel = packed struct {
         else
             .unhalted_core_cycles_intel;
 
+        // log.debug("perfevtsel is_amd={} version={}", .{ is_amd, version });
+
         wrmsr(msr, @bitCast(PerfEvtSel{
             .event_select = event_select,
         }));
+
+        if (!is_amd and version >= 2) {
+            // wrmsr(IA32_FIXED_CTR_CTRL, @bitCast(FixedCtrCtrl{}));
+            wrmsr(IA32_PERF_GLOBAL_CTRL, @bitCast(PerfGlobalCtrl{}));
+        }
     }
 };
 
-// const FixedCtrCtrl = packed struct {
-//     counter0_enable: enum(u2) {
-//         disable,
-//         kernel,
-//         user,
-//         all,
-//     } = .all,
-//     _pad0: u1 = 0,
-//     counter0_overflow_interrupt: bool = false,
-//     counter1_enable: enum(u2) {
-//         disable,
-//         kernel,
-//         user,
-//         all,
-//     } = .all,
-//     _pad1: u1 = 0,
-//     counter1_overflow_interrupt: bool = false,
-//     counter2_enable: enum(u2) {
-//         disable,
-//         kernel,
-//         user,
-//         all,
-//     } = .all,
-//     _pad2: u1 = 0,
-//     counter2_overflow_interrupt: bool = false,
-//     _pad3: u52 = 0,
-// };
+const FixedCtrCtrl = packed struct {
+    counter0_enable: enum(u2) {
+        disable,
+        kernel,
+        user,
+        all,
+    } = .disable,
+    _pad0: u1 = 0,
+    counter0_overflow_interrupt: bool = false,
+    counter1_enable: enum(u2) {
+        disable,
+        kernel,
+        user,
+        all,
+    } = .disable,
+    _pad1: u1 = 0,
+    counter1_overflow_interrupt: bool = false,
+    counter2_enable: enum(u2) {
+        disable,
+        kernel,
+        user,
+        all,
+    } = .disable,
+    _pad2: u1 = 0,
+    counter2_overflow_interrupt: bool = false,
+    _pad3: u52 = 0,
+};
 
-// const PerfGlobalCtrl = packed struct {
-//     pmc0_enable: bool = true,
-//     pmc1_enable: bool = false,
-//     _pad0: u30 = 0,
-//     fixed_counter0_enable: bool = false,
-//     fixed_counter1_enable: bool = false,
-//     fixed_counter2_enable: bool = false,
-//     _pad1: u29 = 0,
-// };
+const PerfGlobalCtrl = packed struct {
+    pmc0_enable: bool = true,
+    pmc1_enable: bool = false,
+    _pad0: u30 = 0,
+    fixed_counter0_enable: bool = false,
+    fixed_counter1_enable: bool = false,
+    fixed_counter2_enable: bool = false,
+    _pad1: u29 = 0,
+};
 
 test "structure sizes" {
     try std.testing.expectEqual(8, @sizeOf(GdtDescriptor));
