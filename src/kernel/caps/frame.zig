@@ -391,13 +391,15 @@ pub const Frame = struct {
         // all tlb shootdown objects executed,
         // make the frame as ready to use again
 
+        // FIXME: all TLB logic needs to be moved into HalVmem and be refactored
         self.lock.lock();
+        defer self.lock.unlock();
         self.is_transient = false;
-        var queued = self.transient_sleep_queue.takeAll(&self.lock);
-        self.lock.unlock();
 
-        var dummy_lock: abi.lock.SpinMutex = .{};
-        while (queued.pop(&dummy_lock)) |sleeper| {
+        while (self.transient_sleep_queue.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |sleeper| {
             proc.ready(sleeper);
         }
 
@@ -508,18 +510,11 @@ pub const Frame = struct {
         // save the current thread that might or might not go to sleep
         proc.switchFrom(trap, thread);
 
-        var dummy_lock: abi.lock.SpinMutex = .{};
-        self.transient_sleep_queue.push(
-            &dummy_lock,
+        self.transient_sleep_queue.pushThreadLocked(
+            &self.lock,
             thread,
-            .{
-                .new_status = .waiting,
-                .new_cause = .transient_page_fault,
-                // if the thread is cancelled, it still has to wait for the transient
-                // page to be resolved, so it goes into the queue.
-                // The pop will handle stopping it
-                .cancel_op = .allow_cancelled,
-            },
+            0,
+            .waiting,
         );
     }
 };
@@ -605,8 +600,6 @@ pub const TlbShootdown = struct {
         while (locals.tryPopTlbShootdown()) |shootdown| {
             // log.debug("one TLB shootdown complete for {*}", .{shootdown});
             if (shootdown.deinit()) |thread| {
-                thread.popFinishUnlocked(.{}) catch continue;
-
                 // log.debug("TLB shootdowns complete for {*}", .{thread});
                 proc.ready(thread);
             }

@@ -42,6 +42,8 @@ pub const CpuLocalStorage = struct {
     current_vmem: ?*caps.Vmem = null,
     /// used to track the current thread
     current_thread: ?*caps.Thread = null,
+    /// just a cache for the current thread's priority (that might be stale)
+    current_priority: u2 = 0,
     /// cpu id, highest cpu id is always `cpu_count - 1`
     id: u32,
     /// cached local apic id of the cpu

@@ -491,16 +491,6 @@ pub const Vmem = struct {
                 addr.Virt.fromInt(vaddr.raw + pages * 0x1000),
             } },
         );
-        thread.lock.lock();
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .unmap_tlb_shootdown,
-            .cancel_op = .allow_cancelled,
-        }) catch {
-            // thread stopped but it still has
-            // to wait before it can start again
-        };
-        thread.lock.unlock();
         proc.switchFrom(trap, thread);
 
         // tests cannot yield or do IPIs or other stuff rn
@@ -523,11 +513,6 @@ pub const Vmem = struct {
         if (shootdown.deinit()) |this_thread| {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
-            this_thread.popFinishUnlocked(.{}) catch {
-                // thread was stopped while unmapping
-                // but the unmap was completed
-                return;
-            };
             proc.switchUndo(thread);
         } else {
             return Error.Retry;

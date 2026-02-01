@@ -578,12 +578,6 @@ pub const ThreadStatus = enum {
     /// thread is permanently killed
     /// and the exit code is usable
     dead,
-    /// transition state from * to stopped
-    stopping,
-    /// transition state from * to running
-    starting,
-    /// transition state from * to dead
-    exiting,
 };
 
 pub const ProcessStatus = enum {

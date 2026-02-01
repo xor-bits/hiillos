@@ -131,41 +131,26 @@ pub const Process = struct {
 
         // early block the thread (or cancel)
         proc.switchFrom(trap, thread);
-        thread.lock.lock();
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .other_process_exit,
-        }) catch {
-            @branchHint(.cold);
-            thread.lock.unlock();
 
-            // the current thread was stopped
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            thread.lock.lock();
+            defer thread.lock.unlock();
 
-        // if the thread isnt already dead, then add it to the wait queue
-        self.lock.lock();
-        if (self.status != .dead) {
-            self.exit_waiters.pushRaw(thread);
-            self.lock.unlock();
-            return;
+            if (self.status != .dead) {
+                self.exit_waiters.pushLockedThreadLocked(
+                    &self.lock,
+                    thread,
+                    0,
+                    .waiting,
+                );
+                return;
+            }
+
+            trap.arg0 = self.exit_code;
         }
-        const exit_code = self.exit_code;
-        self.lock.unlock();
-
-        // the thread was already dead
-        trap.arg0 = exit_code;
         proc.switchUndo(thread);
-        thread.popFinishUnlocked(.{}) catch {
-            // the current thread was stopped
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-        };
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {

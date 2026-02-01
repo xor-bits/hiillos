@@ -11,8 +11,8 @@
             .hash = "qoi-0.0.1-im2KtYJAAAA2i7rzjql8JqrjY8p5-AKBXRYMRS2XiMsl",
         },
         .rbtree = .{
-            .url = "git+https://github.com/xor-bits/rbtree.git#7332e76a95387765f728849fd1e41e23f39ea60e",
-            .hash = "rbtree-0.0.1-WtgBiVAzAQCfGrPXiMp3kzMneYa1H_a7rqQgC0S2EE_c",
+            .url = "git+https://github.com/xor-bits/rbtree.git#a3149b5831bfd948d4681572fe42683131dbb524",
+            .hash = "rbtree-0.0.1-WtgBiedCAQBhPerEQy6rqGOj_MhSh7rvBCwr1wO8zm5E",
         },
     },
     .paths = .{"."},

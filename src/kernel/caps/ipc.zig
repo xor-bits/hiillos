@@ -65,12 +65,16 @@ pub const Channel = struct {
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitRecv(self: *@This()) bool {
         self.lock.lock();
+        defer self.lock.unlock();
+
         std.debug.assert(self.recv_count == 1);
         self.recv_count = 0;
-        self.lock.unlock();
 
         // wake up all threads waiting to receive messages (BadHandle)
-        while (self.recv_queue.pop(&self.lock)) |listener| {
+        while (self.recv_queue.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |listener| {
             listener.exec_lock.lock();
             listener.trap.syscall_id = abi.sys.encode(Error.BadHandle);
             listener.exec_lock.unlock();
@@ -78,7 +82,10 @@ pub const Channel = struct {
         }
 
         // wake up all threads waiting to send messages (ChannelClosed)
-        while (self.send_queue.pop(&self.lock)) |caller| {
+        while (self.send_queue.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |caller| {
             caller.exec_lock.lock();
             caller.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
             caller.exec_lock.unlock();
@@ -91,15 +98,19 @@ pub const Channel = struct {
     /// returns `true` if both ends were closed and `deinit` should be called
     pub fn deinitSend(self: *@This()) bool {
         self.lock.lock();
+        defer self.lock.unlock();
+
         std.debug.assert(self.send_count != 0);
         self.send_count -= 1;
         const was_last_sender = self.send_count != 0;
-        self.lock.unlock();
 
         if (was_last_sender) return false;
 
         // wake up all threads waiting to receive messages (ChannelClosed)
-        while (self.recv_queue.pop(&self.lock)) |listener| {
+        while (self.recv_queue.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |listener| {
             listener.exec_lock.lock();
             listener.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
             listener.exec_lock.unlock();
@@ -107,7 +118,10 @@ pub const Channel = struct {
         }
 
         // wake up all threads waiting to send messages (BadHandle)
-        while (self.send_queue.pop(&self.lock)) |caller| {
+        while (self.send_queue.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |caller| {
             caller.exec_lock.lock();
             caller.trap.syscall_id = abi.sys.encode(Error.BadHandle);
             caller.exec_lock.unlock();
@@ -123,74 +137,63 @@ pub const Channel = struct {
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
     ) Error!void {
-        // early sleep and discard any old reply targets
-        thread.lock.lock();
-        thread.discardReply();
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .ipc_recv,
-        }) catch {
-            thread.lock.unlock();
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
+        // early sleep
+        thread.discardReplyLockedExec();
         proc.switchFrom(trap, thread);
 
-        // find a sender or push to wait queue
-        const caller = self.send_queue.popOpts(
+        self.lock.lock();
+        const caller = self.send_queue.popFirstLocked(
             &self.lock,
-            .{
-                .empty_op = .return_locked,
-                .no_pop_finish = true, // makes the caller still be in its waiting state
-            },
+            .running,
         ) orelse {
             @branchHint(.cold);
+            // if there are no waiting listeners,
+            // then push this thread into the wait queue
 
-            if (self.send_count != 0) {
-                self.recv_queue.pushRaw(thread);
-                self.lock.unlock();
-                return;
-            } else {
+            if (self.send_count == 0) {
                 @branchHint(.cold);
                 self.lock.unlock();
-            }
 
-            trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
-            thread.exec_lock.lock();
-            thread.trap.syscall_id = trap.syscall_id;
-            thread.exec_lock.unlock();
+                thread.exec_lock.lock();
+                thread.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+                thread.exec_lock.unlock();
 
-            // nothing to receive and the channel was closed
-            if (thread.popFinishUnlocked(.{})) |_| {
                 proc.switchUndo(thread);
-            } else |_| {
-                thread.deinit();
+                return;
             }
+
+            thread.lock.lock();
+            self.recv_queue.pushLockedThreadLocked(
+                &self.lock,
+                thread,
+                0,
+                .waiting,
+            );
+            thread.lock.unlock();
+            self.lock.unlock();
             return;
         };
+        self.lock.unlock();
 
         if (conf.LOG_WAITING)
             log.debug("IPC wake {*}", .{caller});
 
-        // copy over the message
+        // lock ordering does not matter,
+        // because these are debug locks
+        // which just assert that it is
+        // not locked by some other cpu
+        thread.exec_lock.lock();
+        caller.exec_lock.lock();
+
+        // copy over the message and everything else
         trap.writeMessage(caller.message);
-        caller.moveExtra(thread, @truncate(caller.message.extra));
+        thread.trap.writeMessage(caller.message);
+        caller.moveExtraLockedExec(thread, @truncate(caller.message.extra));
+        thread.setReplyLockedExec(caller);
 
-        // save the reply target
-        thread.lock.lock();
-        thread.setReply(caller);
-        thread.popFinish(.{}) catch {
-            // a very late cancel, the operation is already done so no error needs to be set
-            thread.lock.unlock();
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
+        caller.exec_lock.unlock();
+        thread.exec_lock.unlock();
 
-        // undo stopping the current thread
         proc.switchUndo(thread);
     }
 
@@ -211,16 +214,11 @@ pub const Channel = struct {
         thread: *caps.Thread,
         msg: abi.sys.Message,
     ) Error!?*caps.Thread {
-        const sender = b: {
-            thread.lock.lock();
-            defer thread.lock.unlock();
-            break :b thread.takeReply() orelse
-                return Error.InvalidCapability;
+        const sender = thread.takeReplyLockedExec() orelse {
+            return Error.InvalidCapability;
         };
 
         replyToSender(thread, msg, sender);
-
-        try sender.popFinishUnlocked(.{});
         return sender;
     }
 
@@ -232,9 +230,12 @@ pub const Channel = struct {
         if (conf.LOG_OBJ_CALLS)
             log.debug("replying {} from {*}", .{ msg, thread });
 
+        sender.exec_lock.lock();
+        defer sender.exec_lock.unlock();
+
         // copy over the reply message
         sender.trap.writeMessage(msg);
-        thread.moveExtra(sender, @truncate(msg.extra));
+        thread.moveExtraLockedExec(sender, @truncate(msg.extra));
     }
 
     var last_count: std.atomic.Value(u64) = .init(0);
@@ -259,6 +260,8 @@ pub const Channel = struct {
         }
 
         const sender_opt = try replyGetSender(thread, msg);
+        if (thread.reply != null)
+            log.err("discard reply from replyRecv call", .{});
         try self.recv(thread, trap);
         const sender = sender_opt orelse {
             @branchHint(.cold);
@@ -287,69 +290,62 @@ pub const Channel = struct {
         msg: abi.sys.Message,
     ) void {
         // early sleep
-        thread.lock.lock();
-        thread.message = msg;
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .ipc_call0,
-        }) catch {
-            thread.lock.unlock();
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
         proc.switchFrom(trap, thread);
 
-        // find a listener or push to the wait queue
-        const listener = self.recv_queue.popOpts(
+        self.lock.lock();
+        const listener = self.recv_queue.popFirstLocked(
             &self.lock,
-            .{
-                .empty_op = .return_locked,
-                .cancel_op = .set_error,
-            },
+            .running,
         ) orelse {
             @branchHint(.cold);
+            // if there are no waiting callers,
+            // then push this thread into the wait queue
 
-            if (self.recv_count != 0) {
-                self.send_queue.pushRaw(thread);
-                self.lock.unlock();
-                return;
-            } else {
+            if (self.recv_count == 0) {
                 @branchHint(.cold);
                 self.lock.unlock();
-            }
 
-            trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
-            thread.exec_lock.lock();
-            thread.trap.syscall_id = trap.syscall_id;
-            thread.exec_lock.unlock();
+                thread.exec_lock.lock();
+                thread.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
+                thread.exec_lock.unlock();
 
-            // no listeners and the channel was closed
-            if (thread.popFinishUnlocked(.{})) |_| {
                 proc.switchUndo(thread);
-            } else |_| {
-                thread.deinit();
+                return;
             }
+
+            thread.lock.lock();
+            thread.message = msg;
+            self.send_queue.pushLockedThreadLocked(
+                &self.lock,
+                thread,
+                0,
+                .waiting,
+            );
+            thread.lock.unlock();
+            self.lock.unlock();
             return;
         };
+        self.lock.unlock();
 
-        // copy over the message
+        if (conf.LOG_WAITING)
+            log.debug("IPC fast call {*}", .{listener});
+
+        // lock ordering does not matter,
+        // because these are debug locks
+        // which just assert that it is
+        // not locked by some other cpu
+        thread.exec_lock.lock();
+        listener.exec_lock.lock();
+
+        // copy over the message and everything else
+        trap.writeMessage(msg);
         listener.trap.writeMessage(msg);
-        thread.moveExtra(listener, @truncate(msg.extra));
+        thread.moveExtraLockedExec(listener, @truncate(msg.extra));
+        listener.setReplyLockedExec(thread);
 
-        thread.lock.lock();
-        std.debug.assert(thread.status == .waiting);
-        thread.waiting_cause = .ipc_call1;
-        thread.lock.unlock();
+        listener.exec_lock.unlock();
+        thread.exec_lock.unlock();
 
-        // save the reply target
-        listener.lock.lock();
-        listener.setReply(thread);
-        listener.lock.unlock();
-
-        // switch to the listener
         proc.switchTo(trap, listener);
     }
 };
@@ -388,6 +384,8 @@ pub const Receiver = struct {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Receiver.recv", .{});
 
+        if (thread.reply != null)
+            log.err("discard reply from recv call", .{});
         try self.channel.recv(thread, trap);
     }
 
@@ -495,12 +493,8 @@ pub const Reply = struct {
         if (conf.LOG_OBJ_STATS)
             caps.incCount(.reply);
 
-        const sender = b: {
-            thread.lock.lock();
-            defer thread.lock.unlock();
-            break :b thread.takeReply() orelse {
-                return Error.InvalidCapability;
-            };
+        const sender = thread.takeReplyLockedExec() orelse {
+            return Error.InvalidCapability;
         };
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
@@ -535,12 +529,6 @@ pub const Reply = struct {
         };
 
         Channel.replyToSender(thread, msg, sender);
-
-        sender.popFinishUnlocked(.{}) catch {
-            // the reply target stopped, its fine
-            sender.deinit();
-            return;
-        };
 
         // set the original caller thread as ready to run again, but return to the current thread
         proc.ready(sender);
@@ -578,15 +566,25 @@ pub const Notify = struct {
         if (conf.LOG_OBJ_STATS)
             caps.decCount(.notify);
 
-        while (self.queue.pop(&self.queue_lock)) |waiter| {
+        self.cancel();
+
+        caps.slab_allocator.allocator().destroy(self);
+    }
+
+    fn cancel(self: *@This()) void {
+        self.queue_lock.lock();
+        defer self.queue_lock.unlock();
+
+        while (self.queue.popFirstLocked(
+            &self.queue_lock,
+            .ready,
+        )) |waiter| {
             waiter.exec_lock.lock();
             waiter.trap.syscall_id = abi.sys.encode(Error.Cancelled);
             waiter.exec_lock.unlock();
 
             proc.ready(waiter);
         }
-
-        caps.slab_allocator.allocator().destroy(self);
     }
 
     pub fn clone(self: *@This()) *@This() {
@@ -604,34 +602,27 @@ pub const Notify = struct {
             return;
         }
 
-        thread.lock.lock();
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .notify_wait,
-        }) catch {
-            thread.lock.unlock();
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
         proc.switchFrom(trap, thread);
 
         self.queue_lock.lock();
+        thread.lock.lock();
 
         // late test if its active
         if (self.pollLocked()) {
+            thread.lock.unlock();
             self.queue_lock.unlock();
-            thread.popFinishUnlocked(.{}) catch {
-                thread.deinit();
-                return;
-            };
             proc.switchUndo(thread);
             return;
         }
 
-        self.queue.pushRaw(thread);
+        self.queue.pushLockedThreadLocked(
+            &self.queue_lock,
+            thread,
+            0,
+            .waiting,
+        );
+
+        thread.lock.unlock();
         self.queue_lock.unlock();
     }
 
@@ -648,17 +639,20 @@ pub const Notify = struct {
 
     /// returns true if the object was already notified
     pub fn notify(self: *@This()) bool {
-        const waiter = self.queue.popOpts(
-            &self.queue_lock,
-            .{
-                .empty_op = .return_locked,
-                .cancel_op = .set_error,
-            },
-        ) orelse {
+        self.queue_lock.lock();
+
+        if (self.queue.inner.size == 0) {
             defer self.queue_lock.unlock();
+            // is this cursed?
             defer self.notified = true;
             return self.notified;
-        };
+        }
+
+        const waiter = self.queue.popFirstLocked(
+            &self.queue_lock,
+            .ready,
+        ).?;
+        self.queue_lock.unlock();
 
         proc.ready(waiter);
         return false;

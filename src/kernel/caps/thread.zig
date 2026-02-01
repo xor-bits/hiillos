@@ -1,6 +1,5 @@
 const abi = @import("abi");
 const std = @import("std");
-const rbtree = @import("rbtree");
 
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
@@ -27,83 +26,55 @@ pub const Thread = struct {
     trap: arch.TrapRegs = .{},
     /// fx context data, switched lazily
     fx: arch.FxRegs = .{},
+    /// extra ipc registers
+    /// controlled by Receiver and Sender
+    // TODO: allocationless
+    extra_regs: std.MultiArrayList(CapOrVal) = .{},
+    /// IPC reply target
+    reply: ?*Thread = null,
+    message: abi.sys.Message = .{},
 
     // lock for modifying the thread
     lock: abi.lock.SpinMutex = .locked(),
     /// scheduler priority
-    priority: u2 = 1,
+    priority: u2 = 0,
     cpu_time: u64 = 0,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
     prev_status: abi.sys.ThreadStatus = .stopped,
-    in_queue: bool = false,
     exit_code: usize = 0,
     exit_waiters: Queue = .{},
-    waiting_cause: Cause = .not_started,
-    prev_waiting_cause: Cause = .not_started,
     // TODO: IPC buffer Frame where the userspace can write data freely
     // and on send, the kernel copies it (with CoW) to the destination IPC buffer
     // and replaces all handles with the target handles (u32 -> handle -> giveCap -> handle -> u32)
-    /// extra ipc registers
-    /// controlled by Receiver and Sender
-    extra_regs: std.MultiArrayList(CapOrVal) = .{},
     /// signal handler instruction pointer
     signal_handler: usize = 0,
     /// if a signal handler is running, this is the return address
     signal: ?abi.sys.Signal = null,
-    message: abi.sys.Message = .{},
 
-    // node_priority: u128 = 0,
+    /// might point to a queue that this thread is not in anymore,
+    /// but after locking it, the `scheduler_queue_node` is allowed to be read
+    /// and it tells that the node is not present in the tree.
+    current_or_previous_queue: ?*Queue = null,
+    current_or_previous_queue_lock: ?*abi.lock.SpinMutex = null,
+    // current_queue_kind: enum {
+    //     thread_exit_waiters,
+    //     process_exit_waiters,
+    //     scheduler,
+    //     futex,
+    //     channel_recv,
+    //     channel_send,
+    //     notify_wait,
+    //     frame_transient_sleep,
+    // },
     /// scheduler linked list,
     /// requires holding the correct queue's lock to use instead of this thread's lock
-    scheduler_queue_node: rbtree.RedBlackTree.Node = .{},
+    scheduler_queue_node: Queue.Node = .{},
     /// process threads linked list,
     /// requires holding the correct process' lock to use instead of this thread's lock
     process_threads_node: abi.util.QueueNode(@This()) = .{},
-    /// IPC reply target
-    reply: ?*Thread = null,
 
-    fn formatNode(
-        node: *const rbtree.RedBlackTree.Node,
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        const thread: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", node));
-        try writer.print("{*}", .{thread});
-    }
-
-    fn priorityComparator(
-        lhs_node: *const rbtree.RedBlackTree.Node,
-        rhs_node: *const rbtree.RedBlackTree.Node,
-    ) std.math.Order {
-        const lhs: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", lhs_node));
-        const rhs: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", rhs_node));
-
-        var order: std.math.Order = undefined;
-
-        // order = std.math.order(lhs.node_priority, rhs.node_priority);
-        // if (order != .eq) return order;
-
-        order = std.math.order(@intFromPtr(lhs), @intFromPtr(rhs));
-        std.debug.assert(order != .eq);
-        return order;
-    }
-
-    pub const Queue = ThreadQueue;
-    pub const Cause = enum {
-        not_started,
-        starving,
-        other_thread_exit,
-        other_process_exit,
-        unmap_tlb_shootdown,
-        transient_page_fault,
-        notify_wait,
-        ipc_recv,
-        ipc_call0,
-        ipc_call1,
-        signal,
-        futex,
-        cancel_stop,
-    };
+    pub const Queue = @import("thread/Queue.zig");
     pub const UserHandle = abi.caps.Thread;
 
     pub const CapOrVal = union(enum) {
@@ -148,16 +119,17 @@ pub const Thread = struct {
 
         self.exit(0);
 
-        self.lock.lock();
-        std.debug.assert(self.scheduler_queue_node.extra.isolated);
+        std.debug.assert(self.lock.tryLock());
+        std.debug.assert(self.exec_lock.tryLock());
+
+        std.debug.assert(self.scheduler_queue_node.inner.extra.isolated);
         std.debug.assert(self.process_threads_node.next == null);
         std.debug.assert(self.process_threads_node.prev == null);
-        self.discardReply();
-        self.lock.unlock();
+        self.discardReplyLockedExec();
 
         self.proc.deinit();
 
-        for (0..128) |i| self.getExtra(@truncate(i)).deinit();
+        for (0..128) |i| self.getExtraLockedExec(@truncate(i)).deinit();
         self.extra_regs.deinit(caps.slab_allocator.allocator());
 
         caps.slab_allocator.allocator().destroy(self);
@@ -191,173 +163,6 @@ pub const Thread = struct {
         self.exec_lock.unlock();
     }
 
-    pub fn checkRunningUnlocked(
-        self: *@This(),
-    ) error{Cancelled}!void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        return try self.checkRunning();
-    }
-
-    pub fn checkRunning(
-        self: *@This(),
-    ) error{Cancelled}!void {
-        std.debug.assert(self.lock.isLocked());
-        switch (self.status) {
-            .running => {},
-            .stopping => {
-                @branchHint(.cold);
-                self.prev_status = self.status;
-                self.status = .stopped;
-                return error.Cancelled;
-            },
-            .exiting => {
-                @branchHint(.cold);
-                self.prev_status = self.status;
-                self.status = .dead;
-                return error.Cancelled;
-            },
-
-            .stopped,
-            .ready,
-            .waiting,
-            .dead,
-            .starting,
-            => if (conf.IS_DEBUG) {
-                std.debug.panic("unexpected thread state: state={}, cause={}", .{
-                    self.status,
-                    self.waiting_cause,
-                });
-            } else {
-                unreachable;
-            },
-        }
-    }
-
-    pub fn pushPrepareUnlocked(
-        self: *@This(),
-        comptime opts: Queue.PushOpts,
-    ) error{Cancelled}!void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        return try self.pushPrepare(opts);
-    }
-
-    pub fn pushPrepare(
-        self: *@This(),
-        comptime opts: Queue.PushOpts,
-    ) error{Cancelled}!void {
-        std.debug.assert(self.lock.isLocked());
-        switch (self.status) {
-            .running,
-            .starting,
-            => {
-                self.prev_status = self.status;
-                self.prev_waiting_cause = self.waiting_cause;
-
-                self.status = opts.new_status;
-                self.waiting_cause = opts.new_cause;
-            },
-            .stopping => {
-                @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled) {
-                    self.prev_status = self.status;
-                    self.status = .stopped;
-                }
-                return error.Cancelled;
-            },
-            .exiting => {
-                @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled) {
-                    self.prev_status = self.status;
-                    self.status = .dead;
-                }
-                return error.Cancelled;
-            },
-
-            // thread cannot be pushed into a queue directly after the state is one of these:
-            //  - `stopped`, because it has to go through `stopping` first
-            //  - `ready`, because that would mean the thread is
-            //    also in some scheduler ready queue
-            //  - `waiting`, because that would mean the thread is
-            //    also in some IPC/other wait queue
-            //  - `dead`, because the thread is now permanently dead
-            .stopped,
-            .ready,
-            .waiting,
-            .dead,
-            => if (conf.IS_DEBUG) {
-                std.debug.panic("unexpected thread state: state={}, cause={}", .{
-                    self.status,
-                    self.waiting_cause,
-                });
-            } else {
-                unreachable;
-            },
-        }
-    }
-
-    pub fn popFinishUnlocked(
-        self: *@This(),
-        comptime opts: Queue.PopOpts,
-    ) error{Cancelled}!void {
-        self.lock.lock();
-        defer self.lock.unlock();
-        return try self.popFinish(opts);
-    }
-
-    pub fn popFinish(
-        self: *@This(),
-        comptime opts: Queue.PopOpts,
-    ) error{Cancelled}!void {
-        std.debug.assert(self.lock.isLocked());
-        switch (self.status) {
-            .ready,
-            .waiting,
-            => {
-                self.prev_status = self.status;
-                self.status = .running;
-            },
-            .exiting => {
-                @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled) {
-                    self.prev_status = self.status;
-                    self.status = .dead;
-                }
-                return error.Cancelled;
-            },
-            .stopping => {
-                @branchHint(.cold);
-                if (opts.cancel_op != .allow_cancelled) {
-                    self.prev_status = self.status;
-                    self.status = .stopped;
-                }
-                return error.Cancelled;
-            },
-
-            // thread cannot be in a queue and one of these at the same time:
-            //  - `stopped`, because only taking it from a
-            //    queue while its `stopping` changes it to stopped
-            //  - `running`, because that would mean two CPUs could
-            //    be running the same thread at the same time
-            //  - `dead`, because only taking it from a
-            //    queue while its exiting changes it to `dead`
-            //  - `starting`, because it was just `stopped` and not yet added this queue
-            .stopped,
-            .running,
-            .dead,
-            .starting,
-            => if (conf.IS_DEBUG) {
-                std.debug.panic("unexpected thread state: state={}, cause={}", .{
-                    self.status,
-                    self.waiting_cause,
-                });
-            } else {
-                unreachable;
-            },
-        }
-    }
-
     pub fn start(self: *@This()) !void {
         try self.proc.start(self);
 
@@ -387,11 +192,6 @@ pub const Thread = struct {
                 self.lock.unlock();
                 proc.start(self.clone());
             },
-            .stopping => {
-                self.status = self.prev_status;
-
-                self.lock.unlock();
-            },
             else => {
                 self.lock.unlock();
                 return Error.NotStopped;
@@ -413,7 +213,7 @@ pub const Thread = struct {
                 self.status != .waiting)
                 return Error.NotRunning;
             self.prev_status = self.status;
-            self.status = .stopping;
+            self.status = .stopped;
         }
 
         if (self == thread) {
@@ -427,7 +227,13 @@ pub const Thread = struct {
         exit_code: usize,
     ) void {
         self.proc.exit(exit_code, self);
+        self.exitRemote(exit_code);
+    }
 
+    pub fn exitRemote(
+        self: *@This(),
+        exit_code: usize,
+    ) void {
         self.lock.lock();
         self.prev_status = self.status;
         self.status = .dead;
@@ -437,26 +243,13 @@ pub const Thread = struct {
         self.onExit(exit_code);
     }
 
-    pub fn exitRemote(
-        self: *@This(),
-        exit_code: usize,
-    ) void {
-        self.lock.lock();
-        self.prev_status = self.status;
-        self.status = .exiting;
-        self.exit_code = exit_code;
-        self.lock.unlock();
-
-        self.onExit(exit_code);
-    }
-
     fn onExit(self: *@This(), exit_code: usize) void {
         self.lock.lock();
-        var exit_waiters = self.exit_waiters.takeAll(&self.lock);
-        self.lock.unlock();
-
-        var dummy_lock: abi.lock.SpinMutex = .{};
-        while (exit_waiters.pop(&dummy_lock)) |waiter| {
+        defer self.lock.unlock();
+        while (self.exit_waiters.popFirstLocked(
+            &self.lock,
+            .ready,
+        )) |waiter| {
             waiter.lock.lock();
             waiter.trap.arg0 = exit_code;
             waiter.lock.unlock();
@@ -479,86 +272,64 @@ pub const Thread = struct {
 
         // early block the thread (or cancel)
         proc.switchFrom(trap, thread);
-        thread.lock.lock();
-        thread.pushPrepare(.{
-            .new_status = .waiting,
-            .new_cause = .other_thread_exit,
-        }) catch {
-            @branchHint(.cold);
-            thread.lock.unlock();
 
-            // the current thread was stopped
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-            return;
-        };
-        thread.lock.unlock();
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            thread.lock.lock();
+            defer thread.lock.unlock();
 
-        // if the thread isnt already dead, then add it to the wait queue
-        self.lock.lock();
-        if (self.status != .dead) {
-            self.exit_waiters.pushRaw(thread);
-            self.lock.unlock();
-            return;
+            if (self.status != .dead) {
+                self.exit_waiters.pushLockedThreadLocked(
+                    &self.lock,
+                    thread,
+                    0,
+                    .waiting,
+                );
+                return;
+            }
+
+            trap.arg0 = self.exit_code;
         }
-        const exit_code = self.exit_code;
-        self.lock.unlock();
-        // log.info("exit waiter notified early", .{});
-
-        // the thread was already dead
-        trap.arg0 = exit_code;
         proc.switchUndo(thread);
-        thread.popFinishUnlocked(.{}) catch {
-            // the current thread was stopped
-            trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            proc.switchFrom(trap, thread);
-            thread.deinit();
-        };
     }
 
-    pub fn getExtra(self: *@This(), idx: u7) CapOrVal {
-        self.lock.lock();
-        defer self.lock.unlock();
+    pub fn getExtraLockedExec(self: *@This(), idx: u7) CapOrVal {
+        std.debug.assert(self.exec_lock.isLocked());
 
         const val = self.extra_regs.get(idx);
         self.extra_regs.set(idx, .{ .val = 0 });
         return val;
     }
 
-    pub fn setExtra(self: *@This(), idx: u7, data: CapOrVal) void {
-        self.lock.lock();
-        defer self.lock.unlock();
+    pub fn setExtraLockedExec(self: *@This(), idx: u7, data: CapOrVal) void {
+        std.debug.assert(self.exec_lock.isLocked());
 
         self.extra_regs.get(idx).deinit();
         self.extra_regs.set(idx, data);
     }
 
     /// prepareExtras has to be called for `dst` first
-    pub fn moveExtra(src: *@This(), dst: *@This(), count: u7) void {
+    pub inline fn moveExtraLockedExec(src: *@This(), dst: *@This(), count: u7) void {
+        std.debug.assert(src.exec_lock.isLocked());
+        std.debug.assert(dst.exec_lock.isLocked());
+
+        // effectively always inline this check here
+        // but call if count is above 0
         if (count == 0) {
             return;
         } else {
             @branchHint(.cold);
         }
 
-        src.lock.lock();
-        defer src.lock.unlock();
-        dst.lock.lock();
-        defer dst.lock.unlock();
-
         for (0..count) |idx| {
-            const val = src.extra_regs.get(@truncate(idx));
-            src.extra_regs.set(@truncate(idx), .{ .val = 0 });
-
-            const old_val = dst.extra_regs.get(idx);
-            dst.extra_regs.set(@truncate(idx), val);
-
-            old_val.deinit();
+            const val = src.getExtraLockedExec(@truncate(idx));
+            dst.setExtraLockedExec(@truncate(idx), val);
         }
     }
 
     pub fn readRegs(self: *@This()) abi.sys.ThreadRegs {
+        // FIXME: incorrect, the exec lock should be held not this lock
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -570,6 +341,7 @@ pub const Thread = struct {
     }
 
     pub fn writeRegs(self: *@This(), regs: abi.sys.ThreadRegs) void {
+        // FIXME: incorrect, the exec lock should be held not this lock
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -580,32 +352,41 @@ pub const Thread = struct {
         }
     }
 
-    pub fn setReply(self: *@This(), target: *Thread) void {
+    pub fn setReplyLockedExec(self: *@This(), target: *Thread) void {
+        std.debug.assert(self.exec_lock.isLocked());
+
         std.debug.assert(self.reply == null);
         std.debug.assert(self != target);
-        std.debug.assert(target.status == .waiting);
         self.reply = target;
     }
 
     pub fn takeReply(self: *@This()) ?*Thread {
-        std.debug.assert(self.lock.isLocked());
+        self.exec_lock.lock();
+        defer self.exec_lock.unlock();
+        return self.takeReplyLockedExec();
+    }
+
+    pub fn takeReplyLockedExec(self: *@This()) ?*Thread {
+        std.debug.assert(self.exec_lock.isLocked());
+
         const sender = self.reply orelse {
             @branchHint(.cold);
             return null;
         };
-        std.debug.assert(sender.status == .waiting);
         self.reply = null;
         return sender;
     }
 
-    pub fn discardReply(self: *@This()) void {
-        std.debug.assert(self.lock.isLocked());
+    pub fn discardReplyLockedExec(self: *@This()) void {
+        std.debug.assert(self.exec_lock.isLocked());
+
         if (self.reply) |discarded| {
             @branchHint(.cold);
+            self.reply = null;
+            // FIXME: exec_lock?
             discarded.trap.syscall_id = abi.sys.encode(Error.NoReply);
             proc.ready(discarded);
         }
-        self.reply = null;
     }
 
     pub fn unhandledPageFault(
@@ -649,158 +430,5 @@ pub const Thread = struct {
 
         proc.switchFrom(trap, self);
         proc.switchNow(trap);
-    }
-};
-
-const ThreadQueue = struct {
-    queue: rbtree.RedBlackTree = .{},
-
-    pub fn takeAll(
-        self: *@This(),
-        lock: *abi.lock.SpinMutex,
-    ) @This() {
-        std.debug.assert(lock.isLocked());
-        defer self.* = .{};
-        return self.*;
-    }
-
-    pub const PushOpts = struct {
-        new_status: abi.sys.ThreadStatus,
-        new_cause: Thread.Cause,
-        cancel_op: enum {
-            ignore,
-            set_error,
-            allow_cancelled,
-        } = .ignore,
-    };
-
-    /// sets thread status to `status` and pushes it to the queue
-    pub fn push(
-        self: *@This(),
-        lock: *abi.lock.SpinMutex,
-        thread: *Thread,
-        comptime opts: PushOpts,
-    ) void {
-        if (conf.IS_DEBUG) std.debug.assert(
-            arch.cpuLocal().current_thread != thread,
-        );
-
-        {
-            thread.lock.lock();
-            thread.pushPrepare(
-                opts,
-            ) catch switch (opts.cancel_op) {
-                .ignore => {
-                    thread.lock.unlock();
-                    thread.deinit();
-                    return;
-                },
-                .set_error => {
-                    thread.lock.unlock();
-                    thread.exec_lock.lock();
-                    thread.trap.syscall_id =
-                        abi.sys.encode(Error.Cancelled);
-                    thread.exec_lock.unlock();
-                    thread.deinit();
-                    return;
-                },
-                .allow_cancelled => {},
-            };
-            thread.lock.unlock();
-        }
-
-        {
-            lock.lock();
-            defer lock.unlock();
-            self.pushRaw(thread);
-        }
-    }
-
-    /// pops a thread and marks it as running
-    pub fn pop(
-        self: *@This(),
-        lock: *abi.lock.SpinMutex,
-    ) ?*Thread {
-        return self.popOpts(lock, .{});
-    }
-
-    pub const PopOpts = struct {
-        empty_op: enum {
-            return_unlocked,
-            return_locked,
-        } = .return_unlocked,
-        cancel_op: enum {
-            ignore,
-            set_error,
-            allow_cancelled,
-        } = .ignore,
-        no_pop_finish: bool = false,
-    };
-
-    /// pops a thread and marks it as running
-    pub fn popOpts(
-        self: *@This(),
-        lock: *abi.lock.SpinMutex,
-        comptime opts: PopOpts,
-    ) ?*Thread {
-        while (true) {
-            lock.lock();
-            const next_thread = self.popRaw() orelse switch (opts.empty_op) {
-                .return_unlocked => {
-                    @branchHint(.cold);
-                    lock.unlock();
-                    return null;
-                },
-                .return_locked => {
-                    @branchHint(.cold);
-                    return null;
-                },
-            };
-            lock.unlock();
-
-            next_thread.lock.lock();
-            if (opts.no_pop_finish) {
-                next_thread.lock.unlock();
-                return next_thread;
-            }
-            next_thread.popFinish(opts) catch switch (opts.cancel_op) {
-                .ignore => {
-                    next_thread.lock.unlock();
-                    next_thread.deinit();
-                    continue;
-                },
-                .set_error => {
-                    next_thread.lock.unlock();
-                    next_thread.exec_lock.lock();
-                    next_thread.trap.syscall_id =
-                        abi.sys.encode(Error.Cancelled);
-                    next_thread.exec_lock.unlock();
-                    next_thread.deinit();
-                    continue;
-                },
-                .allow_cancelled => {},
-            };
-            next_thread.lock.unlock();
-            return next_thread;
-        }
-    }
-
-    pub inline fn popRaw(self: *@This()) ?*Thread {
-        // log.debug("queue:\n{f}", .{self.queue.display(Thread.formatNode)});
-
-        const first = self.queue.first orelse return null;
-        self.queue.remove(first);
-        // log.debug("pop -> {*} {*}", .{ first, self });
-        return @alignCast(@fieldParentPtr("scheduler_queue_node", first));
-    }
-
-    pub inline fn pushRaw(self: *@This(), thread: *Thread) void {
-        // log.debug("push -> {*} {*}", .{ &thread.scheduler_queue_node, self });
-        const replaced = self.queue.put(Thread.priorityComparator, &thread.scheduler_queue_node);
-        std.debug.assert(replaced == null);
-    }
-
-    inline fn cancelError(thread: *Thread) void {
-        thread.trap.syscall_id = abi.sys.encode(Error.Cancelled);
     }
 };

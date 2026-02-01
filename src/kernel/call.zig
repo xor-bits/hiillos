@@ -70,13 +70,10 @@ pub fn syscall(trap: *arch.TrapRegs) void {
         const new_thread = locals.current_thread.?;
         new_thread.lock.lock();
         defer new_thread.lock.unlock();
-        if (new_thread.status != .running and
-            new_thread.status != .stopping and
-            new_thread.status != .exiting)
-            std.debug.panic("call={} status={} cause={}", .{
+        if (new_thread.status != .running)
+            std.debug.panic("call={} status={}", .{
                 id,
                 new_thread.status,
-                new_thread.waiting_cause,
             });
     }
 }
@@ -764,12 +761,12 @@ fn handle_syscall(
                     .{ .transfer = true },
                 );
 
-                thread.setExtra(
+                thread.setExtraLockedExec(
                     idx,
                     .{ .cap = caps.CapabilitySlot.init(cap) },
                 );
             } else {
-                thread.setExtra(
+                thread.setExtraLockedExec(
                     idx,
                     .{ .val = val },
                 );
@@ -780,8 +777,8 @@ fn handle_syscall(
         .self_get_extra => {
             const idx: u7 = @truncate(trap.arg0);
 
-            const data = thread.getExtra(idx);
-            errdefer thread.setExtra(idx, data);
+            const data = thread.getExtraLockedExec(idx);
+            errdefer thread.setExtraLockedExec(idx, data);
 
             switch (data) {
                 .cap => |cap| {

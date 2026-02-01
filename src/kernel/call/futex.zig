@@ -9,6 +9,7 @@ const proc = @import("../proc.zig");
 const util = abi.util;
 const conf = abi.conf;
 const Error = abi.sys.Error;
+const log = std.log.scoped(.futex);
 
 //
 
@@ -31,63 +32,31 @@ pub fn wait(
         return;
     }
 
-    thread.lock.lock();
-    thread.pushPrepare(.{
-        .new_status = .waiting,
-        .new_cause = .futex,
-    }) catch {
-        thread.lock.unlock();
-        trap.syscall_id = abi.sys.encode(Error.Cancelled);
-        proc.switchFrom(trap, thread);
-        thread.deinit();
-        return;
-    };
-    thread.lock.unlock();
+    const futex_queue = &futex_queues[addressHash(futex)];
+
     proc.switchFrom(trap, thread); // switch away before locking, to hold the lock less
 
-    const futex_queue = &futex_queues[addressHash(futex)];
     futex_queue.lock.lock();
+    thread.lock.lock();
 
     if (futex.load(.acquire) != value) {
         // late fail
+        thread.lock.unlock();
         futex_queue.lock.unlock();
-        if (thread.popFinishUnlocked(.{})) |_| {
-            // undo and return the error immediately
-            proc.switchUndo(thread);
-            return;
-        } else |_| {
-            // cancelled but finished
-            thread.exec_lock.lock();
-            thread.trap.syscall_id = abi.sys.encode(0);
-            thread.exec_lock.unlock();
-            thread.deinit();
-            return;
-        }
+        proc.switchUndo(thread);
         return;
     }
 
     // sleep the thread
-    const queue = futex_queue.real_queues.getOrPut(caps.slab_allocator.allocator(), futex) catch {
-        futex_queue.lock.unlock();
-        if (thread.popFinishUnlocked(.{})) |_| {
-            // undo and return the error immediately
-            proc.switchUndo(thread);
-            return Error.OutOfMemory;
-        } else |_| {
-            // cancelled but finished
-            thread.exec_lock.lock();
-            thread.trap.syscall_id = abi.sys.encode(Error.OutOfMemory);
-            thread.exec_lock.unlock();
-            thread.deinit();
-            return;
-        }
-    };
-    if (!queue.found_existing) queue.value_ptr.* = .{};
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*}", .{thread});
-    queue.value_ptr.pushRaw(thread);
-
-    // switch to a new thread
+    futex_queue.queue.pushLockedThreadLocked(
+        &futex_queue.lock,
+        thread,
+        @intFromPtr(futex),
+        .waiting,
+    );
+    thread.lock.unlock();
     futex_queue.lock.unlock();
 }
 
@@ -96,7 +65,7 @@ pub fn wake(
     thread: *caps.Thread,
 ) Error!void {
     const futex_ptr = try addr.Virt.fromUser(trap.arg0);
-    var count = trap.arg1;
+    const count = trap.arg1;
     const flags = abi.sys.FutexFlags.fromInt(@truncate(trap.arg2));
 
     // TODO: private mode
@@ -107,25 +76,13 @@ pub fn wake(
     const futex = try physAddr(*std.atomic.Value(u8), thread, futex_ptr);
 
     const futex_queue = &futex_queues[addressHash(futex)];
-    futex_queue.lock.lock();
 
-    const queue = futex_queue.real_queues.getPtr(futex) orelse {
-        // nothing to wake up
-        futex_queue.lock.unlock();
-        return;
-    };
-
-    var dummy_lock: abi.lock.SpinMutex = .{};
-
-    while (count != 0) : (count -= 1) {
-        const thread_to_wake_up = queue.popOpts(
-            &dummy_lock,
-            .{},
-        ) orelse {
-            // nothing queued on that address anymore, remove the specific queue
-            std.debug.assert(futex_queue.real_queues.remove(futex));
-            break;
-        };
+    for (0..count) |_| {
+        const thread_to_wake_up = futex_queue.queue.popFutexAddr(
+            &futex_queue.lock,
+            @intFromPtr(futex),
+            .ready,
+        ) orelse break;
 
         if (conf.LOG_FUTEX)
             std.log.debug("futex wake {*}", .{thread_to_wake_up});
@@ -133,7 +90,6 @@ pub fn wake(
     }
 
     // preempt if a high priority thread was awakened
-    futex_queue.lock.unlock();
     proc.yield(trap);
 }
 
@@ -184,5 +140,5 @@ var futex_queues: [256]FutexQueue = [1]FutexQueue{.{}} ** 256;
 
 const FutexQueue = struct {
     lock: abi.lock.SpinMutex = .{},
-    real_queues: std.AutoHashMapUnmanaged(*anyopaque, caps.Thread.Queue) = .{},
+    queue: caps.Thread.Queue = .{},
 };
