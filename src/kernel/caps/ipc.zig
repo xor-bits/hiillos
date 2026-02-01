@@ -150,7 +150,7 @@ pub const Channel = struct {
             @branchHint(.cold);
 
             if (self.send_count != 0) {
-                self.recv_queue.queue.pushBack(thread);
+                self.recv_queue.pushRaw(thread);
                 self.lock.unlock();
                 return;
             } else {
@@ -313,7 +313,7 @@ pub const Channel = struct {
             @branchHint(.cold);
 
             if (self.recv_count != 0) {
-                self.send_queue.queue.pushBack(thread);
+                self.send_queue.pushRaw(thread);
                 self.lock.unlock();
                 return;
             } else {
@@ -631,7 +631,7 @@ pub const Notify = struct {
             return;
         }
 
-        self.queue.queue.pushBack(thread);
+        self.queue.pushRaw(thread);
         self.queue_lock.unlock();
     }
 

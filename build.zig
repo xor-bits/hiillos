@@ -484,7 +484,6 @@ fn createKernelElf(
     const git_rev_mod = b.createModule(.{
         .root_source_file = git_rev,
     });
-
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(git_rev, .prefix, "git-rev").step);
 
     const kernel_module = b.addModule("kernel", .{
@@ -492,10 +491,25 @@ fn createKernelElf(
         .target = opts.kernel_target,
         .optimize = opts.optimize,
         .code_model = .kernel,
+        .imports = &.{
+            .{
+                .name = "abi",
+                .module = abi,
+            },
+            .{
+                .name = "git-rev",
+                .module = git_rev_mod,
+            },
+            .{
+                .name = "sources",
+                .module = try generateSourcesZig(b),
+            },
+            .{
+                .name = "rbtree",
+                .module = b.dependency("rbtree", .{}).module("rbtree"),
+            },
+        },
     });
-    kernel_module.addImport("abi", abi);
-    kernel_module.addImport("git-rev", git_rev_mod);
-    kernel_module.addImport("sources", try generateSourcesZig(b));
 
     if (opts.testing) {
         const testkernel_elf_step = b.addTest(.{

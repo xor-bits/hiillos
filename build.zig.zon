@@ -7,11 +7,15 @@
             .hash = "1220691d9f8b2dfbc5e2727e3400d983b88db37ad7b2468735932ec12b37d304c90e",
         },
         .qoi = .{
-            .url = "https://github.com/xor-bits/qoi/archive/ef6a688fbeb294e36c9088286ebefc1b27d7ab71.tar.gz",
+            .url = "git+https://github.com/xor-bits/qoi.git#ef6a688fbeb294e36c9088286ebefc1b27d7ab71",
             .hash = "qoi-0.0.1-im2KtYJAAAA2i7rzjql8JqrjY8p5-AKBXRYMRS2XiMsl",
+        },
+        .rbtree = .{
+            .url = "git+https://github.com/xor-bits/rbtree.git#7332e76a95387765f728849fd1e41e23f39ea60e",
+            .hash = "rbtree-0.0.1-WtgBiVAzAQCfGrPXiMp3kzMneYa1H_a7rqQgC0S2EE_c",
         },
     },
     .paths = .{"."},
     .fingerprint = 0x85b8bb43b41d4850,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.2",
 }

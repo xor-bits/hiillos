@@ -1,5 +1,6 @@
 const abi = @import("abi");
 const std = @import("std");
+const rbtree = @import("rbtree");
 
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
@@ -31,6 +32,7 @@ pub const Thread = struct {
     lock: abi.lock.SpinMutex = .locked(),
     /// scheduler priority
     priority: u2 = 1,
+    cpu_time: u64 = 0,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
     prev_status: abi.sys.ThreadStatus = .stopped,
@@ -51,12 +53,40 @@ pub const Thread = struct {
     signal: ?abi.sys.Signal = null,
     message: abi.sys.Message = .{},
 
-    /// scheduler linked list
-    scheduler_queue_node: abi.util.QueueNode(@This()) = .{},
-    /// process threads linked list
+    // node_priority: u128 = 0,
+    /// scheduler linked list,
+    /// requires holding the correct queue's lock to use instead of this thread's lock
+    scheduler_queue_node: rbtree.RedBlackTree.Node = .{},
+    /// process threads linked list,
+    /// requires holding the correct process' lock to use instead of this thread's lock
     process_threads_node: abi.util.QueueNode(@This()) = .{},
     /// IPC reply target
     reply: ?*Thread = null,
+
+    fn formatNode(
+        node: *const rbtree.RedBlackTree.Node,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        const thread: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", node));
+        try writer.print("{*}", .{thread});
+    }
+
+    fn priorityComparator(
+        lhs_node: *const rbtree.RedBlackTree.Node,
+        rhs_node: *const rbtree.RedBlackTree.Node,
+    ) std.math.Order {
+        const lhs: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", lhs_node));
+        const rhs: *const @This() = @alignCast(@fieldParentPtr("scheduler_queue_node", rhs_node));
+
+        var order: std.math.Order = undefined;
+
+        // order = std.math.order(lhs.node_priority, rhs.node_priority);
+        // if (order != .eq) return order;
+
+        order = std.math.order(@intFromPtr(lhs), @intFromPtr(rhs));
+        std.debug.assert(order != .eq);
+        return order;
+    }
 
     pub const Queue = ThreadQueue;
     pub const Cause = enum {
@@ -119,10 +149,9 @@ pub const Thread = struct {
         self.exit(0);
 
         self.lock.lock();
+        std.debug.assert(self.scheduler_queue_node.extra.isolated);
         std.debug.assert(self.process_threads_node.next == null);
         std.debug.assert(self.process_threads_node.prev == null);
-        std.debug.assert(self.scheduler_queue_node.next == null);
-        std.debug.assert(self.scheduler_queue_node.prev == null);
         self.discardReply();
         self.lock.unlock();
 
@@ -469,7 +498,7 @@ pub const Thread = struct {
         // if the thread isnt already dead, then add it to the wait queue
         self.lock.lock();
         if (self.status != .dead) {
-            self.exit_waiters.queue.pushBack(thread);
+            self.exit_waiters.pushRaw(thread);
             self.lock.unlock();
             return;
         }
@@ -624,7 +653,7 @@ pub const Thread = struct {
 };
 
 const ThreadQueue = struct {
-    queue: abi.util.Queue(Thread, "scheduler_queue_node") = .{},
+    queue: rbtree.RedBlackTree = .{},
 
     pub fn takeAll(
         self: *@This(),
@@ -683,7 +712,7 @@ const ThreadQueue = struct {
         {
             lock.lock();
             defer lock.unlock();
-            self.queue.pushBack(thread);
+            self.pushRaw(thread);
         }
     }
 
@@ -716,7 +745,7 @@ const ThreadQueue = struct {
     ) ?*Thread {
         while (true) {
             lock.lock();
-            const next_thread = self.queue.popFront() orelse switch (opts.empty_op) {
+            const next_thread = self.popRaw() orelse switch (opts.empty_op) {
                 .return_unlocked => {
                     @branchHint(.cold);
                     lock.unlock();
@@ -754,6 +783,21 @@ const ThreadQueue = struct {
             next_thread.lock.unlock();
             return next_thread;
         }
+    }
+
+    pub inline fn popRaw(self: *@This()) ?*Thread {
+        // log.debug("queue:\n{f}", .{self.queue.display(Thread.formatNode)});
+
+        const first = self.queue.first orelse return null;
+        self.queue.remove(first);
+        // log.debug("pop -> {*} {*}", .{ first, self });
+        return @alignCast(@fieldParentPtr("scheduler_queue_node", first));
+    }
+
+    pub inline fn pushRaw(self: *@This(), thread: *Thread) void {
+        // log.debug("push -> {*} {*}", .{ &thread.scheduler_queue_node, self });
+        const replaced = self.queue.put(Thread.priorityComparator, &thread.scheduler_queue_node);
+        std.debug.assert(replaced == null);
     }
 
     inline fn cancelError(thread: *Thread) void {

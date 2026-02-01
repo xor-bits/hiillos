@@ -150,7 +150,7 @@ pub const Process = struct {
         // if the thread isnt already dead, then add it to the wait queue
         self.lock.lock();
         if (self.status != .dead) {
-            self.exit_waiters.queue.pushBack(thread);
+            self.exit_waiters.pushRaw(thread);
             self.lock.unlock();
             return;
         }

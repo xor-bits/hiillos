@@ -192,6 +192,12 @@ pub const ints = struct {
     }
 };
 
+pub inline fn debugHlt() void {
+    asm volatile (
+        \\ 1: jmp 1b
+    );
+}
+
 pub inline fn hcf() noreturn {
     while (true) {
         asm volatile (

@@ -85,7 +85,7 @@ pub fn wait(
     if (!queue.found_existing) queue.value_ptr.* = .{};
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*}", .{thread});
-    queue.value_ptr.queue.pushBack(thread);
+    queue.value_ptr.pushRaw(thread);
 
     // switch to a new thread
     futex_queue.lock.unlock();
