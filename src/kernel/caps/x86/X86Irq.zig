@@ -25,10 +25,7 @@ pub const UserHandle = abi.caps.X86Irq;
 
 // only borrows the X86IrqAllocator
 pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86Irq.init", .{});
-    if (conf.LOG_OBJ_STATS)
-        caps.incCount(.x86_irq);
+    caps.incCount(.x86_irq, .{ .irq = irq });
 
     try allocIrq(&irq_bitmap, irq);
     errdefer freeIrq(&irq_bitmap, irq) catch unreachable;
@@ -47,11 +44,7 @@ pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {
 
 pub fn deinit(self: *@This()) void {
     if (!self.refcnt.dec()) return;
-
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86Irq.deinit", .{});
-    if (conf.LOG_OBJ_STATS)
-        caps.decCount(.x86_irq);
+    caps.decCount(.x86_irq);
 
     self.notify.deinit();
 
@@ -108,10 +101,7 @@ pub const X86IrqAllocator = struct {
     pub const UserHandle = abi.caps.X86IrqAllocator;
 
     pub fn init() !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IrqAllocator.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.x86_irq_allocator);
+        caps.incCount(.x86_irq_allocator, .{});
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
@@ -121,11 +111,7 @@ pub const X86IrqAllocator = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IrqAllocator.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.x86_irq_allocator);
+        caps.decCount(.x86_irq_allocator);
 
         caps.slab_allocator.allocator().destroy(self);
     }

@@ -153,9 +153,6 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
 }
 
 pub fn init() !@This() {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("HalVmem.init", .{});
-
     const active_pcids = try caps.slab_allocator.allocator().alloc(PcidEntry, arch.cpuCount());
     const self: @This() = .{
         .pml4 = allocTable(),
@@ -166,8 +163,7 @@ pub fn init() !@This() {
     abi.util.fillVolatile(Entry, lvl4.entries[0..256], .{});
     abi.util.copyForwardsVolatile(Entry, lvl4.entries[256..], kernel_table.entries[256..]);
 
-    if (conf.LOG_OBJ_STATS)
-        caps.incCount(.frame);
+    caps.incCount(.hal_vmem, .{});
     if (conf.LOG_CTX_SWITCHES)
         log.debug("new context 0x{x}", .{self.pml4.raw});
 
@@ -175,8 +171,7 @@ pub fn init() !@This() {
 }
 
 pub fn deinit(_: *HalVmem) void {
-    if (conf.LOG_OBJ_STATS)
-        caps.decCount(.frame);
+    caps.decCount(.hal_vmem);
 }
 
 pub fn switchTo(self: *@This()) void {
@@ -202,7 +197,7 @@ pub fn switchTo(self: *@This()) void {
 
     new_cr3.write();
     if (conf.LOG_CTX_SWITCHES)
-        log.debug("context switched to 0x{x}", .{self.raw});
+        log.debug("context switched to 0x{x}", .{self.pml4.raw});
 }
 
 pub fn printMappings(self: *@This()) !void {

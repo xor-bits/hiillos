@@ -28,10 +28,7 @@ pub const Vmem = struct {
     pub const UserHandle = abi.caps.Vmem;
 
     pub fn init() Error!*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Vmem.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.vmem);
+        caps.incCount(.vmem, .{});
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .lock = .locked() };
@@ -42,11 +39,7 @@ pub const Vmem = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Vmem.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.vmem);
+        caps.decCount(.vmem);
 
         for (self.mappings.items) |mapping| {
             mapping.deinit();

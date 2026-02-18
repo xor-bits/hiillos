@@ -20,10 +20,7 @@ pub const UserHandle = abi.caps.X86IoPort;
 
 // only borrows the `*X86IoPortAllocator`
 pub fn init(_: *X86IoPortAllocator, port: u16) Error!*@This() {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86IoPort.init", .{});
-    if (conf.LOG_OBJ_STATS)
-        caps.incCount(.x86_ioport);
+    caps.incCount(.x86_ioport, .{ .port = port });
 
     try allocPort(&port_bitmap, port);
 
@@ -35,11 +32,7 @@ pub fn init(_: *X86IoPortAllocator, port: u16) Error!*@This() {
 
 pub fn deinit(self: *@This()) void {
     if (!self.refcnt.dec()) return;
-
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86IoPort.deinit", .{});
-    if (conf.LOG_OBJ_STATS)
-        caps.decCount(.x86_ioport);
+    caps.decCount(.x86_ioport);
 
     freePort(&port_bitmap, self.port) catch
         unreachable;
@@ -84,10 +77,7 @@ pub const X86IoPortAllocator = struct {
     pub const UserHandle = abi.caps.X86IoPortAllocator;
 
     pub fn init() !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IoPortAllocator.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.x86_ioport_allocator);
+        caps.incCount(.x86_ioport_allocator, .{});
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
@@ -97,11 +87,7 @@ pub const X86IoPortAllocator = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IoPortAllocator.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.x86_ioport_allocator);
+        caps.decCount(.x86_ioport_allocator);
 
         caps.slab_allocator.allocator().destroy(self);
     }

@@ -169,6 +169,8 @@ pub const ObjectType = enum(u8) {
     thread,
     /// capability to the virtual memory structure
     vmem,
+    /// internal vmem capability for page tables
+    hal_vmem,
     /// capability to a physical memory region (sized `ChunkSize`)
     frame,
     /// capability to **the** receiver end of an endpoint,

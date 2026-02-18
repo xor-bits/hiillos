@@ -92,10 +92,7 @@ pub const Thread = struct {
     pub fn init(from_proc: *caps.Process) !*@This() {
         errdefer from_proc.deinit();
 
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Thread.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.thread);
+        caps.incCount(.thread, .{ .process = from_proc });
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .proc = from_proc };
@@ -111,11 +108,7 @@ pub const Thread = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Thread.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.thread);
+        caps.decCount(.thread);
 
         self.exit(0);
 
@@ -178,7 +171,7 @@ pub const Thread = struct {
                 const limit = @min(len, chunk.len);
                 len -= limit;
 
-                log.info("{}", .{abi.util.hex(@volatileCast(chunk[0..limit]))});
+                log.info("{f}", .{abi.util.hex(@volatileCast(chunk[0..limit]))});
                 if (len == 0) break;
             }
         }

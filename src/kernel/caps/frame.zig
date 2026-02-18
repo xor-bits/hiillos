@@ -34,10 +34,7 @@ pub const Frame = struct {
     pub const UserHandle = abi.caps.Frame;
 
     pub fn init(size_bytes: usize) !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Frame.init size={}", .{size_bytes});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.frame);
+        caps.incCount(.frame, .{ .size_bytes = size_bytes });
 
         if (size_bytes == 0)
             return Error.InvalidArgument;
@@ -90,11 +87,7 @@ pub const Frame = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Frame.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.frame);
+        caps.decCount(.frame);
 
         if (!self.is_physical) {
             for (self.pages) |page| {

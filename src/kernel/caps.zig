@@ -63,7 +63,9 @@ pub fn init() !void {
     }
 }
 
-pub fn incCount(ty: abi.ObjectType) void {
+pub fn incCount(ty: abi.ObjectType, init_args: anytype) void {
+    if (conf.LOG_OBJ_CALLS)
+        log.info("{t}.init {any}", .{ ty, init_args });
     if (!conf.LOG_OBJ_STATS) return;
     _ = obj_counts.getPtr(ty).fetchAdd(1, .monotonic);
 
@@ -76,6 +78,8 @@ pub fn incCount(ty: abi.ObjectType) void {
 }
 
 pub fn decCount(ty: abi.ObjectType) void {
+    if (conf.LOG_OBJ_CALLS)
+        log.info("{t}.deinit", .{ty});
     if (!conf.LOG_OBJ_STATS) return;
     _ = obj_counts.getPtr(ty).fetchSub(1, .monotonic);
 }

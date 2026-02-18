@@ -30,17 +30,10 @@ pub const Channel = struct {
     pub fn init() !struct { *Receiver, *Sender } {
         const allocator = caps.slab_allocator.allocator();
 
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Channel.init", .{});
-        if (conf.LOG_OBJ_STATS) {
-            caps.incCount(.receiver);
-            caps.incCount(.sender);
-        }
-
-        errdefer if (conf.LOG_OBJ_STATS) {
-            caps.decCount(.receiver);
-            caps.decCount(.sender);
-        };
+        caps.incCount(.receiver, .{});
+        caps.incCount(.sender, .{});
+        errdefer caps.decCount(.receiver);
+        errdefer caps.decCount(.sender);
 
         const obj: *@This() = try allocator.create(@This());
         errdefer allocator.destroy(obj);
@@ -361,11 +354,7 @@ pub const Receiver = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Receiver.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.receiver);
+        caps.decCount(.receiver);
 
         if (self.channel.deinitRecv()) {
             self.channel.deinit();
@@ -422,11 +411,7 @@ pub const Sender = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Sender.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.sender);
+        caps.decCount(.sender);
 
         if (self.channel.deinitSend()) {
             self.channel.deinit();
@@ -488,10 +473,7 @@ pub const Reply = struct {
 
     /// only borrows `thread`
     pub fn init(thread: *caps.Thread) !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Reply.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.reply);
+        caps.incCount(.reply, .{ .thread = thread });
 
         const sender = thread.takeReplyLockedExec() orelse {
             return Error.InvalidCapability;
@@ -506,11 +488,7 @@ pub const Reply = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Reply.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.reply);
+        caps.decCount(.reply);
 
         caps.slab_allocator.allocator().destroy(self);
     }
@@ -546,10 +524,7 @@ pub const Notify = struct {
     pub const UserHandle = abi.caps.Notify;
 
     pub fn init() !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Notify.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.notify);
+        caps.incCount(.notify, .{});
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
@@ -560,11 +535,7 @@ pub const Notify = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Notify.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.notify);
+        caps.decCount(.notify);
 
         self.cancel();
 

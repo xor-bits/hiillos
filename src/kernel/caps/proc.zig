@@ -31,10 +31,7 @@ pub const Process = struct {
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
         errdefer from_vmem.deinit();
 
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Process.init", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.incCount(.process);
+        caps.incCount(.process, .{ .vmem = from_vmem });
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{
@@ -48,11 +45,7 @@ pub const Process = struct {
 
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Process.deinit", .{});
-        if (conf.LOG_OBJ_STATS)
-            caps.decCount(.process);
+        caps.decCount(.process);
 
         self.closeAllCaps();
 
