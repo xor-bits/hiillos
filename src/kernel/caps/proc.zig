@@ -147,8 +147,9 @@ pub const Process = struct {
     }
 
     fn allocSlotLocked(self: *@This()) Error!u32 {
-        const free = self.free;
+        std.debug.assert(self.lock.isLocked());
 
+        const free = self.free;
         if (free != 0) {
             // use the free list
 
@@ -169,15 +170,20 @@ pub const Process = struct {
     }
 
     fn freeSlotLocked(self: *@This(), handle: u32) void {
+        std.debug.assert(self.lock.isLocked());
         self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
         self.free = handle;
     }
 
     pub fn pushCapability(self: *@This(), cap: caps.Capability) Error!u32 {
-        // std.debug.assert(cap.type != .null);
-
         self.lock.lock();
         defer self.lock.unlock();
+        return self.pushCapabilityLocked(cap);
+    }
+
+    fn pushCapabilityLocked(self: *@This(), cap: caps.Capability) Error!u32 {
+        std.debug.assert(self.lock.isLocked());
+        // std.debug.assert(cap.type != .null);
 
         const handle: u32 = try self.allocSlotLocked();
         std.debug.assert(handle != 0);
@@ -197,6 +203,12 @@ pub const Process = struct {
 
         self.lock.lock();
         defer self.lock.unlock();
+        return self.getCapabilityLocked(handle);
+    }
+
+    fn getCapabilityLocked(self: *@This(), handle: u32) Error!caps.Capability {
+        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
@@ -209,6 +221,12 @@ pub const Process = struct {
 
         self.lock.lock();
         defer self.lock.unlock();
+        return self.restrictCapabilityLocked(handle, mask);
+    }
+
+    fn restrictCapabilityLocked(self: *@This(), handle: u32, mask: abi.sys.Rights) Error!void {
+        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
@@ -222,6 +240,12 @@ pub const Process = struct {
 
         self.lock.lock();
         defer self.lock.unlock();
+        return self.takeCapabilityLocked(handle, min_rights);
+    }
+
+    fn takeCapabilityLocked(self: *@This(), handle: u32, min_rights: ?abi.sys.Rights) Error!caps.Capability {
+        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
@@ -242,6 +266,12 @@ pub const Process = struct {
 
         self.lock.lock();
         defer self.lock.unlock();
+        return self.replaceCapabilityLocked(handle, cap);
+    }
+
+    fn replaceCapabilityLocked(self: *@This(), handle: u32, cap: caps.Capability) Error!?caps.Capability {
+        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
@@ -263,12 +293,23 @@ pub const Process = struct {
     }
 
     pub fn takeObject(self: *@This(), comptime T: type, handle: u32) Error!struct { *T, abi.sys.Rights } {
-        const cap = (try self.replaceCapability(handle, .{})) orelse {
+        if (handle == 0) return Error.NullHandle;
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const cap: caps.Capability = (try self.replaceCapabilityLocked(
+            handle,
+            .{},
+        )) orelse {
             return Error.BadHandle;
         };
 
         // place it back if an error occurs
-        errdefer std.debug.assert(null == self.replaceCapability(handle, cap) catch unreachable);
+        errdefer std.debug.assert(null == (self.replaceCapabilityLocked(
+            handle,
+            cap,
+        ) catch unreachable));
 
         const ptr = cap.as(caps.Reply) orelse return Error.InvalidCapability;
         const rights = cap.rights;
