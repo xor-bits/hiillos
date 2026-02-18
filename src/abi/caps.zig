@@ -186,7 +186,8 @@ pub const Vmem = extern struct {
         .write = true,
         .exec = true,
         .user = true,
-        .vmem_map = true,
+        .map = true,
+        .unmap = true,
         .clone = true,
         .transfer = true,
     };
@@ -317,7 +318,7 @@ pub const Frame = extern struct {
         .write = true,
         .exec = true,
         .user = true,
-        .frame_map = true,
+        .map = true,
         .clone = true,
         .transfer = true,
     };

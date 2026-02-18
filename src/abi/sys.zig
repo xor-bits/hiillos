@@ -171,10 +171,12 @@ pub const Rights = packed struct {
     exec: bool = false,
     /// the frame can be user accessible (only usable with mapping)
     user: bool = false,
-    /// the frame can be mapped
-    frame_map: bool = false,
-    /// the vmem can have frames mapped into
-    vmem_map: bool = false,
+    /// the handle can be used in mapping
+    ///  - frame can be mapped
+    ///  - vmem can be mapped into
+    map: bool = false,
+    /// the handle can be used in unmapping (only usable with `Vmem`s)
+    unmap: bool = false,
 
     /// the handle can be cloned
     clone: bool = false,
@@ -326,6 +328,15 @@ pub const MapFlags = packed struct {
         return new;
     }
 
+    pub fn rights(self: @This()) Rights {
+        return .{
+            .read = self.read,
+            .write = self.write,
+            .exec = self.exec,
+            .map = true,
+        };
+    }
+
     pub fn encode(self: @This()) u16 {
         return @bitCast(self);
     }
@@ -340,6 +351,14 @@ pub const FaultCause = enum(u8) {
     read,
     write,
     exec,
+
+    pub fn rights(self: @This()) Rights {
+        return .{
+            .read = self == .read,
+            .write = self == .write,
+            .exec = self == .exec,
+        };
+    }
 };
 
 /// syscall interface Error type

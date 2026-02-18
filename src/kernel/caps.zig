@@ -173,80 +173,47 @@ pub const Capability = struct {
 
     pub fn deinit(self: @This()) void {
         switch (self.type) {
-            .frame => self.as(Frame).?.deinit(),
-            .vmem => self.as(Vmem).?.deinit(),
-            .process => self.as(Process).?.deinit(),
-            .thread => self.as(Thread).?.deinit(),
-            .receiver => self.as(Receiver).?.deinit(),
-            .reply => self.as(Reply).?.deinit(),
-            .sender => self.as(Sender).?.deinit(),
-            .notify => self.as(Notify).?.deinit(),
-            .x86_ioport_allocator => self.as(X86IoPortAllocator).?.deinit(),
-            .x86_ioport => self.as(X86IoPort).?.deinit(),
-            .x86_irq_allocator => self.as(X86IrqAllocator).?.deinit(),
-            .x86_irq => self.as(X86Irq).?.deinit(),
-            else => unreachable,
+            .null, .hal_vmem => unreachable,
+            inline else => |t| {
+                return self.as(t).deinit();
+            },
         }
     }
 
-    pub fn as(self: @This(), comptime T: type) ?*T {
-        const expected_type: abi.ObjectType = switch (T) {
-            Frame => .frame,
-            Vmem => .vmem,
-            Process => .process,
-            Thread => .thread,
-            Receiver => .receiver,
-            Reply => .reply,
-            Sender => .sender,
-            Notify => .notify,
-            X86IoPortAllocator => .x86_ioport_allocator,
-            X86IoPort => .x86_ioport,
-            X86IrqAllocator => .x86_irq_allocator,
-            X86Irq => .x86_irq,
-            else => @compileError("invalid type"),
+    pub fn typeOf(comptime ty: abi.ObjectType) type {
+        return switch (ty) {
+            .frame => Frame,
+            .vmem => Vmem,
+            .process => Process,
+            .thread => Thread,
+            .receiver => Receiver,
+            .reply => Reply,
+            .sender => Sender,
+            .notify => Notify,
+            .x86_ioport_allocator => X86IoPortAllocator,
+            .x86_ioport => X86IoPort,
+            .x86_irq_allocator => X86IrqAllocator,
+            .x86_irq => X86Irq,
+            .null, .hal_vmem => @compileError("invalid type " ++ @tagName(ty)),
         };
+    }
 
-        if (self.type != expected_type) {
-            return null;
-        }
-
+    pub fn as(self: @This(), comptime ty: abi.ObjectType) *typeOf(ty) {
+        std.debug.assert(ty == self.type);
         return @ptrCast(@alignCast(self.ptr));
     }
 
     pub fn refcnt(self: @This()) *abi.epoch.RefCnt {
-        if (0 != @offsetOf(Frame, "refcnt") or
-            0 != @offsetOf(Vmem, "refcnt") or
-            0 != @offsetOf(Process, "refcnt") or
-            0 != @offsetOf(Thread, "refcnt") or
-            0 != @offsetOf(Receiver, "refcnt") or
-            0 != @offsetOf(Reply, "refcnt") or
-            0 != @offsetOf(Sender, "refcnt") or
-            0 != @offsetOf(Notify, "refcnt") or
-            0 != @offsetOf(X86IoPortAllocator, "refcnt") or
-            0 != @offsetOf(X86IoPort, "refcnt") or
-            0 != @offsetOf(X86IrqAllocator, "refcnt") or
-            0 != @offsetOf(X86Irq, "refcnt"))
-        {
-            log.warn("slow kernel object refcnt access", .{});
-            // FIXME: prevent reordering so that the offset would be same on all objects
-            return switch (self.type) {
-                .null => unreachable,
-                .frame => &self.as(Frame).?.refcnt,
-                .vmem => &self.as(Vmem).?.refcnt,
-                .process => &self.as(Process).?.refcnt,
-                .thread => &self.as(Thread).?.refcnt,
-                .receiver => &self.as(Receiver).?.refcnt,
-                .reply => &self.as(Reply).?.refcnt,
-                .sender => &self.as(Sender).?.refcnt,
-                .notify => &self.as(Notify).?.refcnt,
-                .x86_ioport_allocator => &self.as(X86IoPortAllocator).?.refcnt,
-                .x86_ioport => &self.as(X86IoPort).?.refcnt,
-                .x86_irq_allocator => &self.as(X86IrqAllocator).?.refcnt,
-                .x86_irq => &self.as(X86Irq).?.refcnt,
-            };
-        }
+        switch (self.type) {
+            .null, .hal_vmem => unreachable,
+            inline else => |t| {
+                // FIXME: prevent reordering so that the offset would be same on all objects
+                if (@offsetOf(typeOf(t), "refcnt") != 0)
+                    log.warn("slow kernel object refcnt access", .{});
 
-        return @ptrCast(@alignCast(self.ptr));
+                return &self.as(t).refcnt;
+            },
+        }
     }
 };
 
