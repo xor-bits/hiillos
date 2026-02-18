@@ -146,7 +146,9 @@ pub const Process = struct {
         proc.switchUndo(thread);
     }
 
-    fn allocSlotLocked(self: *@This()) Error!u32 {
+    fn allocSlotLocked(
+        self: *@This(),
+    ) Error!u32 {
         std.debug.assert(self.lock.isLocked());
 
         const free = self.free;
@@ -169,19 +171,28 @@ pub const Process = struct {
         }
     }
 
-    fn freeSlotLocked(self: *@This(), handle: u32) void {
+    fn freeSlotLocked(
+        self: *@This(),
+        handle: u32,
+    ) void {
         std.debug.assert(self.lock.isLocked());
         self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
         self.free = handle;
     }
 
-    pub fn pushCapability(self: *@This(), cap: caps.Capability) Error!u32 {
+    pub fn pushCapability(
+        self: *@This(),
+        cap: caps.Capability,
+    ) Error!u32 {
         self.lock.lock();
         defer self.lock.unlock();
         return self.pushCapabilityLocked(cap);
     }
 
-    fn pushCapabilityLocked(self: *@This(), cap: caps.Capability) Error!u32 {
+    fn pushCapabilityLocked(
+        self: *@This(),
+        cap: caps.Capability,
+    ) Error!u32 {
         std.debug.assert(self.lock.isLocked());
         // std.debug.assert(cap.type != .null);
 
@@ -198,7 +209,10 @@ pub const Process = struct {
         return handle;
     }
 
-    pub fn getCapability(self: *@This(), handle: u32) Error!caps.Capability {
+    pub fn getCapability(
+        self: *@This(),
+        handle: u32,
+    ) Error!caps.Capability {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -206,7 +220,10 @@ pub const Process = struct {
         return self.getCapabilityLocked(handle);
     }
 
-    fn getCapabilityLocked(self: *@This(), handle: u32) Error!caps.Capability {
+    fn getCapabilityLocked(
+        self: *@This(),
+        handle: u32,
+    ) Error!caps.Capability {
         std.debug.assert(self.lock.isLocked());
         std.debug.assert(handle != 0);
 
@@ -216,7 +233,11 @@ pub const Process = struct {
         return slot.get() orelse return Error.BadHandle;
     }
 
-    pub fn restrictCapability(self: *@This(), handle: u32, mask: abi.sys.Rights) Error!void {
+    pub fn restrictCapability(
+        self: *@This(),
+        handle: u32,
+        mask: abi.sys.Rights,
+    ) Error!void {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -224,7 +245,11 @@ pub const Process = struct {
         return self.restrictCapabilityLocked(handle, mask);
     }
 
-    fn restrictCapabilityLocked(self: *@This(), handle: u32, mask: abi.sys.Rights) Error!void {
+    fn restrictCapabilityLocked(
+        self: *@This(),
+        handle: u32,
+        mask: abi.sys.Rights,
+    ) Error!void {
         std.debug.assert(self.lock.isLocked());
         std.debug.assert(handle != 0);
 
@@ -235,7 +260,11 @@ pub const Process = struct {
         slot.rights = slot.rights.intersect(mask);
     }
 
-    pub fn takeCapability(self: *@This(), handle: u32, min_rights: ?abi.sys.Rights) Error!caps.Capability {
+    pub fn takeCapability(
+        self: *@This(),
+        handle: u32,
+        min_rights: ?abi.sys.Rights,
+    ) Error!caps.Capability {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -243,7 +272,11 @@ pub const Process = struct {
         return self.takeCapabilityLocked(handle, min_rights);
     }
 
-    fn takeCapabilityLocked(self: *@This(), handle: u32, min_rights: ?abi.sys.Rights) Error!caps.Capability {
+    fn takeCapabilityLocked(
+        self: *@This(),
+        handle: u32,
+        min_rights: ?abi.sys.Rights,
+    ) Error!caps.Capability {
         std.debug.assert(self.lock.isLocked());
         std.debug.assert(handle != 0);
 
@@ -261,7 +294,11 @@ pub const Process = struct {
         return cap;
     }
 
-    pub fn replaceCapability(self: *@This(), handle: u32, cap: caps.Capability) Error!?caps.Capability {
+    pub fn replaceCapability(
+        self: *@This(),
+        handle: u32,
+        cap: caps.Capability,
+    ) Error!?caps.Capability {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -269,7 +306,11 @@ pub const Process = struct {
         return self.replaceCapabilityLocked(handle, cap);
     }
 
-    fn replaceCapabilityLocked(self: *@This(), handle: u32, cap: caps.Capability) Error!?caps.Capability {
+    fn replaceCapabilityLocked(
+        self: *@This(),
+        handle: u32,
+        cap: caps.Capability,
+    ) Error!?caps.Capability {
         std.debug.assert(self.lock.isLocked());
         std.debug.assert(handle != 0);
 
@@ -283,7 +324,11 @@ pub const Process = struct {
         return old_cap;
     }
 
-    pub fn getObject(self: *@This(), comptime T: type, handle: u32) Error!struct { *T, abi.sys.Rights } {
+    pub fn getObject(
+        self: *@This(),
+        comptime T: type,
+        handle: u32,
+    ) Error!struct { *T, abi.sys.Rights } {
         const cap = try self.getCapability(handle);
         errdefer cap.deinit();
 
@@ -292,7 +337,11 @@ pub const Process = struct {
         return .{ ptr, rights };
     }
 
-    pub fn takeObject(self: *@This(), comptime T: type, handle: u32) Error!struct { *T, abi.sys.Rights } {
+    pub fn takeObject(
+        self: *@This(),
+        comptime T: type,
+        handle: u32,
+    ) Error!struct { *T, abi.sys.Rights } {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
