@@ -55,9 +55,6 @@ pub fn deinit(self: *@This()) void {
 }
 
 pub fn clone(self: *@This()) *@This() {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86Irq.clone", .{});
-
     self.refcnt.inc();
     return self;
 }
@@ -117,9 +114,6 @@ pub const X86IrqAllocator = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IrqAllocator.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

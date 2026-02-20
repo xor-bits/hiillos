@@ -109,9 +109,6 @@ pub const Frame = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Frame.clone", .{});
-
         self.refcnt.inc();
         return self;
     }
@@ -581,9 +578,6 @@ pub const TlbShootdown = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("TlbShootdown.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

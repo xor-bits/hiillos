@@ -129,9 +129,6 @@ pub const Thread = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Thread.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

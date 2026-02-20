@@ -421,9 +421,6 @@ pub const Sender = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Sender.clone", .{});
-
         self.refcnt.inc();
         return self;
     }
@@ -559,9 +556,6 @@ pub const Notify = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Notify.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

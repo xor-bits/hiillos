@@ -41,9 +41,6 @@ pub fn deinit(self: *@This()) void {
 }
 
 pub fn clone(self: *@This()) *@This() {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86IoPort.clone", .{});
-
     self.refcnt.inc();
     return self;
 }
@@ -93,9 +90,6 @@ pub const X86IoPortAllocator = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("X86IoPortAllocator.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

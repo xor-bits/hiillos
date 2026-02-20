@@ -56,9 +56,6 @@ pub const Process = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Process.clone", .{});
-
         self.refcnt.inc();
         return self;
     }

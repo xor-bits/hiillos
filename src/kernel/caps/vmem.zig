@@ -55,9 +55,6 @@ pub const Vmem = struct {
     }
 
     pub fn clone(self: *@This()) *@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("Vmem.clone", .{});
-
         self.refcnt.inc();
         return self;
     }
