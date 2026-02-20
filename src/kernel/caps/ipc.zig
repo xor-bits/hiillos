@@ -129,7 +129,7 @@ pub const Channel = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) Error!void {
+    ) void {
         // early sleep
         thread.discardReplyLockedExec();
         proc.switchFrom(trap, thread);
@@ -253,9 +253,7 @@ pub const Channel = struct {
         }
 
         const sender_opt = try replyGetSender(thread, msg);
-        if (thread.reply != null)
-            log.err("discard reply from replyRecv call", .{});
-        try self.recv(thread, trap);
+        self.recv(thread, trap);
         const sender = sender_opt orelse {
             @branchHint(.cold);
             // if the sender cancelled and the receiver switched,
@@ -369,13 +367,11 @@ pub const Receiver = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) Error!void {
+    ) void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Receiver.recv", .{});
 
-        if (thread.reply != null)
-            log.err("discard reply from recv call", .{});
-        try self.channel.recv(thread, trap);
+        self.channel.recv(thread, trap);
     }
 
     pub fn reply(
@@ -500,6 +496,7 @@ pub const Reply = struct {
 
         const sender = self.sender.swap(null, .acquire) orelse {
             // reply cap will be destroyed and its fine
+            log.info("bad handle late", .{});
             return Error.BadHandle;
         };
 

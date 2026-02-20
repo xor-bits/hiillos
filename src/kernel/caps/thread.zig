@@ -285,7 +285,7 @@ pub const Thread = struct {
     }
 
     pub fn getExtraLockedExec(self: *@This(), idx: u7) CapOrVal {
-        std.debug.assert(self.exec_lock.isLocked());
+        self.exec_lock.assertIsLocked();
 
         const val = self.extra_regs.get(idx);
         self.extra_regs.set(idx, .{ .val = 0 });
@@ -293,7 +293,7 @@ pub const Thread = struct {
     }
 
     pub fn setExtraLockedExec(self: *@This(), idx: u7, data: CapOrVal) void {
-        std.debug.assert(self.exec_lock.isLocked());
+        self.exec_lock.assertIsLocked();
 
         self.extra_regs.get(idx).deinit();
         self.extra_regs.set(idx, data);
@@ -301,8 +301,8 @@ pub const Thread = struct {
 
     /// prepareExtras has to be called for `dst` first
     pub inline fn moveExtraLockedExec(src: *@This(), dst: *@This(), count: u7) void {
-        std.debug.assert(src.exec_lock.isLocked());
-        std.debug.assert(dst.exec_lock.isLocked());
+        src.exec_lock.assertIsLocked();
+        dst.exec_lock.assertIsLocked();
 
         // effectively always inline this check here
         // but call if count is above 0
@@ -343,7 +343,7 @@ pub const Thread = struct {
     }
 
     pub fn setReplyLockedExec(self: *@This(), target: *Thread) void {
-        std.debug.assert(self.exec_lock.isLocked());
+        self.exec_lock.assertIsLocked();
 
         std.debug.assert(self.reply == null);
         std.debug.assert(self != target);
@@ -357,7 +357,7 @@ pub const Thread = struct {
     }
 
     pub fn takeReplyLockedExec(self: *@This()) ?*Thread {
-        std.debug.assert(self.exec_lock.isLocked());
+        self.exec_lock.assertIsLocked();
 
         const sender = self.reply orelse {
             @branchHint(.cold);
@@ -368,7 +368,7 @@ pub const Thread = struct {
     }
 
     pub fn discardReplyLockedExec(self: *@This()) void {
-        std.debug.assert(self.exec_lock.isLocked());
+        self.exec_lock.assertIsLocked();
 
         if (self.reply) |discarded| {
             @branchHint(.cold);

@@ -341,10 +341,6 @@ pub const DummyLock = struct {
 
     pub fn lock(_: *const Self) void {}
 
-    pub fn isLocked(_: *const Self) bool {
-        return false;
-    }
-
     pub fn unlock(_: *const Self) void {}
 };
 
@@ -371,8 +367,14 @@ pub const DebugLock = struct {
         std.debug.assert(self.inner.tryLock());
     }
 
-    pub fn isLocked(self: *Self) bool {
-        return self.inner.isLocked();
+    pub fn assertIsLocked(self: *Self) void {
+        if (!conf.IS_DEBUG) return;
+        std.debug.assert(self.inner.isLocked());
+    }
+
+    pub fn assertIsUnlocked(self: *Self) void {
+        if (!conf.IS_DEBUG) return;
+        std.debug.assert(!self.inner.isLocked());
     }
 
     pub fn unlock(self: *Self) void {

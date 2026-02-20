@@ -629,7 +629,7 @@ fn handle_syscall(
             defer recv.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            try recv.recv(thread, trap);
+            recv.recv(thread, trap);
         },
         .receiver_reply => {
             var msg = trap.readMessage();
@@ -664,7 +664,7 @@ fn handle_syscall(
         .reply_reply => {
             var msg = trap.readMessage();
 
-            const reply: *caps.Reply = try thread.proc.getCapabilityAs(
+            const reply: *caps.Reply = try thread.proc.takeCapabilityAs(
                 msg.cap_or_stamp,
                 .reply,
                 .{},

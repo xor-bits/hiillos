@@ -167,9 +167,10 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "-machine",
         "q35",
         "-cpu",
-        "host",
+        // "host",
         // "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+invpcid,+pmu,+perfctr_core,+tsc,+invtsc",
         // "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+pmu,+perfctr_core,+tsc,+invtsc",
+        "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+tsc,+invtsc",
         "-m",
         "1g", // 3m is the absolute minimum right now
         "-no-reboot",

@@ -284,6 +284,18 @@ pub const Process = struct {
         slot.rights = slot.rights.intersect(mask);
     }
 
+    pub fn takeCapabilityAs(
+        self: *@This(),
+        handle: u32,
+        comptime ty: abi.ObjectType,
+        opt: Opt,
+    ) Error!*caps.Capability.typeOf(ty) {
+        return (try self.takeCapability(handle, .{
+            .match_ty = ty,
+            .min_rights = opt.min_rights,
+        })).as(ty);
+    }
+
     pub fn takeCapability(
         self: *@This(),
         handle: u32,
