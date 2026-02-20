@@ -313,11 +313,14 @@ pub const Frame = struct {
                 @branchHint(.likely);
                 return page;
             },
-            .is_transient => {
+            .is_transient => |cleanup| {
+                cleanup.run();
                 // log.debug("retry cause: is_transient", .{});
                 return Error.Retry;
             },
             .remap => |info| {
+                info.cleanup.run();
+
                 defer {
                     for (info.updates) |vmem| vmem.deinit();
                     caps.slab_allocator.allocator().free(info.updates);
@@ -388,7 +391,7 @@ pub const Frame = struct {
 
         while (self.transient_sleep_queue.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |sleeper| {
             proc.ready(sleeper);
         }
@@ -400,13 +403,14 @@ pub const Frame = struct {
         /// the page was already set as it should have been and is safe to use immediately
         reused: u32,
         /// the page might be moving right now, so this thread has to go sleep
-        is_transient: void,
+        is_transient: caps.Thread.Queue.Cleanup,
         /// the old page needs to be copied (copy-on-write and lazy-alloc) and all active
         /// mappings need to be updated
         remap: struct {
             new_page: u32,
             old_page: u32,
             updates: []*caps.Vmem,
+            cleanup: caps.Thread.Queue.Cleanup,
         },
     };
 
@@ -421,8 +425,8 @@ pub const Frame = struct {
         defer self.lock.unlock();
 
         if (self.is_transient) {
-            self.transientQueueSleep(trap, thread);
-            return .{ .is_transient = {} };
+            const cleanup = self.transientQueueSleep(trap, thread);
+            return .{ .is_transient = cleanup };
         }
 
         std.debug.assert(idx < self.pages.len);
@@ -455,7 +459,7 @@ pub const Frame = struct {
 
             page.* = new_page;
             self.is_transient = true;
-            self.transientQueueSleep(trap, thread);
+            const cleanup = self.transientQueueSleep(trap, thread);
 
             // log.info("remap old=0x{x} new=0x{x}", .{ old_page, new_page });
 
@@ -463,6 +467,7 @@ pub const Frame = struct {
                 .new_page = new_page,
                 .old_page = old_page,
                 .updates = old,
+                .cleanup = cleanup,
             } };
         } else if (is_uninit and !is_write) {
             // not mapped and isnt write
@@ -496,11 +501,17 @@ pub const Frame = struct {
         return old;
     }
 
-    fn transientQueueSleep(self: *@This(), trap: *arch.TrapRegs, thread: *caps.Thread) void {
+    fn transientQueueSleep(
+        self: *@This(),
+        trap: *arch.TrapRegs,
+        thread: *caps.Thread,
+    ) caps.Thread.Queue.Cleanup {
         // save the current thread that might or might not go to sleep
         proc.switchFrom(trap, thread);
 
-        self.transient_sleep_queue.pushThreadLocked(
+        // FIXME: self.lock is held longer than necessary
+
+        return self.transient_sleep_queue.pushThreadLocked(
             &self.lock,
             thread,
             0,
@@ -584,7 +595,7 @@ pub const TlbShootdown = struct {
 
     pub fn flushAll() void {
         const locals = arch.cpuLocal();
-        while (locals.tryPopTlbShootdown()) |shootdown| {
+        while (locals.tlb_shootdown_queue.tryPop()) |shootdown| {
             // log.debug("one TLB shootdown complete for {*}", .{shootdown});
             if (shootdown.deinit()) |thread| {
                 // log.debug("TLB shootdowns complete for {*}", .{thread});

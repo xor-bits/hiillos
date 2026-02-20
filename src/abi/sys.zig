@@ -590,6 +590,10 @@ pub const ThreadStatus = enum {
     stopped,
     /// thread is actively running on some CPU
     running,
+    /// thread is running but being stopped
+    stopping,
+    /// thread is running but being killed
+    killing,
     /// thread is ready to run, but is being starved
     ready,
     /// thread is blocked
@@ -597,6 +601,24 @@ pub const ThreadStatus = enum {
     /// thread is permanently killed
     /// and the exit code is usable
     dead,
+
+    pub fn shouldNotQueue(self: @This()) bool {
+        return self == .stopping or
+            self == .killing or
+            self == .dead;
+    }
+
+    pub fn isQueued(self: @This()) bool {
+        return self == .ready or self == .waiting;
+    }
+
+    pub fn isTransitioning(self: @This()) bool {
+        return self == .stopping or self == .killing;
+    }
+
+    pub fn isInactive(self: @This()) bool {
+        return self == .stopped or self == .dead;
+    }
 };
 
 pub const ProcessStatus = enum {
@@ -841,9 +863,15 @@ pub fn threadStart(thread: u32) Error!void {
 }
 
 pub fn threadStop(thread: u32) Error!void {
-    _ = try syscall(.thread_stop, .{
-        thread,
-    }, .{});
+    while (true) {
+        _ = syscall(.thread_stop, .{
+            thread,
+        }, .{}) catch |err| switch (err) {
+            error.Retry => continue,
+            else => return err,
+        };
+        break;
+    }
 }
 
 pub fn threadSetPrio(thread: u32, prio: u2) Error!void {

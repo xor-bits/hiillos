@@ -297,6 +297,18 @@ pub const SpinMutex = extern struct {
         return false;
     }
 
+    pub fn lockMultiUnordered(self: *Self, other: *Self) void {
+        while (true) {
+            self.lock();
+            if (other.tryLock()) break;
+            self.unlock();
+
+            other.lock();
+            if (self.tryLock()) break;
+            other.unlock();
+        }
+    }
+
     pub fn lock(self: *Self) void {
         var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
         while (null != self.lock_state.cmpxchgWeak(0, 1, .acquire, .monotonic)) {
@@ -345,40 +357,67 @@ pub const DummyLock = struct {
 };
 
 pub const DebugLock = struct {
-    inner: if (conf.IS_DEBUG) SpinMutex else DummyLock = .{},
+    state: if (conf.IS_DEBUG) std.atomic.Value(usize) else void =
+        if (conf.IS_DEBUG) .init(0) else {},
 
     const Self = @This();
 
     pub fn locked() Self {
-        return .{ .inner = .locked() };
+        if (!conf.IS_DEBUG) return .{};
+        return .{ .state = .init(returnAddress()) };
     }
 
     pub fn tryLock(self: *Self) bool {
-        std.debug.assert(self.inner.tryLock());
+        self.lock();
         return true;
     }
 
     pub fn lockAttempts(self: *Self, _: usize) bool {
-        std.debug.assert(self.inner.tryLock());
-        return true;
+        return self.tryLock();
     }
 
     pub fn lock(self: *Self) void {
-        std.debug.assert(self.inner.tryLock());
+        if (!conf.IS_DEBUG) return;
+        const prev_lock_owner = self.state.cmpxchgStrong(
+            0,
+            returnAddress(),
+            .acquire,
+            .monotonic,
+        ) orelse return;
+        std.debug.panic(
+            "debug lock contended, locked previously at {*}, now locked at {*}",
+            .{
+                @as(*anyopaque, @ptrFromInt(prev_lock_owner)),
+                @as(*anyopaque, @ptrFromInt(returnAddress())),
+            },
+        );
+    }
+
+    fn isLocked(self: *Self) bool {
+        if (!conf.IS_DEBUG) comptime unreachable;
+        return self.state.load(.monotonic) != 0;
+    }
+
+    inline fn returnAddress() usize {
+        const ra = @returnAddress();
+        if (ra == 0) return 1;
+        return ra;
     }
 
     pub fn assertIsLocked(self: *Self) void {
         if (!conf.IS_DEBUG) return;
-        std.debug.assert(self.inner.isLocked());
+        std.debug.assert(self.isLocked());
     }
 
     pub fn assertIsUnlocked(self: *Self) void {
         if (!conf.IS_DEBUG) return;
-        std.debug.assert(!self.inner.isLocked());
+        std.debug.assert(!self.isLocked());
     }
 
     pub fn unlock(self: *Self) void {
-        return self.inner.unlock();
+        if (!conf.IS_DEBUG) return;
+        self.assertIsLocked();
+        self.state.store(0, .release);
     }
 };
 

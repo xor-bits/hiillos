@@ -979,8 +979,9 @@ pub const Idt = extern struct {
                 while (conf.DEBUG_UNHANDLED_FAULT) {}
 
                 const thread = cpuLocal().current_thread.?;
-                thread.prev_status = thread.status;
+                thread.lock.lock();
                 thread.status = .stopped;
+                thread.lock.unlock();
                 proc.switchFrom(trap, thread);
                 proc.enter();
             }
@@ -1066,8 +1067,9 @@ pub const Idt = extern struct {
                 while (conf.DEBUG_UNHANDLED_FAULT) {}
 
                 const thread = cpuLocal().current_thread.?;
-                thread.prev_status = thread.status;
+                thread.lock.lock();
                 thread.status = .stopped;
+                thread.lock.unlock();
                 proc.switchFrom(trap, thread);
                 proc.enter();
             }

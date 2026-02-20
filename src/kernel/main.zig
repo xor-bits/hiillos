@@ -52,56 +52,63 @@ pub const CpuLocalStorage = struct {
 
     pcid_lru: ?caps.PcidLru,
 
-    tlb_shootdown_queue: [16]*caps.TlbShootdown = undefined,
-    tlb_shootdown_queue_head: u4 = 0,
-    tlb_shootdown_queue_len: u4 = 0,
-    tlb_shootdown_queue_lock: abi.lock.SpinMutex = .{},
+    // FIXME: unified cpu job queue with Zig async
+    tlb_shootdown_queue: StaticQueue(*caps.TlbShootdown) = .{},
 
     initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
-
-    pub fn popTlbShootdown(self: *@This()) *caps.TlbShootdown {
-        var backoff: abi.lock.Backoff = .{};
-
-        while (true) {
-            if (self.tryPopTlbShootdown()) |owned_ptr| return owned_ptr;
-            backoff.spin();
-        }
-    }
-
-    pub fn tryPopTlbShootdown(self: *@This()) ?*caps.TlbShootdown {
-        self.tlb_shootdown_queue_lock.lock();
-        defer self.tlb_shootdown_queue_lock.unlock();
-
-        if (self.tlb_shootdown_queue_len == 0) return null;
-        self.tlb_shootdown_queue_len -= 1;
-        defer self.tlb_shootdown_queue_head +%= 1;
-
-        defer self.tlb_shootdown_queue[self.tlb_shootdown_queue_head] = undefined;
-        return self.tlb_shootdown_queue[self.tlb_shootdown_queue_head];
-    }
-
-    pub fn pushTlbShootdown(self: *@This(), owned_ptr: *caps.TlbShootdown) void {
-        var backoff: abi.lock.Backoff = .{};
-
-        while (true) {
-            if (self.tryPushTlbShootdown(owned_ptr)) return;
-            backoff.spin();
-        }
-    }
-
-    pub fn tryPushTlbShootdown(self: *@This(), owned_ptr: *caps.TlbShootdown) bool {
-        self.tlb_shootdown_queue_lock.lock();
-        defer self.tlb_shootdown_queue_lock.unlock();
-
-        if (self.tlb_shootdown_queue_len == self.tlb_shootdown_queue.len) return false;
-        const idx = (self.tlb_shootdown_queue_head + self.tlb_shootdown_queue_len) % self.tlb_shootdown_queue.len;
-        self.tlb_shootdown_queue[idx] = owned_ptr;
-        self.tlb_shootdown_queue_len += 1;
-        return true;
-    }
 };
+
+fn StaticQueue(comptime T: type) type {
+    return struct {
+        queue: [16]T = undefined,
+        head: u4 = 0,
+        len: u4 = 0,
+        lock: abi.lock.SpinMutex = .{},
+
+        pub fn pop(self: *@This()) T {
+            var backoff: abi.lock.Backoff = .{};
+
+            while (true) {
+                if (self.tryPop()) |item| return item;
+                backoff.spin();
+            }
+        }
+
+        pub fn tryPop(self: *@This()) ?T {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            if (self.len == 0) return null;
+            self.len -= 1;
+            defer self.head +%= 1;
+
+            defer self.queue[self.head] = undefined;
+            return self.queue[self.head];
+        }
+
+        pub fn push(self: *@This(), item: T) void {
+            var backoff: abi.lock.Backoff = .{};
+
+            while (true) {
+                if (self.tryPush(item)) return;
+                backoff.spin();
+            }
+        }
+
+        pub fn tryPush(self: *@This(), item: T) bool {
+            self.lock.lock();
+            defer self.lock.unlock();
+
+            if (self.len == self.queue.len) return false;
+            const idx = (self.head + self.len) % self.queue.len;
+            self.queue[idx] = item;
+            self.len += 1;
+            return true;
+        }
+    };
+}
 
 //
 

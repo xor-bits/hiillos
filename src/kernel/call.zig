@@ -66,16 +66,16 @@ pub fn syscall(trap: *arch.TrapRegs) void {
         proc.switchNow(trap);
     }
 
-    if (conf.IS_DEBUG) {
-        const new_thread = locals.current_thread.?;
-        new_thread.lock.lock();
-        defer new_thread.lock.unlock();
-        if (new_thread.status != .running)
-            std.debug.panic("call={} status={}", .{
-                id,
-                new_thread.status,
-            });
-    }
+    // if (conf.IS_DEBUG) {
+    //     const new_thread = locals.current_thread.?;
+    //     new_thread.lock.lock();
+    //     defer new_thread.lock.unlock();
+    //     if (new_thread.status != .running)
+    //         std.debug.panic("call={} status={}", .{
+    //             id,
+    //             new_thread.status,
+    //         });
+    // }
 }
 
 fn handle_syscall(
@@ -471,7 +471,7 @@ fn handle_syscall(
             defer target_proc.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            target_proc.waitExit(thread, trap);
+            try target_proc.waitExit(thread, trap);
         },
         .proc_exit => {
             proc.switchFrom(trap, thread);
@@ -591,7 +591,7 @@ fn handle_syscall(
             defer target_thread.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            target_thread.waitExit(thread, trap);
+            try target_thread.waitExit(thread, trap);
         },
         .thread_set_sig_handler => {
             const target_thread: *caps.Thread = try thread.proc.getCapabilityAs(
@@ -629,7 +629,7 @@ fn handle_syscall(
             defer recv.deinit();
 
             trap.syscall_id = abi.sys.encode(0);
-            recv.recv(thread, trap);
+            try recv.recv(thread, trap);
         },
         .receiver_reply => {
             var msg = trap.readMessage();
@@ -703,7 +703,7 @@ fn handle_syscall(
             defer sender.deinit();
 
             msg.cap_or_stamp = sender.stamp;
-            sender.call(thread, trap, msg);
+            try sender.call(thread, trap, msg);
         },
 
         .notify_create => {

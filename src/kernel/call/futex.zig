@@ -50,7 +50,7 @@ pub fn wait(
     // sleep the thread
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*}", .{thread});
-    futex_queue.queue.pushLockedThreadLocked(
+    const cleanup = futex_queue.queue.pushLockedThreadLocked(
         &futex_queue.lock,
         thread,
         @intFromPtr(futex),
@@ -58,6 +58,7 @@ pub fn wait(
     );
     thread.lock.unlock();
     futex_queue.lock.unlock();
+    cleanup.run();
 }
 
 pub fn wake(
@@ -81,7 +82,7 @@ pub fn wake(
         const thread_to_wake_up = futex_queue.queue.popFutexAddr(
             &futex_queue.lock,
             @intFromPtr(futex),
-            .ready,
+            .running,
         ) orelse break;
 
         if (conf.LOG_FUTEX)

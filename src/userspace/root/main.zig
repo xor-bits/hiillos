@@ -58,7 +58,6 @@ test "simple thread start stop sync" {
 
 test "stress: thread start stop" {
     const thread = try caps.Thread.create(caps.Process.self);
-
     try abi.thread.spawnOptions(struct {
         var lock = abi.lock.DebugLock{};
         fn f() !void {
@@ -67,18 +66,19 @@ test "stress: thread start stop" {
                 lock.lock();
                 defer lock.unlock();
 
-                log.info("thread running", .{});
+                log.info("thread 2 running", .{});
                 abi.thread.yield();
             }
         }
     }.f, .{}, .{ .thread = thread });
-
     while (true) {
-        log.info("thread running", .{});
+        log.info("thread 1 running a", .{});
         try thread.stop();
-        log.info("thread running", .{});
+        abi.thread.yield();
+        log.info("thread 1 running b", .{});
         try thread.start();
-        log.info("thread running", .{});
+        abi.thread.yield();
+        log.info("thread 1 running c", .{});
     }
 }
 
@@ -607,6 +607,7 @@ export fn zigMain() noreturn {
         std.debug.panic("not enough memory for a stack: {}", .{err});
     };
 
+    log.info("main", .{});
     asm volatile (
         \\ jmp zigMainRealstack
         :
@@ -633,6 +634,7 @@ fn mapStack() !usize {
 }
 
 export fn zigMainRealstack() noreturn {
+    log.info("main", .{});
     main() catch |err| {
         std.debug.panic("{}", .{err});
     };

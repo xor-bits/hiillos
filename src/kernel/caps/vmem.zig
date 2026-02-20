@@ -491,7 +491,7 @@ pub const Vmem = struct {
             // no need to send an IPI to a CPU that has not used this Vmem
             if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) == 0) continue;
 
-            locals.pushTlbShootdown(shootdown.clone());
+            locals.tlb_shootdown_queue.push(shootdown.clone());
 
             // log.debug("issuing a TLB shootdown from unmap", .{});
             apic.interProcessorInterrupt(
@@ -582,7 +582,7 @@ pub const Vmem = struct {
                 // no need to send a self IPI
                 arch.x86_64.flushTlbAddr(vaddr.raw);
             } else {
-                locals.pushTlbShootdown(shootdown.clone());
+                locals.tlb_shootdown_queue.push(shootdown.clone());
                 ipi_bitmap.* |= @as(u256, 1) << @as(u8, @intCast(i));
             }
         }

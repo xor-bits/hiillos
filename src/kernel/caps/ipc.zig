@@ -66,7 +66,7 @@ pub const Channel = struct {
         // wake up all threads waiting to receive messages (BadHandle)
         while (self.recv_queue.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |listener| {
             listener.exec_lock.lock();
             listener.trap.syscall_id = abi.sys.encode(Error.BadHandle);
@@ -77,7 +77,7 @@ pub const Channel = struct {
         // wake up all threads waiting to send messages (ChannelClosed)
         while (self.send_queue.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |caller| {
             caller.exec_lock.lock();
             caller.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
@@ -102,7 +102,7 @@ pub const Channel = struct {
         // wake up all threads waiting to receive messages (ChannelClosed)
         while (self.recv_queue.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |listener| {
             listener.exec_lock.lock();
             listener.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
@@ -113,7 +113,7 @@ pub const Channel = struct {
         // wake up all threads waiting to send messages (BadHandle)
         while (self.send_queue.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |caller| {
             caller.exec_lock.lock();
             caller.trap.syscall_id = abi.sys.encode(Error.BadHandle);
@@ -129,7 +129,7 @@ pub const Channel = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
+    ) error{ChannelClosed}!void {
         // early sleep
         thread.discardReplyLockedExec();
         proc.switchFrom(trap, thread);
@@ -147,23 +147,18 @@ pub const Channel = struct {
                 @branchHint(.cold);
                 self.lock.unlock();
 
-                thread.exec_lock.lock();
-                thread.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
-                thread.exec_lock.unlock();
-
                 proc.switchUndo(thread);
-                return;
+                return error.ChannelClosed;
             }
 
-            thread.lock.lock();
-            self.recv_queue.pushLockedThreadLocked(
+            const cleanup = self.recv_queue.pushThreadLocked(
                 &self.lock,
                 thread,
                 0,
                 .waiting,
             );
-            thread.lock.unlock();
             self.lock.unlock();
+            cleanup.run();
             return;
         };
         self.lock.unlock();
@@ -253,7 +248,11 @@ pub const Channel = struct {
         }
 
         const sender_opt = try replyGetSender(thread, msg);
-        self.recv(thread, trap);
+        self.recv(thread, trap) catch {
+            @branchHint(.cold);
+            if (sender_opt) |sender| proc.ready(sender);
+            return;
+        };
         const sender = sender_opt orelse {
             @branchHint(.cold);
             // if the sender cancelled and the receiver switched,
@@ -279,7 +278,7 @@ pub const Channel = struct {
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
         msg: abi.sys.Message,
-    ) void {
+    ) error{ChannelClosed}!void {
         // early sleep
         proc.switchFrom(trap, thread);
 
@@ -296,24 +295,22 @@ pub const Channel = struct {
                 @branchHint(.cold);
                 self.lock.unlock();
 
-                thread.exec_lock.lock();
-                thread.trap.syscall_id = abi.sys.encode(Error.ChannelClosed);
-                thread.exec_lock.unlock();
-
                 proc.switchUndo(thread);
-                return;
+                return error.ChannelClosed;
             }
 
             thread.lock.lock();
             thread.message = msg;
-            self.send_queue.pushLockedThreadLocked(
+            thread.lock.unlock();
+
+            const cleanup = self.send_queue.pushThreadLocked(
                 &self.lock,
                 thread,
                 0,
                 .waiting,
             );
-            thread.lock.unlock();
             self.lock.unlock();
+            cleanup.run();
             return;
         };
         self.lock.unlock();
@@ -367,11 +364,11 @@ pub const Receiver = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
+    ) error{ChannelClosed}!void {
         if (conf.LOG_OBJ_CALLS)
             log.debug("Receiver.recv", .{});
 
-        self.channel.recv(thread, trap);
+        try self.channel.recv(thread, trap);
     }
 
     pub fn reply(
@@ -447,12 +444,12 @@ pub const Sender = struct {
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
         msg: abi.sys.Message,
-    ) void {
+    ) error{ChannelClosed}!void {
         const stamped_msg = msg.withStamp(self.stamp);
         if (conf.LOG_OBJ_CALLS)
             log.debug("Sender.call {}", .{stamped_msg});
 
-        self.channel.call(thread, trap, stamped_msg);
+        try self.channel.call(thread, trap, stamped_msg);
     }
 };
 
@@ -542,7 +539,7 @@ pub const Notify = struct {
 
         while (self.queue.popFirstLocked(
             &self.queue_lock,
-            .ready,
+            .running,
         )) |waiter| {
             waiter.exec_lock.lock();
             waiter.trap.syscall_id = abi.sys.encode(Error.Cancelled);
@@ -567,25 +564,22 @@ pub const Notify = struct {
         proc.switchFrom(trap, thread);
 
         self.queue_lock.lock();
-        thread.lock.lock();
 
         // late test if its active
         if (self.pollLocked()) {
-            thread.lock.unlock();
             self.queue_lock.unlock();
             proc.switchUndo(thread);
             return;
         }
 
-        self.queue.pushLockedThreadLocked(
+        const cleanup = self.queue.pushThreadLocked(
             &self.queue_lock,
             thread,
             0,
             .waiting,
         );
-
-        thread.lock.unlock();
         self.queue_lock.unlock();
+        cleanup.run();
     }
 
     pub fn poll(self: *@This()) bool {
@@ -612,7 +606,7 @@ pub const Notify = struct {
 
         const waiter = self.queue.popFirstLocked(
             &self.queue_lock,
-            .ready,
+            .running,
         ).?;
         self.queue_lock.unlock();
 

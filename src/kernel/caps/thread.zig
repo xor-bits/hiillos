@@ -41,8 +41,8 @@ pub const Thread = struct {
     cpu_time: u64 = 0,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,
-    prev_status: abi.sys.ThreadStatus = .stopped,
     exit_code: usize = 0,
+    stop_waiters: Queue = .{},
     exit_waiters: Queue = .{},
     // TODO: IPC buffer Frame where the userspace can write data freely
     // and on send, the kernel copies it (with CoW) to the destination IPC buffer
@@ -173,43 +173,56 @@ pub const Thread = struct {
             }
         }
 
-        self.lock.lock();
-        switch (self.status) {
-            .stopped => {
-                self.prev_status = self.status;
-                self.status = .running;
-
-                self.lock.unlock();
-                proc.start(self.clone());
-            },
-            else => {
-                self.lock.unlock();
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            if (self.status != .stopped)
                 return Error.NotStopped;
-            },
+            self.status = .running;
         }
+        proc.start(self.clone());
     }
 
     pub fn stop(
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) !void {
-        {
-            self.lock.lock();
-            defer self.lock.unlock();
-            // FIXME: atomic status, because the scheduler might be reading/writing this
-            if (self.status != .ready and
-                self.status != .running and
-                self.status != .waiting)
-                return Error.NotRunning;
-            self.prev_status = self.status;
-            self.status = .stopped;
-        }
+    ) error{ Retry, NotRunning }!void {
+        proc.switchFrom(trap, thread);
 
-        if (self == thread) {
-            proc.switchFrom(trap, thread);
+        self.lock.lockMultiUnordered(&thread.lock);
+
+        switch (self.status) {
+            .stopped, .dead, .stopping, .killing => {
+                thread.lock.unlock();
+                self.lock.unlock();
+                proc.switchUndo(thread);
+                return error.NotRunning;
+            },
+            .running => {
+                // TODO: IPI
+                self.status = .stopping;
+                const cleanup = self.stop_waiters.pushLockedThreadLocked(
+                    &self.lock,
+                    thread,
+                    0,
+                    .waiting,
+                );
+                thread.lock.unlock();
+                self.lock.unlock();
+                cleanup.run();
+            },
+            .ready, .waiting => {
+                thread.lock.unlock();
+                const res = Queue.removeLockedThread(
+                    self,
+                    .stopped,
+                );
+                self.lock.unlock();
+                proc.switchUndo(thread);
+                return res;
+            },
         }
-        // proc.stop(thread);
     }
 
     pub fn exit(
@@ -224,25 +237,40 @@ pub const Thread = struct {
         self: *@This(),
         exit_code: usize,
     ) void {
-        self.lock.lock();
-        self.prev_status = self.status;
-        self.status = .dead;
-        self.exit_code = exit_code;
-        self.lock.unlock();
-
-        self.onExit(exit_code);
-    }
-
-    fn onExit(self: *@This(), exit_code: usize) void {
+        // FIXME:
         self.lock.lock();
         defer self.lock.unlock();
+
+        self.status = .dead;
+        self.exit_code = exit_code;
+        self.onExitLocked();
+    }
+
+    pub fn onStopLocked(self: *@This()) void {
+        std.debug.assert(self.lock.isLocked());
+        // log.debug("thread on stop", .{});
+
+        while (self.stop_waiters.popFirstLocked(
+            &self.lock,
+            .running,
+        )) |waiter| {
+            // log.info("stop waiter notified", .{});
+            proc.ready(waiter);
+        }
+    }
+
+    pub fn onExitLocked(self: *@This()) void {
+        std.debug.assert(self.lock.isLocked());
+        // log.debug("thread on exit", .{});
+
+        const code = self.exit_code;
         while (self.exit_waiters.popFirstLocked(
             &self.lock,
-            .ready,
+            .running,
         )) |waiter| {
-            waiter.lock.lock();
-            waiter.trap.arg0 = exit_code;
-            waiter.lock.unlock();
+            waiter.exec_lock.lock();
+            waiter.trap.arg0 = code;
+            waiter.exec_lock.unlock();
 
             // log.info("exit waiter notified", .{});
 
@@ -254,34 +282,33 @@ pub const Thread = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
+    ) error{PermissionDenied}!void {
         if (self == thread) {
-            trap.syscall_id = abi.sys.encode(Error.PermissionDenied);
-            return;
+            return error.PermissionDenied;
         }
 
         // early block the thread (or cancel)
         proc.switchFrom(trap, thread);
 
-        {
-            self.lock.lock();
-            defer self.lock.unlock();
-            thread.lock.lock();
-            defer thread.lock.unlock();
+        self.lock.lockMultiUnordered(&thread.lock);
 
-            if (self.status != .dead) {
-                self.exit_waiters.pushLockedThreadLocked(
-                    &self.lock,
-                    thread,
-                    0,
-                    .waiting,
-                );
-                return;
-            }
-
+        if (self.status == .dead) {
+            thread.lock.unlock();
+            self.lock.unlock();
+            proc.switchUndo(thread);
             trap.arg0 = self.exit_code;
+            return;
         }
-        proc.switchUndo(thread);
+
+        const cleanup = self.exit_waiters.pushLockedThreadLocked(
+            &self.lock,
+            thread,
+            0,
+            .waiting,
+        );
+        thread.lock.unlock();
+        self.lock.unlock();
+        cleanup.run();
     }
 
     pub fn getExtraLockedExec(self: *@This(), idx: u7) CapOrVal {
@@ -348,12 +375,6 @@ pub const Thread = struct {
         std.debug.assert(self.reply == null);
         std.debug.assert(self != target);
         self.reply = target;
-    }
-
-    pub fn takeReply(self: *@This()) ?*Thread {
-        self.exec_lock.lock();
-        defer self.exec_lock.unlock();
-        return self.takeReplyLockedExec();
     }
 
     pub fn takeReplyLockedExec(self: *@This()) ?*Thread {

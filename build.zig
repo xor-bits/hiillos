@@ -113,7 +113,7 @@ fn options(b: *std.Build) Opts {
         // initfs compression level
         .comp_level = b.option(u8, "zst_l",
             \\initfs zstd compression level
-        ) orelse 19,
+        ) orelse 8,
 
         // initfs compression parallelism
         .comp_threads = b.option(u8, "zst_t",

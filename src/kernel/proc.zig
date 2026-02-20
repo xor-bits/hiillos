@@ -47,9 +47,18 @@ pub fn yield(trap: *arch.TrapRegs) void {
 
     prev.lock.lock();
     const prev_priority = prev.priority;
+    const has_to_switch = prev.status.isInactive() or prev.status.isTransitioning();
     prev.lock.unlock();
 
+    if (has_to_switch) {
+        switchFrom(trap, prev);
+        ready(prev);
+        switchNow(trap);
+        return;
+    }
+
     const next_thread = tryNext() orelse return;
+    std.debug.assert(prev != next_thread);
 
     next_thread.lock.lock();
     const next_thread_priority = next_thread.priority;
@@ -106,19 +115,16 @@ pub fn switchUndo(thread: *caps.Thread) void {
     thread.exec_lock.lock();
 }
 
-/// stop the thread and (TODO) interrupt a processor that might be running it
-pub fn stop(thread: *caps.Thread) void {
-    _ = active_threads.fetchSub(1, .release);
-
-    thread.lock.lock();
-    std.debug.assert(thread.status != .stopped);
-    thread.prev_status = thread.status;
-    thread.status = .stopped;
-    thread.lock.unlock();
-
-    // FIXME: IPI
-    // TODO: stop the processor and take the thread
-}
+// /// stop the thread and (TODO) interrupt a processor that might be running it
+// pub fn stop(thread: *caps.Thread) void {
+//     _ = active_threads.fetchSub(1, .release);
+//     thread.lock.lock();
+//     std.debug.assert(thread.status != .stopped);
+//     thread.status = .stopped;
+//     thread.lock.unlock();
+//     // FIXME: IPI
+//     // TODO: stop the processor and take the thread
+// }
 
 /// takes ownership of the given thread pointer
 /// start the thread, if its not running

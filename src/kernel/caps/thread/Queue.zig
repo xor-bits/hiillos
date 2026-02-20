@@ -5,6 +5,7 @@ const abi = @import("abi");
 const rbtree = @import("rbtree");
 
 const Thread = @import("../thread.zig").Thread;
+const log = std.log.scoped(.queue);
 
 //
 
@@ -95,13 +96,14 @@ pub fn pushThread(
     queue_status: abi.sys.ThreadStatus,
 ) void {
     self_lock.lock();
-    defer self_lock.unlock();
-    self.pushThreadLocked(
+    const cleanup = self.pushThreadLocked(
         self_lock,
         thread,
         futex_addr,
         queue_status,
     );
+    self_lock.unlock();
+    cleanup.run();
 }
 
 pub fn pushThreadLocked(
@@ -111,11 +113,11 @@ pub fn pushThreadLocked(
     thread: *Thread,
     futex_addr: usize,
     queue_status: abi.sys.ThreadStatus,
-) void {
+) Cleanup {
     std.debug.assert(self_lock.isLocked());
     thread.lock.lock();
     defer thread.lock.unlock();
-    self.pushLockedThreadLocked(
+    return self.pushLockedThreadLocked(
         self_lock,
         thread,
         futex_addr,
@@ -130,16 +132,23 @@ pub fn pushLockedThreadLocked(
     thread: *Thread,
     futex_addr: usize,
     queue_status: abi.sys.ThreadStatus,
-) void {
+) Cleanup {
+    std.debug.assert(queue_status.isQueued());
     std.debug.assert(self_lock.isLocked());
     std.debug.assert(thread.lock.isLocked());
+    thread.exec_lock.assertIsUnlocked();
     std.debug.assert(thread.current_or_previous_queue == null);
     std.debug.assert(thread.current_or_previous_queue_lock == null);
     const node = &thread.scheduler_queue_node;
     std.debug.assert(node.inner.extra.isolated);
 
-    if (thread.status == .dead) {
-        return;
+    if (thread.status.shouldNotQueue()) {
+        // the thread was interrupted by another thread right before
+        // trying to push it to a queue
+        @branchHint(.cold);
+        if (thread.status == .stopping) thread.status = .stopped;
+        if (thread.status == .killing) thread.status = .dead;
+        return .{ .thread = thread };
     }
 
     node.key.cpu_time = thread.cpu_time;
@@ -152,7 +161,22 @@ pub fn pushLockedThreadLocked(
     thread.current_or_previous_queue = self;
     thread.current_or_previous_queue_lock = self_lock;
     thread.status = queue_status;
+    return .{};
 }
+
+pub const Cleanup = struct {
+    thread: ?*Thread = null,
+
+    pub fn run(self: @This()) void {
+        if (self.thread) |thread| {
+            thread.lock.lock();
+            thread.onStopLocked();
+            thread.onExitLocked();
+            thread.lock.unlock();
+            thread.deinit();
+        }
+    }
+};
 
 pub fn popFirst(
     self: *@This(),
@@ -263,7 +287,7 @@ pub fn removeThread(
     running_status: abi.sys.ThreadStatus,
 ) error{Retry}!void {
     thread.lock.lock();
-    defer thread.lock.lock();
+    defer thread.lock.unlock();
     try removeLockedThread(thread, running_status);
 }
 
@@ -279,8 +303,11 @@ pub fn removeLockedThread(
     if (!current_queue_lock.tryLock()) return error.Retry;
     defer current_queue_lock.unlock();
 
-    std.debug.assert(!thread.scheduler_queue_node.extra.isolated);
+    std.debug.assert(!thread.scheduler_queue_node.inner.extra.isolated);
     current_queue.inner.remove(&thread.scheduler_queue_node.inner);
+    // there has to be at least 2 owners: whoever called this and the
+    // queue that held the thread
+    std.debug.assert(!thread.refcnt.dec());
 
     current_queue.popFinishLockedThread(
         current_queue_lock,

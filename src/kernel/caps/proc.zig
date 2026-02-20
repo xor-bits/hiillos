@@ -113,34 +113,30 @@ pub const Process = struct {
         self: *@This(),
         thread: *caps.Thread,
         trap: *arch.TrapRegs,
-    ) void {
+    ) error{PermissionDenied}!void {
         if (self == thread.proc) {
-            trap.syscall_id = abi.sys.encode(Error.PermissionDenied);
-            return;
+            return error.PermissionDenied;
         }
 
         // early block the thread (or cancel)
         proc.switchFrom(trap, thread);
 
-        {
-            self.lock.lock();
-            defer self.lock.unlock();
-            thread.lock.lock();
-            defer thread.lock.unlock();
-
-            if (self.status != .dead) {
-                self.exit_waiters.pushLockedThreadLocked(
-                    &self.lock,
-                    thread,
-                    0,
-                    .waiting,
-                );
-                return;
-            }
-
+        self.lock.lock();
+        if (self.status == .dead) {
+            self.lock.unlock();
+            proc.switchUndo(thread);
             trap.arg0 = self.exit_code;
+            return;
         }
-        proc.switchUndo(thread);
+
+        const cleanup = self.exit_waiters.pushThreadLocked(
+            &self.lock,
+            thread,
+            0,
+            .waiting,
+        );
+        self.lock.unlock();
+        cleanup.run();
     }
 
     fn allocSlotLocked(
