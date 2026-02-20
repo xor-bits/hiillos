@@ -237,17 +237,6 @@ pub fn timestampNanos() u128 {
     return @as(u128, regs.readMainCounter()) * regs.readSpeed() / 1_000_000;
 }
 
-pub fn hpetSpinWait(micros: u32) void {
-    const regs: *volatile HpetRegs = hpet_regs.?;
-
-    const ticks = (@as(u64, micros) * 1_000_000_000) / @as(u128, regs.readSpeed());
-
-    const deadline = regs.readMainCounter() + ticks;
-    while (regs.readMainCounter() <= deadline) {
-        abi.sys.yield();
-    }
-}
-
 pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     const regs = hpet_regs.?;
     const _counter = timestamp_nanos * 1_000_000 / regs.readSpeed();
@@ -258,11 +247,16 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     }
     const counter: u64 = @truncate(_counter);
 
+    var least_used_count: usize = std.math.maxInt(usize);
     var least_used: u8 = 0;
     for (timers[0..timer_count], 0..) |*timer, i| {
+        timer.lock.lock();
         const active_deadline_count = timer.count();
-        if (active_deadline_count <= timers[least_used].count()) {
+        timer.lock.unlock();
+
+        if (active_deadline_count <= least_used_count) {
             least_used = @truncate(i);
+            least_used_count = active_deadline_count;
             if (active_deadline_count == 0) break;
         }
     }
@@ -270,12 +264,16 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     var new: Deadline = .{ .deadline = counter, .reply = reply };
 
     const timer = &timers[least_used];
+    timer.lock.lock();
+    defer timer.lock.unlock();
+
     if (timer.current) |timer_current| {
         if (counter < timer_current.deadline) {
             // set a new comparator value if the new deadline is sooner than the current
 
             @as(*volatile u64, &regs.timer(least_used).comparator_value).* = new.deadline;
-            new, timer.current = .{ timer_current, new };
+            timer.current = new;
+            new = timer_current;
         }
 
         timer.deadlines.add(new) catch |err| {
@@ -284,6 +282,35 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     } else {
         @as(*volatile u64, &regs.timer(least_used).comparator_value).* = new.deadline;
         timer.current = new;
+    }
+}
+
+fn verify() void {
+    for (timers[0..]) |*timer| timer.lock.lock();
+    defer for (timers[0..]) |*timer| timer.lock.unlock();
+
+    var a: std.ArrayList(u32) = .{};
+    defer a.deinit(abi.mem.slab_allocator);
+
+    for (timers[0..]) |*timer| {
+        if (timer.current) |d|
+            a.append(abi.mem.slab_allocator, d.reply.cap) catch unreachable;
+        for (timer.deadlines.items) |d|
+            a.append(abi.mem.slab_allocator, d.reply.cap) catch unreachable;
+    }
+
+    // log.debug("{any}", .{a.items});
+
+    std.sort.pdq(u32, a.items, {}, struct {
+        fn f(_: void, lhs: u32, rhs: u32) bool {
+            return lhs < rhs;
+        }
+    }.f);
+
+    var prev: ?u32 = null;
+    for (a.items) |i| {
+        if (prev == i) std.debug.panic("state fail: reply duplicated", .{});
+        prev = i;
     }
 }
 
