@@ -49,6 +49,7 @@ pub export var import_pm = abi.loader.Resource.new(.{
 
 var ttys = [1]?Tty{null};
 var seat_lock: abi.thread.Mutex = .{};
+var owned: bool = true;
 
 //
 
@@ -127,13 +128,13 @@ pub fn main() !void {
         //     token,
         //     std.meta.activeTag(token),
         // });
+
+        seat_lock.lock();
+        defer seat_lock.unlock();
         switch (token) {
             .ch => |byte| {
                 tty.writeByte(byte);
-                if (seat_lock.tryLock()) {
-                    defer seat_lock.unlock();
-                    tty.flush();
-                }
+                if (owned) tty.flush();
             },
             .fg_colour => {},
             .bg_colour => {},
@@ -200,16 +201,15 @@ pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
         else
             null;
 
-        if (ch) |byte| {
-            if (std.ascii.isPrint(byte) or byte == '\n') {
-                if (ttys[0]) |*tty| {
-                    tty.writeByte(byte);
-                    tty.flush();
-                }
+        const byte = ch orelse continue;
+        if (std.ascii.isPrint(byte) or byte == '\n') {
+            if (ttys[0]) |*tty| {
+                tty.writeByte(byte);
+                if (owned) tty.flush();
             }
-
-            try stdin.push(byte);
         }
+
+        try stdin.push(byte);
     }
 }
 
@@ -223,16 +223,19 @@ fn seatRequest(
     _: *abi.lpc.Daemon(SeatServer),
     handler: abi.lpc.Handler(abi.TtyProtocol.SeatRequest),
 ) !void {
-    if (!seat_lock.tryLock()) return handler.reply.send(.{
+    seat_lock.lock();
+    defer seat_lock.unlock();
+
+    if (!owned) return handler.reply.send(.{
         .err = .already_mapped,
     });
-    // leak the lock
 
     errdefer handler.reply.send(.{ .err = .internal });
     const fb = try (caps.Frame{ .cap = import_fb.handle }).clone();
     const fb_info = try (caps.Frame{ .cap = import_fb_info.handle }).clone();
     const ps2 = try (caps.Sender{ .cap = import_ps2.handle }).clone();
 
+    owned = false;
     handler.reply.send(.{ .ok = .{
         .fb = fb,
         .fb_info = fb_info,
