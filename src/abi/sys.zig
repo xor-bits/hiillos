@@ -421,7 +421,7 @@ pub const ErrorEnum = enum(u8) {
     entry_not_present,
     entry_is_huge,
     not_stopped,
-    is_stopped,
+    not_running,
     no_vmem,
     thread_safety,
     already_mapped,
@@ -448,33 +448,76 @@ pub const ErrorEnum = enum(u8) {
     _,
 };
 
+fn nextIgnoreCaseIgnoreUnderscore(a: []const u8, i: *usize) ?u8 {
+    while (true) {
+        if (i.* >= a.len) return null;
+        const next = a[i.*];
+        i.* += 1;
+        if (next == '_') continue;
+        return std.ascii.toLower(next);
+    }
+}
+
+fn strEqIgnoreCaseIgnoreUnderscore(a: []const u8, b: []const u8) bool {
+    var i: usize = 0;
+    var j: usize = 0;
+
+    while (true) {
+        const a_ch = nextIgnoreCaseIgnoreUnderscore(a, &i);
+        const b_ch = nextIgnoreCaseIgnoreUnderscore(b, &j);
+        if (a_ch != b_ch) return false;
+        if (a_ch == null) return true;
+    }
+}
+
+comptime {
+    std.debug.assert(strEqIgnoreCaseIgnoreUnderscore("", ""));
+    std.debug.assert(strEqIgnoreCaseIgnoreUnderscore("_", "_"));
+    std.debug.assert(!strEqIgnoreCaseIgnoreUnderscore("_a", "_b"));
+    std.debug.assert(strEqIgnoreCaseIgnoreUnderscore("_a_", "_a"));
+    std.debug.assert(!strEqIgnoreCaseIgnoreUnderscore("_a_", "_b"));
+    std.debug.assert(!strEqIgnoreCaseIgnoreUnderscore("_a_", "_b"));
+    std.debug.assert(strEqIgnoreCaseIgnoreUnderscore("process_dead", "ProcessDead"));
+}
+
 pub fn errorToInt(err: Error) u32 {
+    @setEvalBranchQuota(100_000);
     if (!builtin.is_test)
         std.debug.assert(err != Error.UnknownError);
-    const errors = @typeInfo(Error).error_set.?;
 
     switch (err) {
-        inline else => |_comptime_err| {
-            const comptime_err: Error = comptime _comptime_err;
-            inline for (errors, 0..) |err_info, i| {
-                if (comptime @field(Error, err_info.name) == comptime_err) {
-                    // only the switch and this return stmt
-                    // will be left in the generated code
-                    return i;
+        inline else => |comptime_err| {
+            inline for (comptime std.enums.values(ErrorEnum)) |err_enum| {
+                if (comptime strEqIgnoreCaseIgnoreUnderscore(
+                    @tagName(err_enum),
+                    @errorName(comptime_err),
+                )) {
+                    return @intFromEnum(err_enum);
                 }
+            } else if (comptime_err != Error.UnknownError) {
+                @compileError("unmatched " ++ @errorName(comptime_err));
             } else unreachable;
         },
     }
 }
 
 pub fn intToError(i: usize) Error {
-    const errors = @typeInfo(Error).error_set.?;
-
-    switch (i) {
-        errors.len...std.math.maxInt(usize) => return Error.UnknownError,
-
-        inline else => |j| {
-            return @field(Error, errors[j].name);
+    @setEvalBranchQuota(100_000);
+    const err_enum: ErrorEnum = @enumFromInt(i);
+    switch (err_enum) {
+        _ => unreachable,
+        inline else => |comptime_err_enum| {
+            inline for (@typeInfo(Error).error_set.?) |_err| {
+                const err = @field(Error, _err.name);
+                if (comptime strEqIgnoreCaseIgnoreUnderscore(
+                    @tagName(comptime_err_enum),
+                    @errorName(err),
+                )) {
+                    return err;
+                }
+            } else {
+                @compileError("unmatched " ++ @tagName(comptime_err_enum));
+            }
         },
     }
 }
@@ -485,6 +528,18 @@ pub fn errorToEnum(err: Error) ErrorEnum {
 
 pub fn enumToError(err: ErrorEnum) Error {
     return intToError(@intFromEnum(err));
+}
+
+comptime {
+    for (std.enums.values(ErrorEnum)) |err_enum| {
+        const err = enumToError(err_enum);
+        const err_enum_rt = errorToEnum(err);
+        std.debug.assert(err_enum == err_enum_rt);
+    }
+    std.debug.assert(ErrorEnum.invalid_capability == errorToEnum(Error.InvalidCapability));
+    std.debug.assert(ErrorEnum.entry_is_huge == errorToEnum(Error.EntryIsHuge));
+    std.debug.assert(ErrorEnum.already_mapped == errorToEnum(Error.AlreadyMapped));
+    std.debug.assert(ErrorEnum.cancelled == errorToEnum(Error.Cancelled));
 }
 
 pub fn Result(comptime Ok: type) type {
