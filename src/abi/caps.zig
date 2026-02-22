@@ -221,10 +221,6 @@ pub const Vmem = extern struct {
         length: usize,
         flags: abi.sys.MapFlags,
     ) sys.Error!usize {
-        const name = if (@hasDecl(@import("root"), "manifest")) @import("root").manifest.name else "<unknown>";
-        if (this.cap == 0) std.log.err("vmem is null {s}", .{name});
-        if (frame.cap == 0) std.log.err("frame is null {s}", .{name});
-
         return sys.vmemMap(
             this.cap,
             frame.cap,
