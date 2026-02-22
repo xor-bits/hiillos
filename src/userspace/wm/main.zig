@@ -141,7 +141,8 @@ fn exec(path: []const u8) !void {
 }
 
 fn compositorThreadMain() noreturn {
-    const frametime_ns: u32 = 16_666_667;
+    const frametime_ns: u32 = 8_333_333;
+    // const frametime_ns: u32 = 16_666_667;
     var nanos = abi.time.nanoTimestamp();
     while (true) {
         system_lock.lock();
