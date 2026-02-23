@@ -274,7 +274,6 @@ pub const SpinMutex = extern struct {
 
     pub fn tryLock(self: *Self) bool {
         if (null == self.lock_state.cmpxchgStrong(0, 1, .acquire, .monotonic)) {
-            @branchHint(.likely);
             return true;
         } else {
             @branchHint(.cold);
@@ -312,7 +311,9 @@ pub const SpinMutex = extern struct {
     pub fn lock(self: *Self) void {
         var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
         while (null != self.lock_state.cmpxchgWeak(0, 1, .acquire, .monotonic)) {
+            @branchHint(.cold);
             while (self.isLocked()) {
+                @branchHint(.cold);
                 if (conf.IS_DEBUG) {
                     counter += 1;
                     if (counter % 1_000_000 == 0) {
@@ -325,7 +326,11 @@ pub const SpinMutex = extern struct {
     }
 
     pub fn isLocked(self: *Self) bool {
-        return self.lock_state.load(.monotonic) != 0;
+        const is_locked = self.lock_state.load(.monotonic) != 0;
+        if (is_locked) {
+            @branchHint(.cold);
+        }
+        return is_locked;
     }
 
     pub fn unlock(self: *Self) void {
