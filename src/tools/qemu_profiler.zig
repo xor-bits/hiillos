@@ -104,7 +104,7 @@ fn stdoutJob(stdout: std.fs.File, args: []const [:0]const u8) !void {
 
         if (timer.read() >= 5_000_000_000) {
             timer.reset();
-            // print the 50 (approximately) hottest instructions every 5 seconds
+            // print the max_entries (approximately) hottest instructions every 5 seconds
             try printHotSpots(&address_map, args);
         }
     }
@@ -117,6 +117,11 @@ fn printHotSpots(
     const entries = &address_map.unmanaged.entries;
     const T = @TypeOf(entries);
 
+    var hits_sum: usize = 0;
+    for (address_map.values()) |hits| {
+        hits_sum += hits;
+    }
+
     const unknown = "<unknown>";
 
     address_map.sort((struct {
@@ -126,10 +131,11 @@ fn printHotSpots(
         }
     }){ .entries = entries });
 
-    std.debug.print("\n50 most hit addresses:\n", .{});
-    const count = @min(entries.len, 50);
+    const max_entries = 35;
+    std.debug.print("\n{} most hit addresses:\n", .{max_entries});
+    const count = @min(entries.len, max_entries);
 
-    var source_lines: [50]std.ArrayListUnmanaged(u8) = [1]std.ArrayListUnmanaged(u8){.{}} ** 50;
+    var source_lines: [max_entries]std.ArrayListUnmanaged(u8) = [1]std.ArrayListUnmanaged(u8){.{}} ** max_entries;
     defer for (&source_lines) |*source_line| {
         defer source_line.deinit(gpa.allocator());
     };
@@ -137,7 +143,7 @@ fn printHotSpots(
     var stderr = std.ArrayListUnmanaged(u8){};
     defer stderr.deinit(gpa.allocator());
 
-    var addr2line_processes: [50]?std.process.Child = undefined;
+    var addr2line_processes: [max_entries]?std.process.Child = undefined;
     defer for (0..count) |i| {
         const addr2line = &(addr2line_processes[i] orelse continue);
         _ = addr2line.wait() catch {};
@@ -191,10 +197,18 @@ fn printHotSpots(
     for (0..count) |i| {
         const entry = entries.get(i);
         const source_line = source_lines[i].items;
-        std.debug.print("  {} hits @ 0x{x} {s}\n", .{
-            entry.value,
+
+        const percentage = 100.0 *
+            @as(f64, @floatFromInt(entry.value)) /
+            @as(f64, @floatFromInt(hits_sum));
+
+        var it = std.mem.splitBackwardsSequence(u8, source_line, "src/");
+        const relative_source = std.mem.trim(u8, it.next().?, "\n");
+
+        std.debug.print("  {d:.2}% of hits @ 0x{x} {s}\n", .{
+            percentage,
             entry.key,
-            std.mem.trim(u8, source_line, "\n"),
+            relative_source,
         });
     }
 }
