@@ -190,9 +190,11 @@ pub fn switchTo(self: *@This()) void {
         };
     };
 
-    const cur_cr3 = arch.x86_64.Cr3.read();
-    if (cur_cr3 == new_cr3) {
-        return;
+    if (conf.IS_DEBUG) {
+        // switching to the same address space should be avoided by
+        // the higher level of abstraction (`Vmem.switchTo`)
+        const cur_cr3 = arch.x86_64.Cr3.read();
+        std.debug.assert(cur_cr3 != new_cr3);
     }
 
     new_cr3.write();
