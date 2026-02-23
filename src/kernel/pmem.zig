@@ -126,9 +126,7 @@ pub fn totalPages() usize {
 }
 
 pub fn isInitialized() bool {
-    pmem_lock.lock();
-    defer pmem_lock.unlock();
-    return pmem_ready;
+    return pmem_ready.isReady();
 }
 
 //
@@ -136,7 +134,7 @@ pub fn isInitialized() bool {
 var pmem_lock: abi.lock.SpinMutex = .{};
 
 /// tells if the frame allocator can be used already by other parts of the kernel
-var pmem_ready = false;
+var pmem_ready: abi.lock.Once(abi.lock.SpinMutex) = .{};
 
 /// how many 4kib pages are currently in use
 var used_pages: u32 = 0;
@@ -336,12 +334,12 @@ fn deallocChunkInner(ptr: addr.Phys, size: abi.ChunkSize) void {
 //
 
 pub fn init() !void {
-    pmem_lock.lock();
-    defer pmem_lock.unlock();
-
-    if (conf.IS_DEBUG and pmem_ready) {
+    if (conf.IS_DEBUG and pmem_ready.isReady()) {
         return error.PmmAlreadyInitialized;
     }
+
+    pmem_lock.lock();
+    defer pmem_lock.unlock();
 
     var usable_memory: usize = 0;
     var memory_top: usize = 0;
@@ -429,7 +427,7 @@ pub fn init() !void {
         }
     }
 
-    pmem_ready = true;
+    pmem_ready.complete();
 }
 
 fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) ?[*]u8 {
@@ -513,7 +511,7 @@ fn _remap(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usi
 }
 
 fn debugAssertInitialized() bool {
-    if (conf.IS_DEBUG and !pmem_ready) {
+    if (conf.IS_DEBUG and !isInitialized()) {
         log.err("physical memory manager not initialized", .{});
         return true;
     } else {

@@ -450,6 +450,10 @@ pub fn Once(comptime Mutex: type) type {
             // unlock wait_spin to signal others
             self.wait_mutex.unlock();
         }
+
+        pub fn isReady(self: *Self) bool {
+            return !self.wait_mutex.isLocked();
+        }
     };
 }
 
