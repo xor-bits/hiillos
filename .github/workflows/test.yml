@@ -13,7 +13,7 @@ jobs:
       
       - uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: xorriso build-essential
+          packages: build-essential
           version: 1.0
       
       - uses: mlugg/setup-zig@v2
@@ -24,4 +24,4 @@ jobs:
 
       - uses: actions/upload-artifact@v4.6.2
         with:
-          path: ./zig-out/os.iso
+          path: ./zig-out/hiillos.img

@@ -7,7 +7,7 @@ pub var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 pub fn main() !void {
     const args = try std.process.argsAlloc(gpa.allocator()); // leak the args so that the threads can use it
     if (args.len != 3)
-        return error.@"usage: qemu_profiler <os-iso> <kernel-elf>";
+        return error.@"usage: qemu_profiler <hiillos-img> <kernel-elf>";
 
     var qemu = std.process.Child.init(&.{
         "qemu-system-x86_64",

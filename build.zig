@@ -10,7 +10,6 @@ const Opts = struct {
     optimize_root: std.builtin.OptimizeMode,
     display: bool,
     debug: u2,
-    use_ovmf: bool,
     ovmf_fd: []const u8,
     gdb: enum { false, true, wait },
     testing: bool,
@@ -75,11 +74,6 @@ fn options(b: *std.Build) Opts {
             \\QEMU debug level
         ) orelse 1,
 
-        // use OVMF UEFI to boot in QEMU (OVMF is slower, but has more features)
-        .use_ovmf = b.option(bool, "uefi",
-            \\use OVMF UEFI to boot in QEMU (OVMF is slower, but has more features) (default: false)
-        ) orelse false,
-
         // OVMF.fd path
         .ovmf_fd = b.option([]const u8, "ovmf",
             \\OVMF.fd path
@@ -136,31 +130,40 @@ pub fn build(b: *std.Build) !void {
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi);
     const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui);
-    const os_iso = createIso(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
+    const hiillos_img = createImg(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
-    runQemuProfiler(b, &opts, kernel_elf, os_iso);
-    runQemu(b, &opts, os_iso);
+    runQemuProfiler(b, &opts, kernel_elf, hiillos_img);
+    runQemu(b, &opts, hiillos_img);
 }
 
-fn runQemuProfiler(b: *std.Build, opts: *const Opts, kernel_elf: std.Build.LazyPath, os_iso: std.Build.LazyPath) void {
+fn runQemuProfiler(
+    b: *std.Build,
+    opts: *const Opts,
+    kernel_elf: std.Build.LazyPath,
+    hiillos_img: std.Build.LazyPath,
+) void {
     const profiler = b.addExecutable(.{
         .name = "qemu_profiler",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/qemu_profiler.zig"),
             .target = opts.native_target,
-            .optimize = opts.optimize,
+            .optimize = .ReleaseSafe,
         }),
     });
 
     const run_profiler = b.addRunArtifact(profiler);
-    run_profiler.addFileArg(os_iso);
+    run_profiler.addFileArg(hiillos_img);
     run_profiler.addFileArg(kernel_elf);
 
     const profile_step = b.step("profile", "run QEMU profiler tool");
     profile_step.dependOn(&run_profiler.step);
 }
 
-fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
+fn runQemu(
+    b: *std.Build,
+    opts: *const Opts,
+    hiillos_img: std.Build.LazyPath,
+) void {
     // run the os in qemu
     const qemu_step = b.addSystemCommand(&.{
         "qemu-system-x86_64",
@@ -183,10 +186,12 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         "-usb",
         "-device",
         "usb-tablet",
+        // "-boot",
+        // "menu=on,strict=on",
         "-drive",
     });
 
-    qemu_step.addPrefixedFileArg("format=raw,file=", os_iso);
+    qemu_step.addPrefixedFileArg("format=raw,file=", hiillos_img);
 
     if (opts.sound) {
         qemu_step.addArgs(&.{ "-device", "virtio-sound" });
@@ -226,10 +231,8 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
         3 => qemu_step.addArgs(&.{ "-d", "int,cpu_reset,guest_errors" }),
     }
 
-    if (opts.use_ovmf) {
-        const ovmf_fd = opts.ovmf_fd;
-        qemu_step.addArgs(&.{ "-bios", ovmf_fd });
-    }
+    const ovmf_fd = opts.ovmf_fd;
+    qemu_step.addArgs(&.{ "-bios", ovmf_fd });
 
     switch (opts.gdb) {
         .false => {},
@@ -246,58 +249,41 @@ fn runQemu(b: *std.Build, opts: *const Opts, os_iso: std.Build.LazyPath) void {
     run_step.dependOn(b.getInstallStep());
 }
 
-fn createIso(
+fn createImg(
     b: *std.Build,
     opts: *const Opts,
     kernel_elf: std.Build.LazyPath,
     initfs_tar_zst: std.Build.LazyPath,
     root_bin: std.Build.LazyPath,
 ) std.Build.LazyPath {
+    const limine = b.dependency("limine", .{});
 
-    // clone & configure limine (WARNING: this runs a Makefile from a dependency at compile time)
-    const limine_bootloader_pkg = b.dependency("limine_bootloader", .{});
-    // const limine_step = b.addSystemCommand(&.{
-    //     "make", "-C",
-    // });
-    // limine_step.addDirectoryArg(limine_bootloader_pkg.path("."));
-    // // limine_step.addPrefixedFileArg("_IGNORED=", limine_bootloader_pkg.path(".").path(b, "limine.c"));
-    // limine_step.has_side_effects = false;
-
-    // tool that generates the ISO file with everything
-    const wrapper = b.addExecutable(.{
-        .name = "xorriso_limine_wrapper",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tools/xorriso_limine_wrapper.zig"),
-            .target = opts.native_target,
-        }),
-    });
-
-    // create virtual iso root
-    const wf = b.addNamedWriteFiles("create virtual iso root");
+    // create virtual img root
+    const wf = b.addNamedWriteFiles("create virtual img root");
     _ = wf.addCopyFile(kernel_elf, "boot/kernel");
     _ = wf.addCopyFile(initfs_tar_zst, "boot/initfs.tar.zst");
     _ = wf.addCopyFile(root_bin, "boot/root.bin");
     _ = wf.addCopyFile(b.path("cfg/limine.conf"), "boot/limine/limine.conf");
-    _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-bios.sys"), "boot/limine/limine-bios.sys");
-    _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-bios-cd.bin"), "boot/limine/limine-bios-cd.bin");
-    if (opts.use_ovmf) {
-        _ = wf.addCopyFile(limine_bootloader_pkg.path("limine-uefi-cd.bin"), "boot/limine/limine-uefi-cd.bin");
-        _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
-        _ = wf.addCopyFile(limine_bootloader_pkg.path("BOOTIA32.EFI"), "EFI/BOOT/BOOTIA32.EFI");
-    }
+    _ = wf.addCopyFile(limine.path("limine-uefi-cd.bin"), "boot/limine/limine-uefi-cd.bin");
+    _ = wf.addCopyFile(limine.path("BOOTX64.EFI"), "EFI/BOOT/BOOTX64.EFI");
 
-    // create the ISO file (WARNING: this runs a binary from a dependency (limine_bootloader) at compile time)
-    const wrapper_run = b.addRunArtifact(wrapper);
-    wrapper_run.addDirectoryArg(limine_bootloader_pkg.path("."));
-    wrapper_run.addDirectoryArg(wf.getDirectory());
-    const os_iso = wrapper_run.addOutputFileArg("os.iso");
-    wrapper_run.addArg(if (opts.use_ovmf) "y" else "n");
-    // wrapper_run.step.dependOn(&limine_step.step);
+    const disk_image_tool = b.addExecutable(.{
+        .name = "disk-image",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/disk_image.zig"),
+            .optimize = .ReleaseSafe,
+            .target = opts.native_target,
+        }),
+    });
 
-    const install_iso = b.addInstallFile(os_iso, "os.iso");
-    b.getInstallStep().dependOn(&install_iso.step);
+    const run_disk_image_tool = b.addRunArtifact(disk_image_tool);
+    run_disk_image_tool.addDirectoryArg(wf.getDirectory());
+    const hiillos_img = run_disk_image_tool.addOutputFileArg("hiillos.img");
 
-    return os_iso;
+    const install_img = b.addInstallFile(hiillos_img, "hiillos.img");
+    b.getInstallStep().dependOn(&install_img.step);
+
+    return hiillos_img;
 }
 
 fn createInitfsTarZst(
@@ -587,6 +573,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/generate_syscall_wrapper.zig"),
             .target = opts.native_target,
+            .optimize = .ReleaseSafe,
         }),
     });
 
@@ -633,6 +620,7 @@ fn createFont(b: *std.Build, opts: *const Opts) *std.Build.Module {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/generate_font.zig"),
             .target = opts.native_target,
+            .optimize = .ReleaseSafe,
         }),
     });
 

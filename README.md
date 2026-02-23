@@ -38,10 +38,10 @@ zig build run --prominent-compile-errors --summary none \
     -Dzst_l=10
 ```
 
-## Building an ISO
+## Building an IMG
 
 ```bash
-zig build # generates the os.iso in zig-out/os.iso
+zig build # generates zig-out/hiillos.img
 ```
 
 ## Stuff included here
