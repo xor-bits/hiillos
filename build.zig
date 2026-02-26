@@ -478,6 +478,7 @@ fn createKernelElf(
         .target = opts.kernel_target,
         .optimize = opts.optimize,
         .code_model = .kernel,
+        .strip = opts.optimize == .ReleaseSmall,
         .imports = &.{
             .{
                 .name = "abi",
@@ -547,6 +548,7 @@ fn createRootBin(
             .root_source_file = b.path("src/userspace/root/main.zig"),
             .target = opts.user_target,
             .optimize = opts.optimize_root,
+            .strip = opts.optimize == .ReleaseSmall,
         }),
         .use_llvm = true,
     });
