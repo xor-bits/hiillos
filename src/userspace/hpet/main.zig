@@ -98,9 +98,15 @@ pub fn main() !void {
             if (conf.int_route_cap & (@as(u32, 1) << @as(u5, @truncate(irq_idx))) == 0) continue;
 
             if (!irqs[irq_idx]) {
-                const irq = try caps.X86Irq.create(irq_allocator, @truncate(irq_idx));
+                log.info("alloc IRQ{}", .{irq_idx});
+                const irq = caps.X86Irq.create(irq_allocator, @truncate(irq_idx)) catch {
+                    continue;
+                };
                 errdefer irq.close();
-                const notify = try irq.subscribe();
+                const notify = irq.subscribe() catch {
+                    irq.close();
+                    continue;
+                };
                 errdefer notify.close();
                 try abi.thread.spawn(hpetThreadMain, .{ irq, notify });
             }
@@ -113,6 +119,9 @@ pub fn main() !void {
                 .int_route_cap = conf.int_route_cap,
                 .int_route_config = @as(u5, @truncate(irq_idx)),
             };
+            timers[timer_idx].lock.lock();
+            timers[timer_idx].usable = true;
+            timers[timer_idx].lock.unlock();
             break;
         } else {
             log.err("cannot use timer {} interrupts: 0b{b} {}", .{ timer_idx, conf.int_route_cap, conf });
@@ -252,7 +261,10 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     for (timers[0..timer_count], 0..) |*timer, i| {
         timer.lock.lock();
         const active_deadline_count = timer.count();
+        const usable = timer.usable;
         timer.lock.unlock();
+
+        if (!usable) continue;
 
         if (active_deadline_count <= least_used_count) {
             least_used = @truncate(i);
@@ -327,6 +339,7 @@ const Timer = struct {
             return std.math.order(a.deadline, b.deadline);
         }
     }.inner) = .init(abi.mem.slab_allocator, {}),
+    usable: bool = false,
 
     fn count(self: *@This()) u64 {
         return self.deadlines.count() + @intFromBool(self.current != null);
