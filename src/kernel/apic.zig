@@ -519,10 +519,11 @@ fn findUsableRedirectEntry(source_irq: u32) ?struct { *IoApicRegs, u32 } {
 
         // log.info("ioapic={*} entry={} val={}", .{ ioapic.addr, source_irq - min, val });
 
-        if (val.vector == 0) {
+        if (val.vector == 0 or val.mask == .disable) {
             // log.info("slot {}", .{source_irq - min});
             return .{ ioapic.addr, low_index };
         }
+        // log.debug("entry already used, skipping ioapic ({any})", .{val});
     }
 
     return null;
