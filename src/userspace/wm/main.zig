@@ -459,6 +459,8 @@ const Framebuffer = struct {
         resize_event_conn: *Connection,
         resize_event_window_id: usize,
     ) !void {
+        std.debug.assert(size[0] != 0);
+        std.debug.assert(size[1] != 0);
         if (@reduce(.And, self.shmem.size == size)) {
             return;
         } else if (try self.shmem.update(size)) |new| {
@@ -667,13 +669,13 @@ const System = struct {
                         window_aabb.max[0] += self.cursor[0] -| resizing.init_cursor[0];
                         window_aabb.min[1] += self.cursor[1] -| resizing.init_cursor[1];
                         window_aabb.max[0] = @max(window_aabb.max[0], window_aabb.min[0] +| min_window_size[0]);
-                        window_aabb.min[1] = @min(window_aabb.min[1], window_aabb.max[1] +| min_window_size[1]);
+                        window_aabb.min[1] = @min(window_aabb.min[1], window_aabb.max[1] -| min_window_size[1]);
                     },
                     .bottom_left => {
                         window_aabb.min[0] += self.cursor[0] -| resizing.init_cursor[0];
                         window_aabb.max[1] += self.cursor[1] -| resizing.init_cursor[1];
-                        window_aabb.min[0] = @max(window_aabb.min[0], window_aabb.max[0] +| min_window_size[0]);
-                        window_aabb.max[1] = @min(window_aabb.max[1], window_aabb.min[1] +| min_window_size[1]);
+                        window_aabb.min[0] = @min(window_aabb.min[0], window_aabb.max[0] -| min_window_size[0]);
+                        window_aabb.max[1] = @max(window_aabb.max[1], window_aabb.min[1] +| min_window_size[1]);
                     },
                     .bottom_right => {
                         window_aabb.max += self.cursor -| resizing.init_cursor;
@@ -682,6 +684,8 @@ const System = struct {
                 }
                 resizing.init_cursor = self.cursor;
                 window.rect = window_aabb.asRect();
+                std.debug.assert(window.rect.size[0] != 0);
+                std.debug.assert(window.rect.size[1] != 0);
                 system.damage.addAabb(window.rect.asAabb().border(window_borders));
             },
             .none => {},
