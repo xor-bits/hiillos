@@ -151,6 +151,7 @@ pub fn cpuIdSafe() ?u32 {
 }
 
 pub fn cpuCount() u32 {
+    if (conf.SKIP_SMP) return 1;
     return @intCast((boot.mp.response orelse return 1).cpu_count);
 }
 

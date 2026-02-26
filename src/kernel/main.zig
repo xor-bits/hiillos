@@ -150,7 +150,9 @@ pub fn main() noreturn {
     for (all_cpu_locals) |*locals| locals.initialized.store(false, .release);
 
     // boot up a few processors
-    arch.smpInit();
+    if (!conf.SKIP_SMP) {
+        arch.smpInit();
+    }
 
     // set up arch specific things: GDT, TSS, IDT, syscalls, ...
     const id = arch.nextCpuId();
