@@ -138,7 +138,7 @@ fn _smpstart(smpinfo: *boot.LimineMpInfo) callconv(.c) noreturn {
 
 pub fn cpuLocal() *main.CpuLocalStorage {
     return asm volatile (std.fmt.comptimePrint(
-            \\ movq %gs:{d}, %[cls]
+            \\ movq %%gs:{d}, %[cls]
         , .{@offsetOf(main.CpuLocalStorage, "self_ptr")})
         : [cls] "={rax}" (-> *main.CpuLocalStorage),
     );
@@ -256,8 +256,8 @@ pub fn ltr(v: u16) void {
 pub fn setCs(sel: u64) void {
     asm volatile (
         \\ pushq %[v]
-        \\ leaq .reload_CS(%rip), %rax
-        \\ pushq %rax
+        \\ leaq .reload_CS(%%rip), %%rax
+        \\ pushq %%rax
         \\ lretq
         \\ .reload_CS:
         :
@@ -267,7 +267,7 @@ pub fn setCs(sel: u64) void {
 
 pub fn setSs(sel: u16) void {
     asm volatile (
-        \\ movw %[v], %ss
+        \\ movw %[v], %%ss
         :
         : [v] "r" (sel),
     );
@@ -275,7 +275,7 @@ pub fn setSs(sel: u16) void {
 
 pub fn setDs(sel: u16) void {
     asm volatile (
-        \\ movw %[v], %ds
+        \\ movw %[v], %%ds
         :
         : [v] "r" (sel),
     );
@@ -283,7 +283,7 @@ pub fn setDs(sel: u16) void {
 
 pub fn setEs(sel: u16) void {
     asm volatile (
-        \\ movw %[v], %es
+        \\ movw %[v], %%es
         :
         : [v] "r" (sel),
     );
@@ -291,7 +291,7 @@ pub fn setEs(sel: u16) void {
 
 pub fn setFs(sel: u16) void {
     asm volatile (
-        \\ movw %[v], %fs
+        \\ movw %[v], %%fs
         :
         : [v] "r" (sel),
     );
@@ -299,7 +299,7 @@ pub fn setFs(sel: u16) void {
 
 pub fn setGs(sel: u16) void {
     asm volatile (
-        \\ movw %[v], %gs
+        \\ movw %[v], %%gs
         :
         : [v] "r" (sel),
     );
@@ -503,7 +503,7 @@ pub const ArchitecturalPerformanceMonitoringLeaf = packed struct {
 
 pub fn wrcr3(sel: u64) void {
     asm volatile (
-        \\ mov %[v], %cr3
+        \\ mov %[v], %%cr3
         :
         : [v] "N{rdx}" (sel),
         : .{ .memory = true });
@@ -511,7 +511,7 @@ pub fn wrcr3(sel: u64) void {
 
 pub fn rdcr3() u64 {
     return asm volatile (
-        \\ mov %cr3, %[v]
+        \\ mov %%cr3, %[v]
         : [v] "={rdx}" (-> u64),
     );
 }
@@ -1448,7 +1448,7 @@ pub const Cr0 = packed struct {
     pub fn write(val: Self) void {
         const v: u64 = @bitCast(val);
         asm volatile (
-            \\ mov %[v], %cr0
+            \\ mov %[v], %%cr0
             :
             : [v] "r" (v),
         );
@@ -1456,7 +1456,7 @@ pub const Cr0 = packed struct {
 
     pub fn read() Self {
         return @bitCast(asm volatile (
-            \\mov %cr0, %[v]
+            \\mov %%cr0, %[v]
             : [v] "={rax}" (-> u64),
         ));
     }
@@ -1470,7 +1470,7 @@ pub const Cr2 = packed struct {
     pub fn write(val: Self) void {
         const v: u64 = @bitCast(val);
         asm volatile (
-            \\ mov %[v], %cr2
+            \\ mov %[v], %%cr2
             :
             : [v] "r" (v),
         );
@@ -1478,7 +1478,7 @@ pub const Cr2 = packed struct {
 
     pub fn read() Self {
         return @bitCast(asm volatile (
-            \\ mov %cr2, %[v]
+            \\ mov %%cr2, %[v]
             : [v] "={rax}" (-> u64),
         ));
     }
@@ -1497,7 +1497,7 @@ pub const Cr3 = packed struct {
     pub fn write(val: Self) void {
         const v: u64 = @bitCast(val);
         asm volatile (
-            \\ mov %[v], %cr3
+            \\ mov %[v], %%cr3
             :
             : [v] "r" (v),
         );
@@ -1505,7 +1505,7 @@ pub const Cr3 = packed struct {
 
     pub fn read() Self {
         return @bitCast(asm volatile (
-            \\ mov %cr3, %[v]
+            \\ mov %%cr3, %[v]
             : [v] "={rax}" (-> u64),
         ));
     }
@@ -1544,7 +1544,7 @@ pub const Cr4 = packed struct {
     pub fn write(val: Self) void {
         const v: u64 = @bitCast(val);
         asm volatile (
-            \\ mov %[v], %cr4
+            \\ mov %[v], %%cr4
             :
             : [v] "r" (v),
         );
@@ -1552,7 +1552,7 @@ pub const Cr4 = packed struct {
 
     pub fn read() Self {
         return @bitCast(asm volatile (
-            \\ mov %cr4, %[v]
+            \\ mov %%cr4, %[v]
             : [v] "={rax}" (-> u64),
         ));
     }
@@ -1771,31 +1771,31 @@ pub const TrapRegs = extern struct {
                 // return type: iretq
                 \\ pushq $1
                 // push all scratch + general purpose registers
-                \\ pushq %rax
-                \\ pushq %rbx
-                \\ pushq %rcx
-                \\ pushq %rdx
-                \\ pushq %rdi
-                \\ pushq %rsi
-                \\ pushq %rbp
-                \\ movq %rsp, %rbp
-                \\ pushq %r8
-                \\ pushq %r9
-                \\ pushq %r10
-                \\ pushq %r11
-                \\ pushq %r12
-                \\ pushq %r13
-                \\ pushq %r14
-                \\ pushq %r15
+                \\ pushq %%rax
+                \\ pushq %%rbx
+                \\ pushq %%rcx
+                \\ pushq %%rdx
+                \\ pushq %%rdi
+                \\ pushq %%rsi
+                \\ pushq %%rbp
+                \\ movq %%rsp, %%rbp
+                \\ pushq %%r8
+                \\ pushq %%r9
+                \\ pushq %%r10
+                \\ pushq %%r11
+                \\ pushq %%r12
+                \\ pushq %%r13
+                \\ pushq %%r14
+                \\ pushq %%r15
                 // optional swapgs if coming from user-space
-                \\ cmpq ${[user_code]d}, {[code]d}(%rsp)
+                \\ cmpq ${[user_code]d}, {[code]d}(%%rsp)
                 \\ jne 1f
                 \\ swapgs
                 \\ 1:
                 // zero base pointer for zig
-                // \\ xorq %rbp, %rbp
+                // \\ xorq %%rbp, %%rbp
                 // set up the *TrapRegs argument
-                \\ movq %rsp, %rdi
+                \\ movq %%rsp, %%rdi
             , .{
                 .code = @offsetOf(@This(), "code_segment_selector"),
                 .user_code = GdtDescriptor.user_code_selector,
@@ -1806,39 +1806,39 @@ pub const TrapRegs = extern struct {
         asm volatile (std.fmt.comptimePrint(
                 // acquire the kernel stack without losing the user stack using KernelGS
                 \\ swapgs
-                \\ movq %rsp, %gs:{[rsp_user]d}
-                \\ movq %gs:{[rsp_kernel]d}, %rsp
+                \\ movq %%rsp, %%gs:{[rsp_user]d}
+                \\ movq %%gs:{[rsp_kernel]d}, %%rsp
                 // push a fake interrupt stack frame
                 \\ pushq ${[user_data]d}
-                \\ pushq %gs:{[rsp_user]d}
-                \\ pushq %r11
+                \\ pushq %%gs:{[rsp_user]d}
+                \\ pushq %%r11
                 \\ pushq ${[user_code]d}
-                \\ pushq %rcx
+                \\ pushq %%rcx
                 // dummy error code
                 \\ pushq $0
                 // return type: sysretq
                 \\ pushq $0
                 // push all scratch + general purpose registers and dummy values where syscallq clobbered them
-                \\ pushq %rax
-                \\ pushq %rbx
+                \\ pushq %%rax
+                \\ pushq %%rbx
                 \\ pushq $0
-                \\ pushq %rdx
-                \\ pushq %rdi
-                \\ pushq %rsi
-                \\ pushq %rbp
-                \\ movq %rsp, %rbp
-                \\ pushq %r8
-                \\ pushq %r9
-                \\ pushq %r10
+                \\ pushq %%rdx
+                \\ pushq %%rdi
+                \\ pushq %%rsi
+                \\ pushq %%rbp
+                \\ movq %%rsp, %%rbp
+                \\ pushq %%r8
+                \\ pushq %%r9
+                \\ pushq %%r10
                 \\ pushq $0
-                \\ pushq %r12
-                \\ pushq %r13
-                \\ pushq %r14
-                \\ pushq %r15
+                \\ pushq %%r12
+                \\ pushq %%r13
+                \\ pushq %%r14
+                \\ pushq %%r15
                 // zero base pointer for zig
-                // \\ xorq %rbp, %rbp
+                // \\ xorq %%rbp, %%rbp
                 // set up the *TrapRegs argument
-                \\ movq %rsp, %rdi
+                \\ movq %%rsp, %%rdi
             , .{
                 .rsp_user = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_user"),
                 .rsp_kernel = @offsetOf(main.CpuLocalStorage, "cpu_config") + @offsetOf(CpuConfig, "rsp_kernel"),
@@ -1861,46 +1861,46 @@ pub const TrapRegs = extern struct {
 
     pub inline fn exit() void {
         if (comptime conf.ANTI_TLB_MODE) asm volatile (
-            \\ movq %cr3, %rax
-            \\ movq %rax, %cr3
+            \\ movq %%cr3, %%rax
+            \\ movq %%rax, %%cr3
         );
 
         asm volatile (std.fmt.comptimePrint(
                 // push all scratch + general purpose registers
-                \\ popq %r15
-                \\ popq %r14
-                \\ popq %r13
-                \\ popq %r12
-                \\ popq %r11
-                \\ popq %r10
-                \\ popq %r9
-                \\ popq %r8
-                \\ popq %rbp
-                \\ popq %rsi
-                \\ popq %rdi
-                \\ popq %rdx
-                \\ popq %rcx
-                \\ popq %rbx
-                // \\ popq %rax
-                // \\ addq $8, %rsp
+                \\ popq %%r15
+                \\ popq %%r14
+                \\ popq %%r13
+                \\ popq %%r12
+                \\ popq %%r11
+                \\ popq %%r10
+                \\ popq %%r9
+                \\ popq %%r8
+                \\ popq %%rbp
+                \\ popq %%rsi
+                \\ popq %%rdi
+                \\ popq %%rdx
+                \\ popq %%rcx
+                \\ popq %%rbx
+                // \\ popq %%rax
+                // \\ addq $8, %%rsp
                 // discard rax, the error code and the return mode
-                \\ addq $24, %rsp
+                \\ addq $24, %%rsp
                 // check which return method to use
-                \\ movq -16(%rsp), %rax
-                \\ testq %rax, %rax
+                \\ movq -16(%%rsp), %%rax
+                \\ testq %%rax, %%rax
                 // now read rax again after its not needed anymore
-                \\ movq -24(%rsp), %rax
+                \\ movq -24(%%rsp), %%rax
                 // ZF is now: sysretq => 1, iretq => 0
                 // use the ZF set earlier to branch
                 \\ jne 1f
 
                 // sysretq return
                 // decode the isf frame into a sysretq frame
-                \\ popq %rcx
-                \\ addq $8, %rsp
-                \\ popq %r11
-                \\ popq %gs:{[rsp_user]d}
-                \\ movq %gs:{[rsp_user]d}, %rsp
+                \\ popq %%rcx
+                \\ addq $8, %%rsp
+                \\ popq %%r11
+                \\ popq %%gs:{[rsp_user]d}
+                \\ movq %%gs:{[rsp_user]d}, %%rsp
                 \\ swapgs
                 // and finally the actual sysretq
                 // FIXME: NMI,MCE interrupt race condition
@@ -1913,7 +1913,7 @@ pub const TrapRegs = extern struct {
                 // iretq return
                 \\ 1:
                 // optional swapgs if returning to user-space
-                \\ cmpq ${[user_code]d}, 8(%rsp)
+                \\ cmpq ${[user_code]d}, 8(%%rsp)
                 \\ jne 2f
                 \\ swapgs
                 \\ 2:
