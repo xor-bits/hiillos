@@ -37,7 +37,7 @@ pub const Thread = struct {
     // lock for modifying the thread
     lock: abi.lock.SpinMutex = .locked(),
     /// scheduler priority
-    priority: u2 = 0,
+    priority: u2 = 2,
     cpu_time: u64 = 0,
     /// is the thread stopped/running/ready/waiting
     status: abi.sys.ThreadStatus = .stopped,

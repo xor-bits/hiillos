@@ -28,6 +28,7 @@ pub fn main() !void {
     try abi.rt.init();
 
     log.info("hello from wm", .{});
+    try abi.caps.Thread.main.setPrio(0);
 
     const seat_result = try abi.lpc.call(
         abi.TtyProtocol.SeatRequest,
@@ -155,6 +156,12 @@ fn compositorThreadMain() noreturn {
 }
 
 fn inputThreadMain(input: caps.Sender) !void {
+    {
+        const self = try abi.caps.Thread.createSelf();
+        defer self.close();
+        try self.setPrio(0);
+    }
+
     while (true) {
         const ev_result = try abi.lpc.call(
             abi.Ps2Protocol.Next,
@@ -173,6 +180,12 @@ fn inputThreadMain(input: caps.Sender) !void {
 }
 
 fn connectionThreadMain(rx: caps.Receiver) !void {
+    {
+        const self = try abi.caps.Thread.createSelf();
+        defer self.close();
+        try self.setPrio(0);
+    }
+
     abi.lpc.daemon(ConnectionContext{
         .recv = rx,
     });
@@ -202,7 +215,13 @@ const ConnectionContext = struct {
     pub const Request = gui.WmProtocol.Request;
 };
 
-fn clientConnectionThreadMain(rx: caps.Receiver) void {
+fn clientConnectionThreadMain(rx: caps.Receiver) !void {
+    {
+        const self = try abi.caps.Thread.createSelf();
+        defer self.close();
+        try self.setPrio(1);
+    }
+
     var conn: Connection = .{};
     abi.lpc.daemon(DisplayContext{
         .recv = rx,

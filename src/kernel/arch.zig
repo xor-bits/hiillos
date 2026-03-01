@@ -50,6 +50,11 @@ pub const ints = switch (builtin.target.cpu.arch) {
     else => @compileError("unsupported target"),
 };
 
+pub const readTime = switch (builtin.target.cpu.arch) {
+    .x86_64 => x86_64.rdtsc,
+    else => @compileError("unsupported target"),
+};
+
 pub const CpuFeatures = switch (builtin.target.cpu.arch) {
     .x86_64 => x86_64.CpuFeatures,
     else => @compileError("unsupported target"),

@@ -49,7 +49,7 @@ pub fn wait(
 
     // sleep the thread
     if (conf.LOG_FUTEX)
-        std.log.debug("futex wait {*}", .{thread});
+        std.log.debug("futex wait {*} {*}", .{ thread, futex });
     const cleanup = futex_queue.queue.pushLockedThreadLocked(
         &futex_queue.lock,
         thread,
@@ -83,7 +83,13 @@ pub fn wake(
             &futex_queue.lock,
             @intFromPtr(futex),
             .running,
-        ) orelse break;
+        ) orelse {
+            if (conf.LOG_FUTEX)
+                std.log.debug("less threads waiting on a futex {*} than wake requests", .{
+                    futex,
+                });
+            break;
+        };
 
         if (conf.LOG_FUTEX)
             std.log.debug("futex wake {*}", .{thread_to_wake_up});

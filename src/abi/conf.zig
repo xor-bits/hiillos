@@ -24,6 +24,7 @@ pub const LOG_EXCEPTIONS: bool = LOG_GENERIC or false;
 pub const LOG_ENTRYPOINT_CODE: bool = LOG_GENERIC or false;
 pub const LOG_PAGE_FAULTS: bool = LOG_GENERIC or false;
 pub const LOG_FUTEX: bool = LOG_GENERIC or false;
+pub const LOG_SCHEDULER: bool = LOG_GENERIC or false;
 pub const LOG_SERVERS: bool = LOG_USER or false;
 pub const LOG_KEYS: bool = LOG_USER or false;
 

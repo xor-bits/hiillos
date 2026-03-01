@@ -366,6 +366,19 @@ pub fn rdtscp() RdTscpRes {
     };
 }
 
+pub fn rdtsc() u64 {
+    var hi: u32 = undefined;
+    var lo: u32 = undefined;
+
+    asm volatile (
+        \\ rdtsc
+        : [counter_hi] "={edx}" (hi),
+          [counter_lo] "={eax}" (lo),
+    );
+
+    return @as(u64, lo) | (@as(u64, hi) << 32);
+}
+
 pub fn rdpmc() u64 {
     var lo: u32 = undefined;
     var hi: u32 = undefined;

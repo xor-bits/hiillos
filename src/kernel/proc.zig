@@ -31,6 +31,8 @@ pub fn init() void {
 
 /// forgets the current thread and jumps into the main syscall loop
 pub fn enter() noreturn {
+    const local = arch.cpuLocal();
+    local.current_thread_cpu_time_start = arch.readTime();
     var trap: arch.TrapRegs = undefined;
     switchNow(&trap);
     trap.exitNow();
@@ -101,7 +103,13 @@ pub fn switchTo(trap: *arch.TrapRegs, thread: *caps.Thread) void {
 /// switches away from a thread, but not to another thread
 pub fn switchFrom(trap: *const arch.TrapRegs, thread: *caps.Thread) void {
     const local = arch.cpuLocal();
+    const now = arch.readTime();
     std.debug.assert(local.current_thread != null);
+    const elapsed_cpu_time = now -% local.current_thread_cpu_time_start;
+    local.current_thread_cpu_time_start = now;
+    local.current_thread.?.lock.lock();
+    local.current_thread.?.cpu_time +|= elapsed_cpu_time;
+    local.current_thread.?.lock.unlock();
     local.current_thread = null;
 
     thread.switchFrom(trap);
@@ -183,5 +191,19 @@ pub fn next() *caps.Thread {
 }
 
 pub fn tryNext() ?*caps.Thread {
-    return queue.popFirst(&queue_lock, .running);
+    // return queue.popFirst(&queue_lock, .running);
+    queue_lock.lock();
+    defer queue_lock.unlock();
+
+    if (conf.LOG_SCHEDULER and queue.inner.size >= 2) {
+        log.debug("{} process(es) starving", .{queue.inner.size - 1});
+        var it = queue.inner.iterator();
+        while (it.next()) |n| {
+            const t: *caps.Thread.Queue.Node = @fieldParentPtr("inner", n);
+            const thread: *caps.Thread = @alignCast(@fieldParentPtr("scheduler_queue_node", t));
+            log.debug(" - {}t {}p", .{ thread.cpu_time, thread.priority });
+        }
+    }
+
+    return queue.popFirstLocked(&queue_lock, .running);
 }
