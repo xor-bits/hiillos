@@ -160,7 +160,7 @@ fn writeEntries(
 
     var crc32: Crc32Writer = .{};
     for (partitions, 0..) |part, i| {
-        var name: [36]u16 = [_]u16{0} ** 36;
+        var name: [36]u16 = @splat(0);
         for (part.name[0..@min(part.name.len, 36)], 0..) |b, j| {
             name[j] = b;
         }
@@ -184,7 +184,7 @@ fn writeEntries(
             .part_guid = Guid.nil,
             .lba_first = 0,
             .lba_last = 0,
-            .name = [_]u16{0} ** 36,
+            .name = @splat(0),
         };
         try crc32.interface.writeStruct(entry, .little);
         try writer.writeStruct(entry, .little);
@@ -285,7 +285,7 @@ const Guid = extern struct {
     p1: u32 = 0,
     p2: u16 = 0,
     p3: u16 = 0,
-    p4: [8]u8 = [_]u8{0} ** 8,
+    p4: [8]u8 = @splat(0),
 
     // chosen by fair dice roll.
     // guaranteed to be random.

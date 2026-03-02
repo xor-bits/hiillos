@@ -69,7 +69,7 @@ pub const Manifest = extern struct {
     /// manifest symbol magic number
     magic: u128 = exp_magic,
     /// server identifier
-    name: [112]u8 = .{0} ** 112,
+    name: [112]u8 = @splat(0),
 
     pub const exp_magic = 0x5b9061e5c940d983eeb14ce5e02618b7;
 
@@ -94,7 +94,7 @@ pub const Resource = extern struct {
     note: u64,
     handle: u32 = 0,
     ty: abi.ObjectType = .null,
-    name: [99]u8 = .{0} ** 99,
+    name: [99]u8 = @splat(0),
 
     pub const exp_magic = 0xc47d27b79d2c8bb9469ee8883d14a25c;
 

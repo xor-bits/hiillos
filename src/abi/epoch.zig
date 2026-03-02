@@ -250,7 +250,7 @@ pub fn RefCntHandle(comptime T: type) type {
 //
 
 var global_epoch: CachePadded(std.atomic.Value(usize)) = .{ .val = .init(0) };
-// var hazard_lists: [3]HazardList = .{HazardList{}} ** 3;
+// var hazard_lists: [3]HazardList = @splat(.{});
 var all_locals: std.atomic.Value(?*Locals) = .init(null);
 
 const DeferFunc = struct {

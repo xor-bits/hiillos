@@ -160,7 +160,7 @@ pub const Path = union(enum(u8)) {
 
     pub fn new(s: []const u8) sys.Error!Path {
         if (s.len <= 32) {
-            var short: [32:0]u8 = [1:0]u8{0} ** 32;
+            var short: [32:0]u8 = @splat(0);
             std.mem.copyForwards(u8, &short, s);
             return .{ .short = short };
         } else {

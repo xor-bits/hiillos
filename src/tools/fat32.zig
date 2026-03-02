@@ -585,11 +585,11 @@ const ExtendedBootRecord = packed struct {
 
 const FsInfo = extern struct {
     signature_a: u32 = 0x4161_5252,
-    _0: [480]u8 = [_]u8{0} ** 480,
+    _0: [480]u8 = @splat(0),
     signature_b: u32 = 0x6141_7272,
     volume_cluster_count_hint: u32 = 0xffff_ffff,
     volume_cluster_start_hint: u32 = 0xffff_ffff,
-    _1: [3]u32 = [_]u32{0} ** 3,
+    _1: [3]u32 = @splat(0),
     signature_c: u32 = 0xaa55_0000,
 
     comptime {
@@ -598,8 +598,8 @@ const FsInfo = extern struct {
 };
 
 const DirEntry = extern struct {
-    short_name: [8]u8 = [_]u8{' '} ** 8,
-    short_ext: [3]u8 = [_]u8{' '} ** 3,
+    short_name: [8]u8 = @splat(' '),
+    short_ext: [3]u8 = @splat(' '),
     attibs: packed struct {
         read_only: bool = false,
         hidden: bool = false,
@@ -717,13 +717,13 @@ const LongFileNameEntry = extern struct {
         last_logical: bool,
         _1: bool = false,
     },
-    name0: [5]u16 align(1) = [_]u16{0} ** 5,
+    name0: [5]u16 align(1) = @splat(0),
     attribs: u8 = 0x0f,
     ty: u8 = 0,
     dos_name_checksum: u8,
-    name1: [6]u16 = [_]u16{0} ** 6,
+    name1: [6]u16 = @splat(0),
     first_cluster: u16 = 0,
-    name2: [2]u16 = [_]u16{0} ** 2,
+    name2: [2]u16 = @splat(0),
 
     fn setupName(
         self: *@This(),

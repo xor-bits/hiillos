@@ -76,12 +76,12 @@ pub const SlabAllocator = struct {
     page_allocator: std.mem.Allocator,
 
     // chunks broken into smaller pieces
-    locks: [9]abi.lock.SpinMutex = .{abi.lock.SpinMutex{}} ** 9,
-    slabs: [9]FreeList = .{FreeList{}} ** 9,
+    locks: [9]abi.lock.SpinMutex = @splat(.{}),
+    slabs: [9]FreeList = @splat(.{}),
 
     // // bigger chunks
-    // chunk_locks: [18]abi.thread.Mutex = .{abi.thread.Mutex{}} ** 18,
-    // chunks: [18]FreeList = .{FreeList{}} ** 18,
+    // chunk_locks: [18]abi.thread.Mutex = @splat(.{}),
+    // chunks: [18]FreeList = @splat(.{}),
 
     const Self = @This();
 

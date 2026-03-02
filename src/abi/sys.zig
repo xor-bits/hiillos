@@ -1221,7 +1221,7 @@ pub fn selfDump() void {
 
 pub const ExtraReg = struct { val: u64 = 0, is_cap: bool = false };
 
-var mock_extra_regs: [128]ExtraReg = [1]ExtraReg{.{}} ** 128;
+var mock_extra_regs: [128]ExtraReg = @splat(.{});
 
 pub fn selfSetExtra(idx: u7, val: u64, is_cap: bool) Error!void {
     if (builtin.is_test) {

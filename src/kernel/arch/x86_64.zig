@@ -1637,10 +1637,10 @@ pub const FxRegs = extern struct {
         .underflow_mask = true,
         .precision_mask = true,
     },
-    mmx_regs: [8]u128 = [_]u128{0} ** 8,
-    xmm_regs: [16]u128 = [_]u128{0} ** 16,
-    _reserved1: [3]u128 = [_]u128{0} ** 3,
-    available: [3]u128 = [_]u128{0} ** 3,
+    mmx_regs: [8]u128 = @splat(0),
+    xmm_regs: [16]u128 = @splat(0),
+    _reserved1: [3]u128 = @splat(0),
+    available: [3]u128 = @splat(0),
 
     pub fn restore(self: *@This()) void {
         asm volatile (

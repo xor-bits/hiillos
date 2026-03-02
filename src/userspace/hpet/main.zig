@@ -44,10 +44,10 @@ pub export var import_hpet_irq_allocator = abi.loader.Resource.new(.{
 //
 
 var hpet_regs: ?*volatile HpetRegs = null;
-var irqs: [24]bool = .{false} ** 24;
+var irqs: [24]bool = @splat(false);
 
 var timer_count: u8 = 0;
-var timers: [32]Timer = .{Timer{}} ** 32;
+var timers: [32]Timer = @splat(.{});
 
 //
 

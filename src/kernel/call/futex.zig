@@ -143,7 +143,7 @@ fn addressHash(paddr: *anyopaque) u8 {
     return @truncate(std.hash.Wyhash.hash(0, std.mem.asBytes(&input)));
 }
 
-var futex_queues: [256]FutexQueue = [1]FutexQueue{.{}} ** 256;
+var futex_queues: [256]FutexQueue = @splat(.{});
 
 const FutexQueue = struct {
     lock: abi.lock.SpinMutex = .{},

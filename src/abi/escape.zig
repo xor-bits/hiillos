@@ -155,7 +155,7 @@ const NumArrayBuilder = struct {
     n: usize = 0,
     n_len: u8 = 0,
 
-    numbers: [8]?usize = [1]?usize{null} ** 8,
+    numbers: [8]?usize = @splat(null),
     numbers_len: u8 = 0,
 
     fn pushDigit(self: *@This(), d: u8) void {

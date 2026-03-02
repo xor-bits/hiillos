@@ -117,7 +117,7 @@ test {
 
 test {
     const a: []const u8 = "hello";
-    var b: [8]u8 = [_]u8{0} ** 8;
+    var b: [8]u8 = @splat(0);
 
     var src = SliceConst.fromSlice(a);
     defer src.deinit();

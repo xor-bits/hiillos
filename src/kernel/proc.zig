@@ -18,7 +18,7 @@ const Error = abi.sys.Error;
 var active_threads: std.atomic.Value(usize) = .init(1);
 var queue: caps.Thread.Queue = .{};
 var queue_lock: abi.lock.SpinMutex = .{};
-var waiters: [256]Waiter = .{Waiter.init(null)} ** 256;
+var waiters: [256]Waiter = @splat(Waiter.init(null));
 
 const Waiter = std.atomic.Value(?*main.CpuLocalStorage);
 

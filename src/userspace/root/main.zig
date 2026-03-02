@@ -214,43 +214,43 @@ pub fn main() !void {
 
     const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(initfsd.boot_info_addr.load(.acquire))).*;
 
-    const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ .{0} ** 80).*);
+    const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ "\x00" ** 80).*);
     initfsd_entry.value_ptr.* = .{
         .handle = (try initfsd.getSender()).cap,
         .type = .sender,
         .given = 1,
     };
-    const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ .{0} ** 82).*);
+    const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ "\x00" ** 82).*);
     hpet_entry.value_ptr.* = .{
         .handle = boot_info.hpet.cap,
         .type = .frame,
         .given = 1,
     };
-    // const hpet_info_entry = try resources.getOrPut(("hiillos.root.hpet_info" ++ .{0} ** 77).*);
+    // const hpet_info_entry = try resources.getOrPut(("hiillos.root.hpet_info" ++ "\x00" ** 77).*);
     // hpet_info_entry.value_ptr.* = .{
     //     .handle = boot_info.hpet_info.cap,
     //     .type = .frame,
     //     .given = 1,
     // };
-    const fb_entry = try resources.getOrPut(("hiillos.root.fb" ++ .{0} ** 84).*);
+    const fb_entry = try resources.getOrPut(("hiillos.root.fb" ++ "\x00" ** 84).*);
     fb_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer.cap,
         .type = .frame,
         .given = 1,
     };
-    const fb_info_entry = try resources.getOrPut(("hiillos.root.fb_info" ++ .{0} ** 79).*);
+    const fb_info_entry = try resources.getOrPut(("hiillos.root.fb_info" ++ "\x00" ** 79).*);
     fb_info_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer_info.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_entry = try resources.getOrPut(("hiillos.root.mcfg" ++ .{0} ** 82).*);
+    const mcfg_entry = try resources.getOrPut(("hiillos.root.mcfg" ++ "\x00" ** 82).*);
     mcfg_entry.value_ptr.* = .{
         .handle = boot_info.mcfg.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_info_entry = try resources.getOrPut(("hiillos.root.mcfg_info" ++ .{0} ** 77).*);
+    const mcfg_info_entry = try resources.getOrPut(("hiillos.root.mcfg_info" ++ "\x00" ** 77).*);
     mcfg_info_entry.value_ptr.* = .{
         .handle = boot_info.mcfg_info.cap,
         .type = .frame,
