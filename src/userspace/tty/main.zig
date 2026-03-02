@@ -107,7 +107,7 @@ pub fn main() !void {
     try abi.thread.spawn(kbReader, .{stdin});
 
     _ = try abi.lpc.call(abi.PmProtocol.ExecElfRequest, .{
-        .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00install\x00--sh"),
+        .arg_map = try caps.Frame.init("initfs:///sbin/coreutils\x00--coreutils-prog=sh\x00initfs:///sbin/init.sh"),
         .env_map = try caps.Frame.init("PATH=initfs:///sbin/"),
         .stdio = .{
             .stdin = .{ .ring = try stdin.share() },
