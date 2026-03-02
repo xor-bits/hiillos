@@ -170,7 +170,7 @@ pub fn init() !@This() {
     return self;
 }
 
-pub fn deinit(_: *HalVmem) void {
+pub fn deinit(_: *const HalVmem) void {
     caps.decCount(.hal_vmem);
 }
 

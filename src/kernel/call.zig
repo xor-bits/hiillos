@@ -411,9 +411,7 @@ fn handle_syscall(
             vmem.lock.lock();
             defer vmem.lock.unlock();
 
-            const hal_vmem = &(vmem.hal_vmem orelse return);
-
-            log.info("vmem: {*} cr3=0x{x}", .{ vmem, hal_vmem.pml4.raw });
+            log.info("vmem: {*} cr3=0x{x}", .{ vmem, vmem.hal_vmem.pml4.raw });
             for (vmem.mappings.items) |mapping| {
                 log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
                     mapping.getVaddr().raw,
@@ -422,7 +420,7 @@ fn handle_syscall(
                 });
             }
             log.info("halvmem", .{});
-            try hal_vmem.printMappings();
+            try vmem.hal_vmem.printMappings();
         },
 
         .proc_create => {

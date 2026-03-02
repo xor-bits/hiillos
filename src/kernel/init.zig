@@ -22,7 +22,6 @@ const Rights = abi.sys.Rights;
 pub fn exec(a: args.Args) !void {
     log.info("creating root vmem", .{});
     const init_vmem = try caps.Vmem.init();
-    try init_vmem.start();
     init_vmem.switchTo();
 
     log.info("creating root proc", .{});

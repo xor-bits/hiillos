@@ -182,6 +182,9 @@ pub fn main() !void {
     try abi.rt.initServer();
     log.info("I am root", .{});
 
+    const thread = try caps.Thread.create(caps.Process.self);
+    thread.close();
+
     try initfsd.init();
 
     // const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(BOOT_INFO)).*;

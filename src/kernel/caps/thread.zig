@@ -21,7 +21,7 @@ pub const Thread = struct {
     proc: *caps.Process,
 
     // debug lock for executing the thread
-    exec_lock: abi.lock.DebugLock = .locked(),
+    exec_lock: abi.lock.DebugLock = .{},
     /// all context data, except fx
     trap: arch.TrapRegs = .{},
     /// fx context data, switched lazily
@@ -35,7 +35,7 @@ pub const Thread = struct {
     message: abi.sys.Message = .{},
 
     // lock for modifying the thread
-    lock: abi.lock.SpinMutex = .locked(),
+    lock: abi.lock.SpinMutex = .{},
     /// scheduler priority
     priority: u2 = 2,
     cpu_time: u64 = 0,
@@ -94,16 +94,18 @@ pub const Thread = struct {
 
         caps.incCount(.thread, .{ .process = from_proc });
 
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{ .proc = from_proc };
+        const thread: *@This() = try caps.slab_allocator.allocator().create(@This());
+        thread.* = .{ .proc = from_proc };
 
-        try obj.extra_regs.resize(caps.slab_allocator.allocator(), 128);
-        for (0..128) |i| obj.extra_regs.set(i, .{ .val = 0 });
+        errdefer caps.slab_allocator.allocator().destroy(thread);
+        try thread.extra_regs.resize(caps.slab_allocator.allocator(), 128);
+        for (0..128) |i| thread.extra_regs.set(i, .{ .val = 0 });
 
-        obj.lock.unlock();
-        obj.exec_lock.unlock();
+        from_proc.lock.lock();
+        thread.proc.active_threads.pushBack(thread);
+        from_proc.lock.unlock();
 
-        return obj;
+        return thread;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -154,7 +156,7 @@ pub const Thread = struct {
     }
 
     pub fn start(self: *@This()) !void {
-        try self.proc.start(self);
+        try self.proc.start();
 
         if (conf.LOG_ENTRYPOINT_CODE) {
             // dump the entrypoint code

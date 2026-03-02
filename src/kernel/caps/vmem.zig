@@ -20,7 +20,7 @@ pub const Vmem = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     lock: abi.lock.SpinMutex = .{},
-    hal_vmem: ?caps.HalVmem = null,
+    hal_vmem: caps.HalVmem,
     mappings: std.ArrayList(*caps.Mapping) = .{},
     // bitset of all cpus that have used this vmem
     // cpus: u256 = 0,
@@ -30,10 +30,11 @@ pub const Vmem = struct {
     pub fn init() Error!*@This() {
         caps.incCount(.vmem, .{});
 
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{ .lock = .locked() };
-        obj.lock.unlock();
+        const hal_vmem: caps.HalVmem = try .init();
+        errdefer hal_vmem.deinit();
 
+        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
+        obj.* = .{ .hal_vmem = hal_vmem };
         return obj;
     }
 
@@ -41,17 +42,14 @@ pub const Vmem = struct {
         if (!self.refcnt.dec()) return;
         caps.decCount(.vmem);
 
-        for (self.mappings.items) |mapping| {
-            mapping.deinit();
-        }
+        std.debug.assert(self.lock.tryLock());
+        const alloc = caps.slab_allocator.allocator();
 
-        const gpa = caps.slab_allocator.allocator();
-        self.mappings.deinit(gpa);
-        gpa.destroy(self);
+        for (self.mappings.items) |mapping| mapping.deinit();
+        self.mappings.deinit(alloc);
+        self.hal_vmem.deinit();
 
-        if (self.hal_vmem) |*hal_vmem| {
-            hal_vmem.deinit();
-        }
+        alloc.destroy(self);
     }
 
     pub fn clone(self: *@This()) *@This() {
@@ -138,17 +136,7 @@ pub const Vmem = struct {
         current_vmem_ptr.* = self.clone();
         defer if (previous_vmem) |prev| prev.deinit();
 
-        self.hal_vmem.?.switchTo();
-    }
-
-    pub fn start(self: *@This()) Error!void {
-        if (self.hal_vmem != null) {
-            return;
-        } else {
-            @branchHint(.cold);
-        }
-
-        self.hal_vmem = try caps.HalVmem.init();
+        self.hal_vmem.switchTo();
     }
 
     pub fn map(
@@ -461,15 +449,13 @@ pub const Vmem = struct {
             }
         }
 
-        const hal_vmem = &(self.hal_vmem orelse return);
-
         // FIXME: save CPU LAPIC IDs for targetted TLB shootdown IPIs
         const ipi_bitmap: u256 = ~@as(u256, 0);
 
         for (0..pages) |page_idx| {
             // already checked to be in bounds
             const page_vaddr = addr.Virt.fromInt(vaddr.raw + page_idx * 0x1000);
-            hal_vmem.unmapFrame(page_vaddr) catch |err| {
+            self.hal_vmem.unmapFrame(page_vaddr) catch |err| {
                 log.warn("unmap err: {}, should be ok", .{err});
             };
         }
@@ -525,8 +511,6 @@ pub const Vmem = struct {
         if (self != dont_lock_if) self.lock.lock();
         defer if (self != dont_lock_if) self.lock.unlock();
 
-        const hal_vmem = &(self.hal_vmem orelse return);
-
         for (self.mappings.items) |mapping| {
             if (mapping.frame != frame) continue;
 
@@ -542,7 +526,7 @@ pub const Vmem = struct {
 
             try refreshPageAndTlbShootdown(
                 frame,
-                hal_vmem,
+                &self.hal_vmem,
                 vaddr,
                 ipi_bitmap,
             );
@@ -647,8 +631,7 @@ pub const Vmem = struct {
         const page_offs: u32 = @intCast((vaddr.raw - mapping.getVaddr().raw) / 0x1000);
         std.debug.assert(page_offs < mapping.pages);
 
-        const hal_vmem = &(self.hal_vmem.?);
-        const entry = (try hal_vmem.entryFrame(vaddr)).*;
+        const entry = (try self.hal_vmem.entryFrame(vaddr)).*;
 
         // accessing a page with a write also immediately makes it readable/executable
         // log.debug("caused_by={} entry={}", .{ caused_by, entry });
@@ -687,7 +670,7 @@ pub const Vmem = struct {
         if (conf.LOG_PAGE_FAULTS and wanted_page_index == entry.page_index)
             log.debug("remapping with more rights: {}", .{flags});
 
-        try hal_vmem.mapFrame(
+        try self.hal_vmem.mapFrame(
             addr.Phys.fromParts(.{ .page = wanted_page_index }),
             vaddr,
             flags,

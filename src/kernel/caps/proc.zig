@@ -47,7 +47,10 @@ pub const Process = struct {
         if (!self.refcnt.dec()) return;
         caps.decCount(.process);
 
-        self.closeAllCaps();
+        std.debug.assert(self.lock.tryLock());
+        std.debug.assert(self.active_threads.isEmpty());
+
+        self.closeAllCapsLocked();
 
         self.caps.deinit(caps.slab_allocator.allocator());
         self.vmem.deinit();
@@ -60,27 +63,22 @@ pub const Process = struct {
         return self;
     }
 
-    fn closeAllCaps(
+    fn closeAllCapsLocked(
         self: *@This(),
     ) void {
+        std.debug.assert(self.lock.isLocked());
         for (self.caps.items) |*cap_slot| {
             cap_slot.deinit();
         }
         self.caps.clearRetainingCapacity();
     }
 
-    pub fn start(
-        self: *@This(),
-        with: *caps.Thread,
-    ) !void {
-        try self.vmem.start();
-
+    pub fn start(self: *@This()) !void {
         self.lock.lock();
         defer self.lock.unlock();
         if (self.status == .dead)
             return Error.ProcessDead;
         self.status = .running;
-        self.active_threads.pushBack(with);
     }
 
     /// if `thread` is null, then the whole process exits
@@ -101,7 +99,7 @@ pub const Process = struct {
 
         self.status = .dead;
         self.exit_code = exit_code;
-        self.closeAllCaps();
+        self.closeAllCapsLocked();
 
         var it = self.active_threads.iterator();
         while (it.next()) |active_thread| {
