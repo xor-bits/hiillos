@@ -729,25 +729,18 @@ const LongFileNameEntry = extern struct {
         self: *@This(),
         part: []const u8,
     ) void {
+        std.debug.assert(part.len <= 13);
+        var buf: [13]u16 = @splat(0xffff);
         for (part, 0..) |ch, i| {
-            if (i < 5) {
-                self.name0[i] = ch;
-            } else if (i < 11) {
-                self.name1[i - 5] = ch;
-            } else {
-                self.name2[i - 11] = ch;
-            }
+            buf[i] = ch;
         }
-        for (part.len..13) |i| {
-            const ch: u16 = if (i == part.len) 0 else 0xffff;
-            if (i < 5) {
-                self.name0[i] = ch;
-            } else if (i < 11) {
-                self.name1[i - 5] = ch;
-            } else {
-                self.name2[i - 11] = ch;
-            }
+        if (part.len != 13) {
+            buf[part.len] = 0;
         }
+
+        self.name0 = buf[0..5].*;
+        self.name1 = buf[5..11].*;
+        self.name2 = buf[11..13].*;
     }
 
     fn dosNameChecksum(name: [8]u8, ext: [3]u8) u8 {
