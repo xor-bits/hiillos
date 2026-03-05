@@ -41,7 +41,7 @@ var next: std.atomic.Value(usize) = .init(0);
 
 //
 
-pub fn earlyInit() void {
+pub fn earlyInit() callconv(.c) void {
     // interrupts are always disabled in the kernel
     // there is just one exception to this:
     // waiting while the CPU is out of tasks
