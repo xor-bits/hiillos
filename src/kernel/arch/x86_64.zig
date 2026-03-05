@@ -102,7 +102,6 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
         cr4.write();
 
         tls.pcid_lru = try caps.PcidLru.init(pmem.page_allocator);
-        tls.pcid_lru.?.lock.unlock();
     }
 
     if (conf.IPC_BENCHMARK and conf.IPC_BENCHMARK_PERFMON) {

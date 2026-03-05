@@ -15,7 +15,7 @@ const Error = abi.sys.Error;
 //
 
 pub const Channel = struct {
-    lock: abi.lock.SpinMutex = .locked(),
+    lock: abi.lock.SpinMutex = .{},
 
     /// there can be only zero or one receivers (of course multiple handles to it are allowed)
     recv_count: u1 = 1,
@@ -38,7 +38,6 @@ pub const Channel = struct {
         const obj: *@This() = try allocator.create(@This());
         errdefer allocator.destroy(obj);
         obj.* = .{};
-        obj.lock.unlock();
 
         const receiver = try allocator.create(Receiver);
         errdefer allocator.destroy(receiver);
@@ -508,7 +507,7 @@ pub const Notify = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    queue_lock: abi.lock.SpinMutex = .locked(),
+    queue_lock: abi.lock.SpinMutex = .{},
     queue: caps.Thread.Queue = .{},
     notified: bool = false,
 
@@ -519,8 +518,6 @@ pub const Notify = struct {
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
-        obj.queue_lock.unlock();
-
         return obj;
     }
 

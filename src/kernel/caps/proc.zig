@@ -18,8 +18,8 @@ pub const Process = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     vmem: *caps.Vmem,
-    lock: abi.lock.SpinMutex = .locked(),
-    caps: std.ArrayListUnmanaged(caps.CapabilitySlot),
+    lock: abi.lock.SpinMutex = .{},
+    caps: std.ArrayListUnmanaged(caps.CapabilitySlot) = .{},
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,
@@ -34,12 +34,7 @@ pub const Process = struct {
         caps.incCount(.process, .{ .vmem = from_vmem });
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{
-            .vmem = from_vmem,
-            .caps = .{},
-        };
-        obj.lock.unlock();
-
+        obj.* = .{ .vmem = from_vmem };
         return obj;
     }
 

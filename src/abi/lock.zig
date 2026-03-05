@@ -269,7 +269,7 @@ pub const SpinMutex = extern struct {
     const Self = @This();
 
     pub fn locked() Self {
-        return .{ .lock_state = std.atomic.Value(u8).init(1) };
+        return .{ .lock_state = .init(1) };
     }
 
     pub fn tryLock(self: *Self) bool {

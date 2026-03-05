@@ -52,7 +52,6 @@ pub const PcidLru = struct {
 
     pub fn init(alloc: std.mem.Allocator) !@This() {
         return .{
-            .lock = .locked(),
             .lru = try .init(alloc),
             .cur_or_prev_cr3 = try alloc.create([0x1000]u32),
         };
