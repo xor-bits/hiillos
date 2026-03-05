@@ -30,11 +30,6 @@ pub const cpuLocal = switch (builtin.target.cpu.arch) {
     else => @compileError("unsupported target"),
 };
 
-pub const cpuIdSafe = switch (builtin.target.cpu.arch) {
-    .x86_64 => x86_64.cpuIdSafe,
-    else => @compileError("unsupported target"),
-};
-
 pub const cpuCount = switch (builtin.target.cpu.arch) {
     .x86_64 => x86_64.cpuCount,
     else => @compileError("unsupported target"),

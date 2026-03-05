@@ -352,8 +352,10 @@ pub const Frame = struct {
                 }
                 // log.debug("tlb_shootdown_refcnt={}", .{self.tlb_shootdown_refcnt.load()});
 
-                for (main.all_cpu_locals, 0..) |*locals, i| {
-                    if (locals == arch.cpuLocal()) continue; // no need to send a self IPI
+                const id_self = arch.cpuId();
+                for (main.all_cpu_locals, 0..) |*_locals, i| {
+                    if (i == id_self) continue; // no need to send a self IPI
+                    const locals = _locals.load(.acquire) orelse continue;
 
                     if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
                         // log.debug("issuing a TLB shootdown from transient page", .{});

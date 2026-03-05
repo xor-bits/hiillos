@@ -37,7 +37,9 @@ pub const MSR_K7_PERFCTR0: u32 = 0xC0010004;
 
 //
 
-pub fn earlyInit() callconv(.c) void {
+pub fn earlyInit(
+    tls: *align(0x1000) main.CpuLocalStorage,
+) callconv(.c) void {
     // interrupts are always disabled in the kernel
     // there is just one exception to this:
     // waiting while the CPU is out of tasks
@@ -48,10 +50,10 @@ pub fn earlyInit() callconv(.c) void {
     // logging uses the GS register to print the cpu id
     // and the GS register contents might be undefined on boot
     // so quickly reset it to 0 temporarily
-    wrmsr(GS_BASE, 0);
+    wrmsr(GS_BASE, @intFromPtr(tls));
 }
 
-pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
+pub fn initCpu(mp_info: ?*boot.LimineMpInfo) !void {
     const lapic_id = if (mp_info) |i|
         i.lapic_id
     else if (boot.mp.response) |resp|
@@ -59,22 +61,10 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
     else
         0;
 
-    const tls = &main.all_cpu_locals[id];
-    tls.* = .{
-        .self_ptr = tls,
-        .cpu_config = undefined,
-        .id = id,
-        .lapic_id = @truncate(lapic_id),
-        .pcid_lru = null,
-        .initialized = .init(false),
-    };
+    const tls = cpuLocal();
+    tls.lapic_id = lapic_id;
     std.debug.assert(std.mem.isAligned(@intFromPtr(tls), 0x1000));
-
-    try CpuConfig.init(&tls.cpu_config, id);
-
-    wrmsr(GS_BASE, @intFromPtr(tls));
-    wrmsr(KERNELGS_BASE, 0);
-    tls.initialized.store(true, .release);
+    try CpuConfig.init(&tls.cpu_config);
 
     // the PAT MSR value is set so that the old modes stay the same
     // log.info("default PAT = 0x{x}", .{rdmsr(IA32_PAT_MSR)});
@@ -118,32 +108,19 @@ pub fn smpInit() void {
 
         if (idx >= cpus.len) return;
         if (cpus[idx].lapic_id != resp.bsp_lapic_id)
-            cpus[idx].goto_address.store(_smpstart, .release);
+            cpus[idx].goto_address.store(main._smpstart, .release);
 
         idx += 1;
         if (idx >= resp.cpus().len) return;
         if (cpus[idx].lapic_id != resp.bsp_lapic_id)
-            cpus[idx].goto_address.store(_smpstart, .release);
+            cpus[idx].goto_address.store(main._smpstart, .release);
     }
 }
 
-fn _smpstart(smpinfo: *boot.LimineMpInfo) callconv(.c) noreturn {
-    earlyInit();
-    main.smpmain(smpinfo);
-}
-
 pub fn cpuLocal() *main.CpuLocalStorage {
-    return asm volatile (std.fmt.comptimePrint(
-            \\ movq %%gs:{d}, %[cls]
-        , .{@offsetOf(main.CpuLocalStorage, "self_ptr")})
-        : [cls] "={rax}" (-> *main.CpuLocalStorage),
-    );
-}
-
-pub fn cpuIdSafe() ?u32 {
-    const gs = rdmsr(GS_BASE);
-    if (gs == 0) return null;
-    return cpuLocal().id;
+    // TODO: returning the gs address space 0 pointer might be better
+    const p: *allowzero addrspace(.gs) main.CpuLocalStorage = @ptrFromInt(0);
+    return p.self_ptr;
 }
 
 pub fn cpuCount() u32 {
@@ -1380,14 +1357,17 @@ pub const CpuConfig = struct {
     tss: Tss,
     idt: Idt,
 
-    pub fn init(self: *@This(), id: u32) !void {
+    pub fn init(self: *@This()) !void {
         self.tss = try Tss.new();
         self.gdt = Gdt.new(&self.tss);
         self.idt = Idt.new();
 
         // initialize GDT (, TSS) and IDT
         // log.debug("loading new GDT", .{});
+        const tls = cpuLocal();
         self.gdt.load();
+        // HACK: writing GS selector overwrites GS_BASE
+        wrmsr(GS_BASE, @intFromPtr(tls));
         // log.debug("loading new IDT", .{});
         self.idt.load(null);
         // ints.enable();
@@ -1431,7 +1411,7 @@ pub const CpuConfig = struct {
 
         const efer_flags: u64 = @bitCast(EferFlags{ .system_call_extensions = 1 });
         wrmsr(EFER, rdmsr(EFER) | efer_flags);
-        log.info("syscalls initialized for CPU-{}", .{id});
+        log.info("syscalls initialized", .{});
     }
 };
 

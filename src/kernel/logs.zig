@@ -116,25 +116,16 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     defer log_lock.unlock();
 
     const force_fb = conf.KERNEL_PANIC_RSOD and scope == .panic;
-
-    if (arch.cpuIdSafe()) |id| {
-        printLocked(
-            force_fb,
-            "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #{} ]: \x1B[0m",
-            .{id},
-        );
-        printLocked(
-            force_fb,
-            format ++ "\n",
-            args,
-        );
-    } else {
-        printLocked(
-            force_fb,
-            "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #? ]: \x1B[0m" ++ format ++ "\n",
-            args,
-        );
-    }
+    printLocked(
+        force_fb,
+        "\x1B[90m[ " ++ level_col ++ level_txt ++ "\x1B[90m" ++ scope_txt ++ " #{} ]: \x1B[0m",
+        .{arch.cpuId()},
+    );
+    printLocked(
+        force_fb,
+        format ++ "\n",
+        args,
+    );
 }
 
 var log_lock: abi.lock.SpinMutex = .{};

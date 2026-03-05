@@ -26,16 +26,14 @@ const volat = abi.util.volat;
 
 //
 
-pub var all_cpu_locals: []CpuLocalStorage = &.{};
+pub var all_cpu_locals: []std.atomic.Value(?*CpuLocalStorage) = &.{};
 pub var hhdm_offset: usize = 0xFFFF_8000_0000_0000;
 
 pub const CpuLocalStorage = struct {
-    _: void align(0x1000) = {},
-
     // used to read the pointer to this struct through GS
-    self_ptr: *CpuLocalStorage,
+    self_ptr: *CpuLocalStorage = undefined,
 
-    cpu_config: arch.CpuConfig,
+    cpu_config: arch.CpuConfig = undefined,
 
     /// used to keep the active address space from
     /// being deallocated while not having a thread
@@ -46,17 +44,15 @@ pub const CpuLocalStorage = struct {
     /// just a cache for the current thread's priority (that might be stale)
     current_priority: u2 = 0,
     /// cpu id, highest cpu id is always `cpu_count - 1`
-    id: u32,
+    id: u32 = undefined,
     /// cached local apic id of the cpu
-    lapic_id: u32,
+    lapic_id: u32 = undefined,
     lapic: apic.Locals = .{},
 
-    pcid_lru: ?caps.PcidLru,
+    pcid_lru: ?caps.PcidLru = null,
 
     // FIXME: unified cpu job queue with Zig async
     tlb_shootdown_queue: StaticQueue(*caps.TlbShootdown) = .{},
-
-    initialized: std.atomic.Value(bool),
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
 };
@@ -114,8 +110,21 @@ fn StaticQueue(comptime T: type) type {
 //
 
 export fn _start() callconv(.c) noreturn {
-    arch.earlyInit();
+    var locals: CpuLocalStorage align(0x1000) = .{};
+    locals.self_ptr = &locals;
+    locals.id = arch.nextCpuId();
+
+    arch.earlyInit(&locals);
     main();
+}
+
+pub fn _smpstart(smpinfo: *boot.LimineMpInfo) callconv(.c) noreturn {
+    var locals: CpuLocalStorage align(0x1000) = .{};
+    locals.self_ptr = &locals;
+    locals.id = arch.nextCpuId();
+
+    arch.earlyInit(&locals);
+    smpmain(smpinfo);
 }
 
 pub fn main() noreturn {
@@ -145,10 +154,16 @@ pub fn main() noreturn {
         std.debug.panic("failed to initialize PMM: {}", .{err});
     };
 
-    volat(&all_cpu_locals).* = pmem.page_allocator.alloc(CpuLocalStorage, arch.cpuCount()) catch |err| {
+    all_cpu_locals = pmem.page_allocator.alloc(
+        std.atomic.Value(?*CpuLocalStorage),
+        arch.cpuCount(),
+    ) catch |err| {
         std.debug.panic("failed to CPU locals: {}", .{err});
     };
-    for (all_cpu_locals) |*locals| locals.initialized.store(false, .release);
+    for (all_cpu_locals) |*locals| {
+        locals.store(null, .release);
+    }
+    all_cpu_locals[arch.cpuId()].store(arch.cpuLocal(), .release);
 
     // boot up a few processors
     if (!conf.SKIP_SMP) {
@@ -156,10 +171,9 @@ pub fn main() noreturn {
     }
 
     // set up arch specific things: GDT, TSS, IDT, syscalls, ...
-    const id = arch.nextCpuId();
-    log.info("initializing CPU-{}", .{id});
-    arch.initCpu(id, null) catch |err| {
-        std.debug.panic("failed to initialize CPU-{}: {}", .{ id, err });
+    log.info("initializing CPU", .{});
+    arch.initCpu(null) catch |err| {
+        std.debug.panic("failed to initialize CPU: {}", .{err});
     };
 
     log.info("parsing kernel cmdline", .{});
@@ -167,10 +181,10 @@ pub fn main() noreturn {
         std.debug.panic("failed to parse kernel cmdline: {}", .{err});
     };
 
-    // initialize ACPI specific things: APIC, HPET, ...
-    log.info("initializing ACPI for CPU-{}", .{id});
+    // initialize ACPI specific things: APIC, HPET, LAPIC, I/O APICs ...
+    log.info("initializing LAPIC-{}", .{arch.cpuLocal().lapic_id});
     acpi.init() catch |err| {
-        std.debug.panic("failed to initialize ACPI CPU-{}: {any}", .{ id, err });
+        std.debug.panic("failed to initialize LAPIC: {any}", .{err});
     };
 
     // set things (like the global kernel address space) up for the capability system
@@ -201,20 +215,21 @@ pub fn main() noreturn {
 pub fn smpmain(smpinfo: *boot.LimineMpInfo) noreturn {
     const log = std.log.scoped(.main);
 
+    all_cpu_locals[arch.cpuId()].store(arch.cpuLocal(), .release);
+
     // boot up a few processors
     arch.smpInit();
 
     // set up arch specific things: GDT, TSS, IDT, syscalls, ...
-    const id = arch.nextCpuId();
-    log.info("initializing CPU-{}", .{id});
-    arch.initCpu(id, smpinfo) catch |err| {
-        std.debug.panic("failed to initialize CPU-{}: {}", .{ id, err });
+    log.info("initializing CPU", .{});
+    arch.initCpu(smpinfo) catch |err| {
+        std.debug.panic("failed to initialize CPU: {}", .{err});
     };
 
-    // initialize ACPI specific things: APIC, HPET, ...
-    log.info("initializing ACPI for CPU-{}", .{id});
+    // initialize ACPI specific things: APIC, HPET, LAPIC, I/O APICs ...
+    log.info("initializing LAPIC-{}", .{arch.cpuLocal().lapic_id});
     acpi.init() catch |err| {
-        std.debug.panic("failed to initialize ACPI CPU-{}: {any}", .{ id, err });
+        std.debug.panic("failed to initialize LAPIC: {any}", .{err});
     };
 
     log.info("entering user-space", .{});

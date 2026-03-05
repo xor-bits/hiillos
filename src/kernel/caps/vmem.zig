@@ -470,9 +470,11 @@ pub const Vmem = struct {
         proc.switchFrom(trap, thread);
 
         // tests cannot yield or do IPIs or other stuff rn
-        if (!is_test) for (main.all_cpu_locals, 0..) |*locals, i| {
+        const id_self = arch.cpuId();
+        if (!is_test) for (main.all_cpu_locals, 0..) |*_locals, i| {
             // no need to send an IPI to self
-            if (locals == arch.cpuLocal()) continue;
+            if (i == id_self) continue;
+            const locals = _locals.load(.acquire) orelse continue;
 
             // no need to send an IPI to a CPU that has not used this Vmem
             if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) == 0) continue;
@@ -559,10 +561,11 @@ pub const Vmem = struct {
         );
         defer _ = shootdown.deinit();
 
-        for (main.all_cpu_locals, 0..) |*locals, i| {
-            if (!locals.initialized.load(.acquire)) continue;
+        const id_self = arch.cpuId();
+        for (main.all_cpu_locals, 0..) |*_locals, i| {
+            const locals = _locals.load(.acquire) orelse continue;
 
-            if (locals == arch.cpuLocal()) {
+            if (i == id_self) {
                 // no need to send a self IPI
                 arch.x86_64.flushTlbAddr(vaddr.raw);
             } else {
