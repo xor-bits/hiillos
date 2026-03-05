@@ -206,8 +206,8 @@ pub const Controller = struct {
         try self.writeCmd(0x60);
         try self.writeData(@bitCast(config));
 
-        self.ackKeyboard() catch {};
-        self.ackMouse() catch {};
+        self.ackKeyboard();
+        self.ackMouse();
 
         // log.debug("checking mouse support", .{});
         // try self.writeCmd(0xa8); // check mouse support
@@ -334,7 +334,7 @@ pub const Controller = struct {
             log.warn("keyboard byte dropped", .{});
             return error.KeyboardByteDropped;
         };
-        try self.ackKeyboard();
+        self.ackKeyboard();
         return byte;
 
         // if (try self.read()) |byte| return byte;
@@ -357,7 +357,7 @@ pub const Controller = struct {
             log.warn("mouse byte dropped", .{});
             return error.MouseByteDropped;
         };
-        try self.ackMouse();
+        self.ackMouse();
 
         return byte;
     }
@@ -387,8 +387,8 @@ pub const Controller = struct {
     }
 
     /// ACK the keyboard interrupt
-    pub fn ackKeyboard(self: *@This()) !void {
-        try self.primary_irq.ack();
+    pub fn ackKeyboard(self: *@This()) void {
+        self.primary_irq.ack() catch {};
     }
 
     /// wait for mouse interrupts
@@ -398,8 +398,8 @@ pub const Controller = struct {
     }
 
     /// ACK the mouse interrupt
-    pub fn ackMouse(self: *@This()) !void {
-        try self.secondary_irq.ack();
+    pub fn ackMouse(self: *@This()) void {
+        self.secondary_irq.ack() catch {};
     }
 
     pub const DeviceType = enum {

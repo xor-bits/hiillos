@@ -85,7 +85,7 @@ pub const Keyboard = struct {
             return error.BadKeyboard;
         }
 
-        controller.ackKeyboard() catch {};
+        controller.ackKeyboard();
         try controller.flush();
     }
 
