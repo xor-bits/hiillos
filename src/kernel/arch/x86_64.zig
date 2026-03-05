@@ -37,10 +37,6 @@ pub const MSR_K7_PERFCTR0: u32 = 0xC0010004;
 
 //
 
-var next: std.atomic.Value(usize) = .init(0);
-
-//
-
 pub fn earlyInit() callconv(.c) void {
     // interrupts are always disabled in the kernel
     // there is just one exception to this:
@@ -115,6 +111,7 @@ pub fn initCpu(id: u32, mp_info: ?*boot.LimineMpInfo) !void {
 }
 
 // launch 2 next processors (snowball)
+var next: std.atomic.Value(usize) = .init(0);
 pub fn smpInit() void {
     if (boot.mp.response) |resp| {
         var idx = next.fetchAdd(2, .monotonic);
