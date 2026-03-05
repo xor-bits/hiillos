@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const proc = @import("../proc.zig");
 
 const util = abi.util;
@@ -146,6 +147,6 @@ fn addressHash(paddr: *anyopaque) u8 {
 var futex_queues: [256]FutexQueue = @splat(.{});
 
 const FutexQueue = struct {
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     queue: caps.Thread.Queue = .{},
 };

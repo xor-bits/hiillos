@@ -20,9 +20,8 @@ pub const Futex = extern struct {
         locked: bool = false,
     };
 
-    pub fn locked() Self {
-        return .{ .state = .init(@bitCast(State{ .locked = true })) };
-    }
+    pub const unlocked: Self = .{};
+    pub const locked: Self = .{ .state = .init(@bitCast(State{ .locked = true })) };
 
     pub fn isLocked(self: *Self) bool {
         return self.load(.monotonic).locked;
@@ -103,9 +102,13 @@ pub const Futex = extern struct {
                 continue;
             } else {
                 // successfully removed the waiter
-                return;
+                break;
             }
         }
+
+        // FIXME: waitUnlocked steals a spot from a real lock waiter,
+        // but doesn't then wake a real lock waiter after the previous
+        // unlocker woke up this waitUnlocked caller
     }
 
     pub fn lock(self: *Self) void {
@@ -264,39 +267,80 @@ pub const Futex = extern struct {
 };
 
 pub const SpinMutex = extern struct {
-    lock_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
+    lock_state: std.atomic.Value(State) = std.atomic.Value(State).init(.unlocked),
+
+    const State = enum(u8) {
+        unlocked,
+        locked,
+    };
 
     const Self = @This();
 
-    pub fn locked() Self {
-        return .{ .lock_state = .init(1) };
-    }
+    pub const unlocked: Self = .{};
+    pub const locked: Self = .{ .lock_state = .init(.locked) };
 
-    pub fn tryLock(self: *Self) bool {
-        if (null == self.lock_state.cmpxchgStrong(0, 1, .acquire, .monotonic)) {
+    pub fn tryLock(
+        self: *Self,
+    ) bool {
+        const unexpected_state = self.lock_state.cmpxchgStrong(
+            .unlocked,
+            .locked,
+            .acquire,
+            .monotonic,
+        );
+        if (unexpected_state == null) {
             return true;
         } else {
             @branchHint(.cold);
+            std.debug.assert(unexpected_state.? == .locked);
             return false;
         }
     }
 
-    pub fn waitUnlocked(self: *Self) void {
-        while (self.isLocked()) {}
+    pub fn waitUnlocked(
+        self: *Self,
+    ) void {
+        var fail_count: u32 = 0;
+        while (self.isLocked()) {
+            @branchHint(.cold);
+            if (conf.IS_DEBUG) {
+                fail_count += 1;
+                if (fail_count >= 200_000) {
+                    self.waitUnlockedPotentialDeadlock();
+                    return;
+                }
+            }
+            std.atomic.spinLoopHint();
+        }
     }
 
-    pub fn lockAttempts(self: *Self, attempts: usize) bool {
+    // just a symbol hint, because printing the error requires locking
+    // but if the lock is the printing lock, then things would be bad
+    noinline fn waitUnlockedPotentialDeadlock(
+        self: *Self,
+    ) void {
+        while (self.isLocked()) {
+            @branchHint(.cold);
+            std.atomic.spinLoopHint();
+        }
+    }
+
+    pub fn lockAttempts(
+        self: *Self,
+        attempts: usize,
+    ) bool {
         std.debug.assert(attempts != 0);
 
-        if (self.tryLock()) return true;
-
-        for (0..attempts - 1) |_| {
+        for (0..attempts) |_| {
             if (self.tryLock()) return true;
         }
         return false;
     }
 
-    pub fn lockMultiUnordered(self: *Self, other: *Self) void {
+    pub fn lockMultiUnordered(
+        self: *Self,
+        other: *Self,
+    ) void {
         while (true) {
             self.lock();
             if (other.tryLock()) break;
@@ -306,38 +350,36 @@ pub const SpinMutex = extern struct {
             if (self.tryLock()) break;
             other.unlock();
         }
+
+        std.debug.assert(self.isLocked());
+        std.debug.assert(other.isLocked());
     }
 
-    pub fn lock(self: *Self) void {
-        var counter = if (conf.IS_DEBUG) @as(usize, 0) else {};
-        while (null != self.lock_state.cmpxchgWeak(0, 1, .acquire, .monotonic)) {
+    pub fn lock(
+        self: *Self,
+    ) void {
+        while (null != self.lock_state.cmpxchgWeak(
+            .unlocked,
+            .locked,
+            .acquire,
+            .monotonic,
+        )) {
             @branchHint(.cold);
-            while (self.isLocked()) {
-                @branchHint(.cold);
-                if (conf.IS_DEBUG) {
-                    counter += 1;
-                    if (counter % 1_000_000 == 0) {
-                        // log.warn("possible deadlock", .{});
-                    }
-                }
-                std.atomic.spinLoopHint();
-            }
+            self.waitUnlocked();
         }
     }
 
-    pub fn isLocked(self: *Self) bool {
-        const is_locked = self.lock_state.load(.monotonic) != 0;
-        if (is_locked) {
-            @branchHint(.cold);
-        }
-        return is_locked;
+    pub fn isLocked(
+        self: *Self,
+    ) bool {
+        return self.lock_state.load(.monotonic) == .locked;
     }
 
-    pub fn unlock(self: *Self) void {
-        if (conf.IS_DEBUG)
-            std.debug.assert(self.lock_state.load(.seq_cst) == 1);
-
-        self.lock_state.store(0, .release);
+    pub fn unlock(
+        self: *Self,
+    ) void {
+        if (conf.IS_DEBUG) std.debug.assert(self.isLocked());
+        self.lock_state.store(.unlocked, .release);
     }
 };
 
@@ -429,29 +471,40 @@ pub const DebugLock = struct {
 pub fn Once(comptime Mutex: type) type {
     return struct {
         entry_mutex: SpinMutex = .{},
-        wait_mutex: Mutex = .locked(),
+        wait_mutex: Mutex = .locked,
 
         const Self = @This();
 
         /// try init whatever resource
         /// false => some other CPU did it, call `wait`
         /// true  => this CPU is doing it, call `complete` once done
-        pub fn tryRun(self: *Self) bool {
+        pub fn tryRun(
+            self: *Self,
+        ) bool {
             return self.entry_mutex.tryLock();
         }
 
-        pub fn wait(self: *Self) void {
+        pub fn wait(
+            self: *Self,
+        ) void {
             // some other cpu is already working on this,
             // wait for it to be complete and then return
             self.wait_mutex.waitUnlocked();
         }
 
-        pub fn complete(self: *Self) void {
+        pub fn complete(
+            self: *Self,
+        ) void {
             // unlock wait_spin to signal others
+            if (@hasDecl(Mutex, "takeOwnership")) {
+                self.wait_mutex.takeOwnership();
+            }
             self.wait_mutex.unlock();
         }
 
-        pub fn isReady(self: *Self) bool {
+        pub fn isReady(
+            self: *Self,
+        ) bool {
             return !self.wait_mutex.isLocked();
         }
     };

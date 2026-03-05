@@ -2,6 +2,7 @@ const std = @import("std");
 const abi = @import("abi");
 
 const arch = @import("arch.zig");
+const lock = @import("lock.zig");
 
 //
 

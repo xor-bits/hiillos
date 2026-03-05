@@ -12,6 +12,7 @@ const call = @import("call.zig");
 const caps = @import("caps.zig");
 const copy = @import("copy.zig");
 const init = @import("init.zig");
+const lock = @import("lock.zig");
 const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
@@ -34,6 +35,7 @@ pub const CpuLocalStorage = struct {
     self_ptr: *CpuLocalStorage = undefined,
 
     cpu_config: arch.CpuConfig = undefined,
+    held_lock_count: u8 = 0,
 
     /// used to keep the active address space from
     /// being deallocated while not having a thread
@@ -62,7 +64,7 @@ fn StaticQueue(comptime T: type) type {
         queue: [16]T = undefined,
         head: u4 = 0,
         len: u4 = 0,
-        lock: abi.lock.SpinMutex = .{},
+        lock: lock.TrackingSpinMutex = .{},
 
         pub fn pop(self: *@This()) T {
             var backoff: abi.lock.Backoff = .{};

@@ -5,6 +5,7 @@ const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
@@ -19,7 +20,7 @@ pub const Vmem = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     hal_vmem: caps.HalVmem,
     mappings: std.ArrayList(*caps.Mapping) = .{},
     // bitset of all cpus that have used this vmem
@@ -43,8 +44,9 @@ pub const Vmem = struct {
         caps.decCount(.vmem);
 
         std.debug.assert(self.lock.tryLock());
-        const alloc = caps.slab_allocator.allocator();
+        self.lock.giveOwnership();
 
+        const alloc = caps.slab_allocator.allocator();
         for (self.mappings.items) |mapping| mapping.deinit();
         self.mappings.deinit(alloc);
         self.hal_vmem.deinit();

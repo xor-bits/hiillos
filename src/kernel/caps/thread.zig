@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
@@ -35,7 +36,7 @@ pub const Thread = struct {
     message: abi.sys.Message = .{},
 
     // lock for modifying the thread
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     /// scheduler priority
     priority: u2 = 2,
     cpu_time: u64 = 0,
@@ -56,7 +57,7 @@ pub const Thread = struct {
     /// but after locking it, the `scheduler_queue_node` is allowed to be read
     /// and it tells that the node is not present in the tree.
     current_or_previous_queue: ?*Queue = null,
-    current_or_previous_queue_lock: ?*abi.lock.SpinMutex = null,
+    current_or_previous_queue_lock: ?*lock.TrackingSpinMutex = null,
     // current_queue_kind: enum {
     //     thread_exit_waiters,
     //     process_exit_waiters,
@@ -115,7 +116,8 @@ pub const Thread = struct {
         self.exit(0);
 
         std.debug.assert(self.lock.tryLock());
-        std.debug.assert(self.exec_lock.tryLock());
+        self.lock.giveOwnership();
+        self.exec_lock.lock();
 
         std.debug.assert(self.scheduler_queue_node.inner.extra.isolated);
         std.debug.assert(self.process_threads_node.next == null);
@@ -249,7 +251,7 @@ pub const Thread = struct {
     }
 
     pub fn onStopLocked(self: *@This()) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         // log.debug("thread on stop", .{});
 
         while (self.stop_waiters.popFirstLocked(
@@ -262,7 +264,7 @@ pub const Thread = struct {
     }
 
     pub fn onExitLocked(self: *@This()) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         // log.debug("thread on exit", .{});
 
         const code = self.exit_code;

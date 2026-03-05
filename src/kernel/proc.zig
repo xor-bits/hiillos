@@ -5,6 +5,7 @@ const addr = @import("addr.zig");
 const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
+const lock = @import("lock.zig");
 const main = @import("main.zig");
 
 const conf = abi.conf;
@@ -17,7 +18,7 @@ const Error = abi.sys.Error;
 
 var active_threads: std.atomic.Value(usize) = .init(1);
 var queue: caps.Thread.Queue = .{};
-var queue_lock: abi.lock.SpinMutex = .{};
+var queue_lock: lock.TrackingSpinMutex = .{};
 var waiters: [256]Waiter = @splat(Waiter.init(null));
 
 const Waiter = std.atomic.Value(?*main.CpuLocalStorage);
@@ -33,6 +34,7 @@ pub fn init() void {
 pub fn enter() noreturn {
     const local = arch.cpuLocal();
     local.current_thread_cpu_time_start = arch.readTime();
+    std.debug.assert(local.held_lock_count == 0);
     var trap: arch.TrapRegs = undefined;
     switchNow(&trap);
     trap.exitNow();

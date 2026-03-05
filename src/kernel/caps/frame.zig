@@ -5,6 +5,7 @@ const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const main = @import("../main.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
@@ -26,7 +27,7 @@ pub const Frame = struct {
     tlb_shootdown_refcnt: abi.epoch.RefCnt = .{ .refcnt = .init(0) },
 
     is_physical: bool,
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     pages: []u32,
     size_bytes: usize,
     mappings: std.ArrayList(*const caps.Mapping),
@@ -87,6 +88,9 @@ pub const Frame = struct {
     pub fn deinit(self: *@This()) void {
         if (!self.refcnt.dec()) return;
         caps.decCount(.frame);
+
+        std.debug.assert(self.lock.tryLock());
+        self.lock.giveOwnership();
 
         if (!self.is_physical) {
             for (self.pages) |page| {

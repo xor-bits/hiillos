@@ -66,6 +66,8 @@ pub fn syscall(trap: *arch.TrapRegs) void {
         proc.switchNow(trap);
     }
 
+    std.debug.assert(locals.held_lock_count == 0);
+
     // if (conf.IS_DEBUG) {
     //     const new_thread = locals.current_thread.?;
     //     new_thread.lock.lock();

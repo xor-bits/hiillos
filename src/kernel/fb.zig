@@ -6,6 +6,7 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const boot = @import("boot.zig");
 const caps = @import("caps.zig");
+const lock = @import("lock.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
 
@@ -123,7 +124,7 @@ var terminal_buf_prev: []u8 = &.{};
 var terminal_size: struct { w: u32, h: u32 } = undefined;
 var initialized: bool = false;
 
-var once: abi.lock.Once(abi.lock.SpinMutex) = .{};
+var once: abi.lock.Once(lock.TrackingSpinMutex) = .{};
 fn init_fb() void {
     if (!once.tryRun()) {
         once.wait();

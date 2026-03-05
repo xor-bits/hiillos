@@ -5,6 +5,7 @@ const addr = @import("../addr.zig");
 const apic = @import("../apic.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
@@ -15,7 +16,7 @@ const Error = abi.sys.Error;
 //
 
 pub const Channel = struct {
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
 
     /// there can be only zero or one receivers (of course multiple handles to it are allowed)
     recv_count: u1 = 1,
@@ -51,6 +52,7 @@ pub const Channel = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        std.debug.assert(self.lock.isUnlocked());
         caps.slab_allocator.allocator().destroy(self);
     }
 
@@ -507,7 +509,7 @@ pub const Notify = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
-    queue_lock: abi.lock.SpinMutex = .{},
+    queue_lock: lock.TrackingSpinMutex = .{},
     queue: caps.Thread.Queue = .{},
     notified: bool = false,
 
@@ -525,25 +527,10 @@ pub const Notify = struct {
         if (!self.refcnt.dec()) return;
         caps.decCount(.notify);
 
-        self.cancel();
+        std.debug.assert(self.queue_lock.isUnlocked());
+        std.debug.assert(self.queue.inner.size == 0);
 
         caps.slab_allocator.allocator().destroy(self);
-    }
-
-    fn cancel(self: *@This()) void {
-        self.queue_lock.lock();
-        defer self.queue_lock.unlock();
-
-        while (self.queue.popFirstLocked(
-            &self.queue_lock,
-            .running,
-        )) |waiter| {
-            waiter.exec_lock.lock();
-            waiter.trap.syscall_id = abi.sys.encode(Error.Cancelled);
-            waiter.exec_lock.unlock();
-
-            proc.ready(waiter);
-        }
     }
 
     pub fn clone(self: *@This()) *@This() {

@@ -4,6 +4,7 @@ const std = @import("std");
 const abi = @import("abi");
 const rbtree = @import("rbtree");
 
+const lock = @import("../../lock.zig");
 const Thread = @import("../thread.zig").Thread;
 const log = std.log.scoped(.queue);
 
@@ -90,7 +91,7 @@ pub fn fetcherComparator(
 pub fn pushThread(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     thread: *Thread,
     futex_addr: usize,
     queue_status: abi.sys.ThreadStatus,
@@ -109,12 +110,12 @@ pub fn pushThread(
 pub fn pushThreadLocked(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     thread: *Thread,
     futex_addr: usize,
     queue_status: abi.sys.ThreadStatus,
 ) Cleanup {
-    std.debug.assert(self_lock.isLocked());
+    std.debug.assert(self_lock.isLockedByMe());
     thread.lock.lock();
     defer thread.lock.unlock();
     return self.pushLockedThreadLocked(
@@ -128,14 +129,14 @@ pub fn pushThreadLocked(
 pub fn pushLockedThreadLocked(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     thread: *Thread,
     futex_addr: usize,
     queue_status: abi.sys.ThreadStatus,
 ) Cleanup {
     std.debug.assert(queue_status.isQueued());
-    std.debug.assert(self_lock.isLocked());
-    std.debug.assert(thread.lock.isLocked());
+    std.debug.assert(self_lock.isLockedByMe());
+    std.debug.assert(thread.lock.isLockedByMe());
     thread.exec_lock.assertIsUnlocked();
     std.debug.assert(thread.current_or_previous_queue == null);
     std.debug.assert(thread.current_or_previous_queue_lock == null);
@@ -181,7 +182,7 @@ pub const Cleanup = struct {
 pub fn popFirst(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     running_status: abi.sys.ThreadStatus,
 ) ?*Thread {
     self_lock.lock();
@@ -192,10 +193,10 @@ pub fn popFirst(
 pub fn popFirstLocked(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     running_status: abi.sys.ThreadStatus,
 ) ?*Thread {
-    std.debug.assert(self_lock.isLocked());
+    std.debug.assert(self_lock.isLockedByMe());
     const first = self.inner.first orelse return null;
     self.inner.remove(first);
 
@@ -210,7 +211,7 @@ pub fn popFirstLocked(
 pub fn popFutexAddr(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     futex_addr: usize,
     running_status: abi.sys.ThreadStatus,
 ) ?*Thread {
@@ -222,11 +223,11 @@ pub fn popFutexAddr(
 pub fn popFutexAddrLocked(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     futex_addr: usize,
     running_status: abi.sys.ThreadStatus,
 ) ?*Thread {
-    std.debug.assert(self_lock.isLocked());
+    std.debug.assert(self_lock.isLockedByMe());
 
     const fetcher: Node = .{ .key = .{
         .futex_addr = futex_addr,
@@ -250,7 +251,7 @@ pub fn popFutexAddrLocked(
 fn popFinish(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     rb_node: *rbtree.RedBlackTree.Node,
     running_status: abi.sys.ThreadStatus,
 ) *Thread {
@@ -270,11 +271,11 @@ fn popFinish(
 fn popFinishLockedThread(
     self: *@This(),
     // self_refcnt: *abi.epoch.RefCnt,
-    self_lock: *abi.lock.SpinMutex,
+    self_lock: *lock.TrackingSpinMutex,
     thread: *Thread,
     running_status: abi.sys.ThreadStatus,
 ) void {
-    std.debug.assert(thread.lock.isLocked());
+    std.debug.assert(thread.lock.isLockedByMe());
     std.debug.assert(thread.current_or_previous_queue == self);
     std.debug.assert(thread.current_or_previous_queue_lock == self_lock);
     thread.current_or_previous_queue = null;
@@ -295,7 +296,7 @@ pub fn removeLockedThread(
     thread: *Thread,
     running_status: abi.sys.ThreadStatus,
 ) error{Retry}!void {
-    std.debug.assert(thread.lock.isLocked());
+    std.debug.assert(thread.lock.isLockedByMe());
 
     const current_queue = thread.current_or_previous_queue orelse return;
     const current_queue_lock = thread.current_or_previous_queue_lock.?;

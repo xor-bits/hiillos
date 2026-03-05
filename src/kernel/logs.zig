@@ -5,6 +5,7 @@ const apic = @import("apic.zig");
 const arch = @import("arch.zig");
 const boot = @import("boot.zig");
 const fb = @import("fb.zig");
+const lock = @import("lock.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
 const uart = @import("uart.zig");
@@ -128,7 +129,7 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     );
 }
 
-var log_lock: abi.lock.SpinMutex = .{};
+pub var log_lock: lock.TrackingSpinMutex = .{};
 fn panic_printer_drain(
     w: *std.Io.Writer,
     data: []const []const u8,

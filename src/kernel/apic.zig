@@ -7,6 +7,7 @@ const addr = @import("addr.zig");
 const arch = @import("arch.zig");
 const caps = @import("caps.zig");
 const hpet = @import("hpet.zig");
+const lock = @import("lock.zig");
 const main = @import("main.zig");
 const pmem = @import("pmem.zig");
 
@@ -47,11 +48,11 @@ const APIC_TIMER_DIV: u32 = 0b0010; // div by 8
 
 /// all I/O APICs
 var ioapics: std.ArrayList(IoApicInfo) = .{};
-var ioapic_lock: abi.lock.SpinMutex = .{};
+var ioapic_lock: lock.TrackingSpinMutex = .{};
 /// all Local APIC IDs that I/O APICs can use as interrupt destinations
 var ioapic_lapics: std.ArrayList(IoApicLapic) = .{};
 
-var ioapic_lapic_lock: abi.lock.SpinMutex = .{};
+var ioapic_lapic_lock: lock.TrackingSpinMutex = .{};
 
 //
 
@@ -69,7 +70,7 @@ pub const Locals = struct {
     // receives an ACK, but doesnt send an EOI. Then the high priority interrupt
     // receives an ACK and sends 2 EOIs: one for itself and one for the lower priority
     // interrupt that was already ACK'd)
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     in_flight_interrupts: u256 = 0,
     acknowledged_interrupts: u256 = 0,
 
@@ -176,7 +177,7 @@ fn commonHighestBits(a: u256, b: u256) u256 {
 
 // pub const Handler = std.atomic.Value(?*caps.Notify);
 const Handler = struct {
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     irq: ?*caps.X86Irq = null,
 
     pub fn load(self: *@This()) ?*caps.X86Irq {
@@ -832,7 +833,7 @@ pub const LocalXApicRegs = extern struct {
 
 //
 
-var pic_once: abi.lock.Once(abi.lock.SpinMutex) = .{};
+var pic_once: abi.lock.Once(lock.TrackingSpinMutex) = .{};
 
 fn disablePic() void {
     if (!pic_once.tryRun()) {

@@ -349,7 +349,7 @@ const DisplayContext = struct {
 };
 
 var system: System = undefined;
-var system_lock: abi.thread.Mutex = .locked();
+var system_lock: abi.thread.Mutex = .locked;
 
 const Connection = struct {
     next_client_window_id: usize = 1,

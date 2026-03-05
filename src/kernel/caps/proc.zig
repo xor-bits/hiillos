@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../addr.zig");
 const arch = @import("../arch.zig");
 const caps = @import("../caps.zig");
+const lock = @import("../lock.zig");
 const pmem = @import("../pmem.zig");
 const proc = @import("../proc.zig");
 
@@ -18,7 +19,7 @@ pub const Process = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
     vmem: *caps.Vmem,
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     caps: std.ArrayListUnmanaged(caps.CapabilitySlot) = .{},
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
@@ -43,9 +44,10 @@ pub const Process = struct {
         caps.decCount(.process);
 
         std.debug.assert(self.lock.tryLock());
+        self.lock.giveOwnership();
         std.debug.assert(self.active_threads.isEmpty());
 
-        self.closeAllCapsLocked();
+        self.closeAllCaps();
 
         self.caps.deinit(caps.slab_allocator.allocator());
         self.vmem.deinit();
@@ -58,10 +60,9 @@ pub const Process = struct {
         return self;
     }
 
-    fn closeAllCapsLocked(
+    fn closeAllCaps(
         self: *@This(),
     ) void {
-        std.debug.assert(self.lock.isLocked());
         for (self.caps.items) |*cap_slot| {
             cap_slot.deinit();
         }
@@ -94,7 +95,7 @@ pub const Process = struct {
 
         self.status = .dead;
         self.exit_code = exit_code;
-        self.closeAllCapsLocked();
+        self.closeAllCaps();
 
         var it = self.active_threads.iterator();
         while (it.next()) |active_thread| {
@@ -135,7 +136,7 @@ pub const Process = struct {
     fn allocSlotLocked(
         self: *@This(),
     ) Error!u32 {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
 
         const free = self.free;
         if (free != 0) {
@@ -161,7 +162,7 @@ pub const Process = struct {
         self: *@This(),
         handle: u32,
     ) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
         self.free = handle;
     }
@@ -179,7 +180,7 @@ pub const Process = struct {
         self: *@This(),
         cap: caps.Capability,
     ) Error!u32 {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         // std.debug.assert(cap.type != .null);
 
         const handle: u32 = try self.allocSlotLocked();
@@ -229,7 +230,7 @@ pub const Process = struct {
         handle: u32,
         opt: Opt,
     ) Error!caps.Capability {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
@@ -263,7 +264,7 @@ pub const Process = struct {
         handle: u32,
         mask: abi.sys.Rights,
     ) Error!void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
@@ -302,7 +303,7 @@ pub const Process = struct {
         handle: u32,
         opt: Opt,
     ) Error!caps.Capability {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
@@ -342,7 +343,7 @@ pub const Process = struct {
         handle: u32,
         cap: caps.Capability,
     ) Error!?caps.Capability {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;

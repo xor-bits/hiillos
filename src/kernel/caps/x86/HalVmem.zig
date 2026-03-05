@@ -4,6 +4,7 @@ const std = @import("std");
 const addr = @import("../../addr.zig");
 const arch = @import("../../arch.zig");
 const caps = @import("../../caps.zig");
+const lock = @import("../../lock.zig");
 const main = @import("../../main.zig");
 const pmem = @import("../../pmem.zig");
 
@@ -46,7 +47,7 @@ comptime {
 //
 // if the same cr3 is allocated, the specific PCID will be null
 pub const PcidLru = struct {
-    lock: abi.lock.SpinMutex = .{},
+    lock: lock.TrackingSpinMutex = .{},
     lru: abi.IdLru(u12, 0x1000),
     cur_or_prev_cr3: *[0x1000]u32,
 

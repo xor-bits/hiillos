@@ -151,7 +151,7 @@ pub const ints = struct {
 
     /// wait for the next interrupt
     pub fn wait() callconv(.c) void {
-        // TODO: check held lock count before waiting, as as debug info
+        std.debug.assert(cpuLocal().held_lock_count == 0);
         asm volatile (
             \\ sti
             \\ hlt

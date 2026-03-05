@@ -2,10 +2,11 @@ const std = @import("std");
 const abi = @import("abi");
 const builtin = @import("builtin");
 
-const main = @import("main.zig");
-const boot = @import("boot.zig");
-const arch = @import("arch.zig");
 const addr = @import("addr.zig");
+const arch = @import("arch.zig");
+const boot = @import("boot.zig");
+const lock = @import("lock.zig");
+const main = @import("main.zig");
 
 const log = std.log.scoped(.pmem);
 const conf = abi.conf;
@@ -131,10 +132,10 @@ pub fn isInitialized() bool {
 
 //
 
-var pmem_lock: abi.lock.SpinMutex = .{};
+var pmem_lock: lock.TrackingSpinMutex = .{};
 
 /// tells if the frame allocator can be used already by other parts of the kernel
-var pmem_ready: abi.lock.Once(abi.lock.SpinMutex) = .{};
+var pmem_ready: abi.lock.Once(lock.TrackingSpinMutex) = .{};
 
 /// how many 4kib pages are currently in use
 var used_pages: u32 = 0;
