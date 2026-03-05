@@ -622,6 +622,10 @@ pub const Framebuffer = struct {
     }
 
     pub fn image(self: @This(), mapped_fb: []volatile u8) abi.util.Image([]volatile u8) {
+        if (mapped_fb.len < @as(u64, self.pitch) * self.size[1]) {
+            std.log.debug("mapped fb len less than size: {} < {any}", .{ mapped_fb.len, self });
+        }
+        // std.debug.assert(mapped_fb.len >= @as(u64, self.pitch) * self.size[0] * 4);
         return .{
             .width = self.size[0],
             .height = self.size[1],
