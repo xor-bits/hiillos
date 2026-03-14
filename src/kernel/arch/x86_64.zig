@@ -51,20 +51,73 @@ pub fn earlyInit(
     // and the GS register contents might be undefined on boot
     // so quickly reset it to 0 temporarily
     wrmsr(GS_BASE, @intFromPtr(tls));
+    // wrmsr(IA32_TCS_AUX, tls.id);
 }
 
 pub fn initCpu(mp_info: ?*boot.LimineMpInfo) !void {
-    const lapic_id = if (mp_info) |i|
-        i.lapic_id
-    else if (boot.mp.response) |resp|
-        resp.bsp_lapic_id
-    else
-        0;
-
     const tls = cpuLocal();
-    tls.lapic_id = lapic_id;
-    std.debug.assert(std.mem.isAligned(@intFromPtr(tls), 0x1000));
-    try CpuConfig.init(&tls.cpu_config);
+
+    if (mp_info) |info| {
+        std.debug.assert(tls.id != 0);
+        tls.lapic_id = info.lapic_id;
+    } else if (boot.mp.response) |resp| {
+        std.debug.assert(tls.id == 0);
+        tls.lapic_id = resp.bsp_lapic_id;
+    } else @panic("missing MP response");
+
+    // initialize GDT, TSS and IDT
+    tls.cpu_config.tss = try Tss.new();
+    tls.cpu_config.gdt = Gdt.new(&tls.cpu_config.tss);
+    tls.cpu_config.idt = Idt.new();
+    tls.cpu_config.rsp_kernel = tls.cpu_config.tss.privilege_stacks[0];
+    tls.cpu_config.rsp_user = 0;
+
+    // log.debug("loading new GDT", .{});
+    tls.cpu_config.gdt.load();
+    // HACK: writing GS selector overwrites GS_BASE
+    wrmsr(GS_BASE, @intFromPtr(tls));
+    wrmsr(KERNELGS_BASE, 0);
+    tls.cpu_config.idt.load(null);
+
+    const avail_features = CpuFeatures.read();
+    // avail_features.assertExists(.acpi);
+    // avail_features.assertExistsOne(&.{ .apic, .x2apic });
+    avail_features.assertExists(.pat);
+
+    // enable/disable some features
+    var cr0 = Cr0.read();
+    log.debug("original cr0={}", .{cr0});
+    cr0.emulate_coprocessor = 0;
+    cr0.monitor_coprocessor = 1;
+    cr0.task_switched = 0;
+    cr0.write();
+    var cr4 = Cr4.read();
+    log.debug("original cr4={}", .{cr4});
+    cr4.osfxsr = 1;
+    cr4.osxmmexcpt = 1;
+    cr4.page_global_enable = 1;
+    cr4.pcid_enable = @intFromBool(avail_features.pcid);
+    // cr4.machine_check_exception = 1;
+    cr4.performance_monitoring_counter_enable = 1;
+    cr4.write();
+
+    // initialize syscall and sysret instructions
+    wrmsr(
+        STAR,
+        (@as(u64, GdtDescriptor.user_data_selector - 8) << 48) |
+            (@as(u64, GdtDescriptor.kernel_code_selector) << 32),
+    );
+
+    // RIP of the syscall jump destination
+    wrmsr(LSTAR, @intFromPtr(&syscallHandlerWrapperWrapper));
+
+    // bits that are 1 clear a bit from rflags when a syscall happens
+    // setting interrupt_enable here disables interrupts on syscall
+    wrmsr(SFMASK, @bitCast(Rflags{ .interrupt_enable = 1 }));
+
+    const efer_flags: u64 = @bitCast(EferFlags{ .system_call_extensions = 1 });
+    wrmsr(EFER, rdmsr(EFER) | efer_flags);
+    log.info("syscalls initialized", .{});
 
     // the PAT MSR value is set so that the old modes stay the same
     // log.info("default PAT = 0x{x}", .{rdmsr(IA32_PAT_MSR)});
@@ -73,24 +126,7 @@ pub fn initCpu(mp_info: ?*boot.LimineMpInfo) !void {
 
     log.info("CPU vendor: {s}", .{CpuFeatures.readVendor()});
 
-    const avail_features = CpuFeatures.read();
-    // avail_features.assertExists(.acpi);
-    // avail_features.assertExists(.apic);
-    // avail_features.assertExists(.osxsave);
-    // avail_features.assertExists(.xsave);
-    // avail_features.assertExists(.pcid);
-    avail_features.assertExists(.pat);
-    // avail_features.assertExists(.rdrand);
-    // avail_features.assertExists(.tsc_ecx);
-    // avail_features.assertExists(.tsc_edx);
-    // avail_features.assertExists(.x2apic);}
-
     if (avail_features.pcid) {
-        // TODO: move all CR0/CR4 manipulation to initCpu (here)
-        var cr4 = Cr4.read();
-        cr4.pcid_enable = 1;
-        cr4.write();
-
         tls.pcid_lru = try caps.PcidLru.init(pmem.page_allocator);
     }
 
@@ -466,12 +502,12 @@ pub const CpuFeatures = packed struct {
         return @bitCast([2]u32{ result.ecx, result.edx });
     }
 
-    pub fn assertExists(self: @This(), name: @TypeOf(.enum_literal)) void {
+    pub fn assertExists(self: @This(), comptime name: @TypeOf(.enum_literal)) void {
         if (@field(self, @tagName(name))) {
             return;
         }
-        log.err("missing CPU feature: {}", .{name});
-        @panic("missing CPU features");
+        log.err("missing CPU required feature: {}", .{name});
+        @panic("missing CPU required features");
     }
 };
 
@@ -1356,63 +1392,6 @@ pub const CpuConfig = struct {
     gdt: Gdt,
     tss: Tss,
     idt: Idt,
-
-    pub fn init(self: *@This()) !void {
-        self.tss = try Tss.new();
-        self.gdt = Gdt.new(&self.tss);
-        self.idt = Idt.new();
-
-        // initialize GDT (, TSS) and IDT
-        // log.debug("loading new GDT", .{});
-        const tls = cpuLocal();
-        self.gdt.load();
-        // HACK: writing GS selector overwrites GS_BASE
-        wrmsr(GS_BASE, @intFromPtr(tls));
-        // log.debug("loading new IDT", .{});
-        self.idt.load(null);
-        // ints.enable();
-
-        // enable/disable some features
-        var cr0 = Cr0.read();
-        cr0.emulate_coprocessor = 0;
-        cr0.monitor_coprocessor = 1;
-        cr0.task_switched = 0;
-        cr0.write();
-        log.debug("cr0={}", .{Cr0.read()});
-        var cr4 = Cr4.read();
-        cr4.osfxsr = 1;
-        cr4.osxmmexcpt = 1;
-        cr4.page_global_enable = 1;
-        // cr4.machine_check_exception = 1;
-        cr4.performance_monitoring_counter_enable = 1;
-        cr4.write();
-        log.debug("cr4={}", .{Cr4.read()});
-
-        // // initialize CPU identification for scheduling purposes
-        // wrmsr(IA32_TCS_AUX, this_cpu_id);
-        // log.info("CPU ID set: {d}", .{cpuId()});
-
-        self.rsp_kernel = self.tss.privilege_stacks[0];
-        self.rsp_user = 0;
-
-        // initialize syscall and sysret instructions
-        wrmsr(
-            STAR,
-            (@as(u64, GdtDescriptor.user_data_selector - 8) << 48) |
-                (@as(u64, GdtDescriptor.kernel_code_selector) << 32),
-        );
-
-        // RIP of the syscall jump destination
-        wrmsr(LSTAR, @intFromPtr(&syscallHandlerWrapperWrapper));
-
-        // bits that are 1 clear a bit from rflags when a syscall happens
-        // setting interrupt_enable here disables interrupts on syscall
-        wrmsr(SFMASK, @bitCast(Rflags{ .interrupt_enable = 1 }));
-
-        const efer_flags: u64 = @bitCast(EferFlags{ .system_call_extensions = 1 });
-        wrmsr(EFER, rdmsr(EFER) | efer_flags);
-        log.info("syscalls initialized", .{});
-    }
 };
 
 pub const Cr0 = packed struct {
