@@ -87,18 +87,18 @@ pub fn initCpu(mp_info: ?*boot.LimineMpInfo) !void {
     // enable/disable some features
     var cr0 = Cr0.read();
     log.debug("original cr0={}", .{cr0});
-    cr0.emulate_coprocessor = 0;
-    cr0.monitor_coprocessor = 1;
-    cr0.task_switched = 0;
+    cr0.emulate_coprocessor = false;
+    cr0.monitor_coprocessor = true;
+    cr0.task_switched = false;
     cr0.write();
     var cr4 = Cr4.read();
     log.debug("original cr4={}", .{cr4});
-    cr4.osfxsr = 1;
-    cr4.osxmmexcpt = 1;
-    cr4.page_global_enable = 1;
-    cr4.pcid_enable = @intFromBool(avail_features.pcid);
-    // cr4.machine_check_exception = 1;
-    cr4.performance_monitoring_counter_enable = 1;
+    cr4.osfxsr = true;
+    cr4.osxmmexcpt = true;
+    cr4.page_global_enable = true;
+    cr4.pcid_enable = avail_features.pcid;
+    // cr4.machine_check_exception = true;
+    cr4.performance_monitoring_counter_enable = true;
     cr4.write();
 
     // initialize syscall and sysret instructions
@@ -113,10 +113,11 @@ pub fn initCpu(mp_info: ?*boot.LimineMpInfo) !void {
 
     // bits that are 1 clear a bit from rflags when a syscall happens
     // setting interrupt_enable here disables interrupts on syscall
-    wrmsr(SFMASK, @bitCast(Rflags{ .interrupt_enable = 1 }));
+    wrmsr(SFMASK, @bitCast(Rflags{ .interrupt_enable = true, .io_privilege = 0 }));
 
-    const efer_flags: u64 = @bitCast(EferFlags{ .system_call_extensions = 1 });
-    wrmsr(EFER, rdmsr(EFER) | efer_flags);
+    var efer_flags: EferFlags = @bitCast(rdmsr(EFER));
+    efer_flags.system_call_extensions = true;
+    wrmsr(EFER, @bitCast(efer_flags));
     log.info("syscalls initialized", .{});
 
     // the PAT MSR value is set so that the old modes stay the same
@@ -754,11 +755,14 @@ pub const Entry = packed struct {
     segment_selector: u16,
     interrupt_stack: u3,
     reserved2: u5 = 0,
-    gate_type: u1,
+    gate_type: enum(u1) {
+        interrupt,
+        trap,
+    },
     _1: u3 = 0b111,
     _0: u1 = 0,
     dpl: u2,
-    present: u1,
+    present: bool,
     offset_16_31: u16,
     offset_32_63: u32,
     reserved1: u32 = 0,
@@ -877,9 +881,9 @@ pub const Entry = packed struct {
             .offset_0_15 = @truncate(isr & 0xFFFF),
             .segment_selector = GdtDescriptor.kernel_code_selector,
             .interrupt_stack = 0,
-            .gate_type = 0, // 0 for interrupt gate, 1 for trap gate
+            .gate_type = .interrupt,
             .dpl = 0,
-            .present = 1,
+            .present = true,
             .offset_16_31 = @truncate((isr >> 16) & 0xFFFF),
             .offset_32_63 = @truncate((isr >> 32) & 0xFFFFFFFF),
         };
@@ -890,9 +894,9 @@ pub const Entry = packed struct {
             .offset_0_15 = 0,
             .segment_selector = 0,
             .interrupt_stack = 0,
-            .gate_type = 0,
+            .gate_type = .interrupt,
             .dpl = 0,
-            .present = 0,
+            .present = false,
             .offset_16_31 = 0,
             .offset_32_63 = 0,
         };
@@ -1395,20 +1399,20 @@ pub const CpuConfig = struct {
 };
 
 pub const Cr0 = packed struct {
-    protected_mode_enable: u1,
-    monitor_coprocessor: u1,
-    emulate_coprocessor: u1,
-    task_switched: u1,
-    extension_type: u1,
-    numeric_error: u1,
+    protected_mode_enable: bool,
+    monitor_coprocessor: bool,
+    emulate_coprocessor: bool,
+    task_switched: bool,
+    extension_type: bool,
+    numeric_error: bool,
     reserved0: u10,
-    write_protect: u1,
-    reserved1: u1,
-    alignment_mask: u1,
+    write_protect: bool,
+    reserved1: bool,
+    alignment_mask: bool,
     reserved2: u10,
-    not_write_through: u1,
-    cache_disable: u1,
-    paging: u1,
+    not_write_through: bool,
+    cache_disable: bool,
+    paging: bool,
     reserved: u32,
 
     const Self = @This();
@@ -1453,10 +1457,6 @@ pub const Cr2 = packed struct {
 };
 
 pub const Cr3 = packed struct {
-    // reserved0: u3,
-    // page_Level_write_through: u1,
-    // page_level_cache_disable: u1,
-    // reserved1: u7,
     pcid: u12 = 0,
     pml4_phys_base: u52 = 0,
 
@@ -1480,31 +1480,31 @@ pub const Cr3 = packed struct {
 };
 
 pub const Cr4 = packed struct {
-    virtual_8086_mode_extensions: u1,
-    protected_mode_virtual_interrupts: u1,
-    tsc_in_kernel_only: u1,
-    debugging_extensions: u1,
-    page_size_extension: u1,
-    physical_address_extension: u1,
-    machine_check_exception: u1,
-    page_global_enable: u1,
-    performance_monitoring_counter_enable: u1,
-    osfxsr: u1,
-    osxmmexcpt: u1,
-    user_mode_instruction_prevention: u1,
-    reserved0: u1,
-    virtual_machine_extensions_enable: u1,
-    safer_mode_extensions_enable: u1,
-    reserved1: u1,
-    fsgsbase: u1,
-    pcid_enable: u1,
-    osxsave_enable: u1,
-    reserved2: u1,
-    supervisor_mode_executions_protection_enable: u1,
-    supervisor_mode_access_protection_enable: u1,
-    protection_key_enable: u1,
-    controlflow_enforcement_technology: u1,
-    protection_keys_for_supervisor: u1,
+    virtual_8086_mode_extensions: bool,
+    protected_mode_virtual_interrupts: bool,
+    tsc_in_kernel_only: bool,
+    debugging_extensions: bool,
+    page_size_extension: bool,
+    physical_address_extension: bool,
+    machine_check_exception: bool,
+    page_global_enable: bool,
+    performance_monitoring_counter_enable: bool,
+    osfxsr: bool,
+    osxmmexcpt: bool,
+    user_mode_instruction_prevention: bool,
+    reserved0: bool,
+    virtual_machine_extensions_enable: bool,
+    safer_mode_extensions_enable: bool,
+    reserved1: bool,
+    fsgsbase: bool,
+    pcid_enable: bool,
+    osxsave_enable: bool,
+    reserved2: bool,
+    supervisor_mode_executions_protection_enable: bool,
+    supervisor_mode_access_protection_enable: bool,
+    protection_key_enable: bool,
+    controlflow_enforcement_technology: bool,
+    protection_keys_for_supervisor: bool,
     reserved3: u39,
 
     const Self = @This();
@@ -1527,32 +1527,32 @@ pub const Cr4 = packed struct {
 };
 
 pub const Rflags = packed struct {
-    carry_flag: u1 = 0,
-    reserved0: u1 = 1,
-    parity_flag: u1 = 0,
-    reserved1: u1 = 0,
-    auxliary_carry_flag: u1 = 0,
-    reserved2: u1 = 0,
-    zero_flag: u1 = 0,
-    sign_flag: u1 = 0,
-    trap_flag: u1 = 0,
-    interrupt_enable: u1 = 0,
-    direction_flag: u1 = 0,
-    overflow_flag: u1 = 0,
-    io_privilege_flag: u2 = 0,
-    nested_task: u1 = 0,
-    reserved3: u1 = 0,
-    resume_flag: u1 = 0,
-    virtual_8086_mode: u1 = 0,
-    alignment_check_or_access_control: u1 = 0,
-    virtual_interrupt_flag: u1 = 0,
-    virtual_interrupt_pending: u1 = 0,
-    id_flag: u1 = 0,
+    carry_flag: bool = false,
+    reserved0: bool = true,
+    parity_flag: bool = false,
+    reserved1: bool = false,
+    auxliary_carry_flag: bool = false,
+    reserved2: bool = false,
+    zero_flag: bool = false,
+    sign_flag: bool = false,
+    trap_flag: bool = false,
+    interrupt_enable: bool = false,
+    direction_flag: bool = false,
+    overflow_flag: bool = false,
+    io_privilege: u2 = 0b11,
+    nested_task: bool = false,
+    reserved3: bool = false,
+    resume_flag: bool = false,
+    virtual_8086_mode: bool = false,
+    alignment_check_or_access_control: bool = false,
+    virtual_interrupt_flag: bool = false,
+    virtual_interrupt_pending: bool = false,
+    id_flag: bool = false,
     reserved4: u42 = 0,
 };
 
 pub const EferFlags = packed struct {
-    system_call_extensions: u1 = 0,
+    system_call_extensions: bool = false,
     reserved: u63 = 0,
 };
 
@@ -1699,7 +1699,7 @@ pub const TrapRegs = extern struct {
     /// code privilege level before the interrupt
     code_segment_selector: u16 = GdtDescriptor.user_code_selector,
     /// r11 from syscalls
-    rflags: Rflags = Rflags{ .interrupt_enable = 1 },
+    rflags: Rflags = .{ .interrupt_enable = true },
     /// stack pointer before the interrupt
     rsp: u64 = 0,
     /// stack(data) privilege level before the interrupt
