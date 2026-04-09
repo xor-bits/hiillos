@@ -27,6 +27,33 @@ pub const Channel = struct {
     recv_queue: caps.Thread.Queue = .{},
     /// queue for when there are more active senders than active receivers
     send_queue: caps.Thread.Queue = .{},
+    /// lowest priority queue for async messages sent over the channel
+    async_send_queue: std.DoublyLinkedList = .{},
+
+    const AsyncMessage = struct {
+        node: std.DoublyLinkedList.Node = .{},
+        msg: abi.sys.Message,
+        // extra_regs: [128]u64 = @splat(0),
+        // extra_types: u128 = 0,
+    };
+
+    fn pushAsyncMessage(
+        self: *@This(),
+        msg: *AsyncMessage,
+    ) void {
+        std.debug.assert(self.lock.isLockedByMe());
+        std.debug.assert(self.recv_queue.inner.first == null);
+        self.async_send_queue.append(&msg.node);
+    }
+
+    fn popAsyncMessage(
+        self: *@This(),
+    ) ?*AsyncMessage {
+        std.debug.assert(self.lock.isLockedByMe());
+        std.debug.assert(self.recv_queue.inner.first == null);
+        const node = self.async_send_queue.popFirst() orelse return null;
+        return @fieldParentPtr("node", node);
+    }
 
     pub fn init() !struct { *Receiver, *Sender } {
         const allocator = caps.slab_allocator.allocator();
@@ -143,6 +170,22 @@ pub const Channel = struct {
             @branchHint(.cold);
             // if there are no waiting listeners,
             // then push this thread into the wait queue
+
+            if (self.popAsyncMessage()) |msg| {
+                self.lock.unlock();
+
+                const gpa = caps.slab_allocator.allocator();
+                defer gpa.destroy(msg);
+
+                thread.exec_lock.lock();
+                trap.writeMessage(msg.msg);
+                thread.trap.writeMessage(msg.msg);
+                std.debug.assert(thread.reply == null);
+                thread.exec_lock.unlock();
+
+                proc.switchUndo(thread);
+                return;
+            }
 
             if (self.send_count == 0) {
                 @branchHint(.cold);
@@ -273,6 +316,48 @@ pub const Channel = struct {
         }
     }
 
+    pub fn send(
+        self: *@This(),
+        msg: abi.sys.Message,
+    ) error{ OutOfMemory, ChannelClosed }!void {
+        const gpa = caps.slab_allocator.allocator();
+
+        var sent = false;
+        const wrapped_msg = try gpa.create(AsyncMessage);
+        errdefer if (!sent) gpa.destroy(wrapped_msg);
+        wrapped_msg.* = .{ .msg = msg };
+
+        self.lock.lock();
+        const listener = self.recv_queue.popFirstLocked(
+            &self.lock,
+            .running,
+        ) orelse {
+            @branchHint(.cold);
+            defer self.lock.unlock();
+            // if there are no waiting listeners,
+            // then push this message into the async message queue
+
+            if (self.recv_count == 0) {
+                @branchHint(.cold);
+                return error.ChannelClosed;
+            }
+
+            self.pushAsyncMessage(wrapped_msg);
+            sent = true;
+            return;
+        };
+        self.lock.unlock();
+
+        if (conf.LOG_WAITING)
+            log.debug("IPC async send {*}", .{listener});
+
+        listener.exec_lock.lock();
+        listener.trap.writeMessage(msg);
+        listener.exec_lock.unlock();
+
+        proc.ready(listener);
+    }
+
     // block until the receiver is free, then switch to the receiver
     pub fn call(
         self: *@This(),
@@ -289,7 +374,7 @@ pub const Channel = struct {
             .running,
         ) orelse {
             @branchHint(.cold);
-            // if there are no waiting callers,
+            // if there are no waiting listeners,
             // then push this thread into the wait queue
 
             if (self.recv_count == 0) {
@@ -437,6 +522,17 @@ pub const Sender = struct {
         sender.* = .{ .channel = self.channel, .stamp = stamp };
 
         return sender;
+    }
+
+    pub fn send(
+        self: *@This(),
+        msg: abi.sys.Message,
+    ) error{ OutOfMemory, ChannelClosed }!void {
+        const stamped_msg = msg.withStamp(self.stamp);
+        if (conf.LOG_OBJ_CALLS)
+            log.debug("Sender.send {}", .{stamped_msg});
+
+        try self.channel.send(stamped_msg);
     }
 
     // block until the receiver is free, then switch to the receiver

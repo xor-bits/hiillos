@@ -98,7 +98,7 @@ pub const Id = enum(usize) {
 
     /// set a new stamp for the `Sender` that the `Receiver` gets on each recv
     sender_stamp,
-    // sender_send, // TODO: non-blocking call
+    sender_send,
     /// wait until a matching `Receiver.recv` is called and switch to that thread
     /// with a provided message, and return the reply message
     sender_call,
@@ -1017,6 +1017,13 @@ pub fn replyReply(reply: u32, msg: Message) Error!void {
 
 pub fn senderStamp(send: u32, stamp: u32) Error!u32 {
     return @truncate(try syscall(.sender_stamp, .{ send, stamp }, .{}));
+}
+
+pub fn senderSend(send: u32, msg: Message) Error!void {
+    var _msg = msg;
+    _msg.cap_or_stamp = send;
+    const msg_regs = @as(PackedMessage, @bitCast(_msg));
+    _ = try syscall(.sender_send, msg_regs, .{});
 }
 
 pub fn senderCall(send: u32, msg: Message) Error!Message {

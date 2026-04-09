@@ -690,11 +690,20 @@ fn handle_syscall(
             const handle = try thread.proc.pushCapability(caps.Capability.init(new_send, null));
             trap.syscall_id = abi.sys.encode(handle);
         },
+        .sender_send => {
+            const msg = trap.readMessage();
+            const sender: *caps.Sender = try thread.proc.getCapabilityAs(
+                @truncate(trap.arg0),
+                .sender,
+                .{},
+            );
+            defer sender.deinit();
+
+            try sender.send(msg);
+        },
         .sender_call => {
             @branchHint(.likely);
-            var msg = trap.readMessage();
-            trap.writeMessage(msg);
-
+            const msg = trap.readMessage();
             const sender: *caps.Sender = try thread.proc.getCapabilityAs(
                 msg.cap_or_stamp,
                 .sender,
@@ -702,7 +711,6 @@ fn handle_syscall(
             );
             defer sender.deinit();
 
-            msg.cap_or_stamp = sender.stamp;
             try sender.call(thread, trap, msg);
         },
 

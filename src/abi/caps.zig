@@ -540,14 +540,17 @@ pub const Receiver = extern struct {
         sys.handleClose(this.cap);
     }
 
+    /// blocking "rendezvous" receive on the channel
     pub fn recv(self: @This()) sys.Error!sys.Message {
         return try sys.receiverRecv(self.cap);
     }
 
+    /// non-blocking reply on the channel
     pub fn reply(self: @This(), msg: sys.Message) sys.Error!void {
         return try sys.receiverReply(self.cap, msg);
     }
 
+    /// combined non-blocking reply and blocking "rendezvous" receive on the channel
     pub fn replyRecv(self: @This(), msg: sys.Message) sys.Error!sys.Message {
         return try sys.receiverReplyRecv(self.cap, msg);
     }
@@ -590,6 +593,12 @@ pub const Sender = extern struct {
         return new;
     }
 
+    /// non-blocking send and forget on the channel
+    pub fn send(self: @This(), msg: sys.Message) sys.Error!void {
+        return try sys.senderSend(self.cap, msg);
+    }
+
+    /// blocking "rendezvous" send and wait for reply on the channel
     pub fn call(self: @This(), msg: sys.Message) sys.Error!sys.Message {
         return try sys.senderCall(self.cap, msg);
     }
@@ -623,6 +632,7 @@ pub const Reply = extern struct {
         sys.handleClose(this.cap);
     }
 
+    /// non-blocking reply on the channel
     pub fn reply(self: @This(), msg: sys.Message) sys.Error!void {
         return sys.replyReply(self.cap, msg);
     }

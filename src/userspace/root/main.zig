@@ -178,12 +178,25 @@ test "closing a process closes its handles" {
     );
 }
 
+test "non-blocking send" {
+    const rx, const tx = try caps.channel();
+    defer rx.close();
+    defer tx.close();
+
+    const stamped_tx = try tx.stamp(3);
+    defer stamped_tx.close();
+
+    try stamped_tx.send(.{ .arg0 = 1, .arg1 = 2 });
+    const msg = try rx.recv();
+
+    std.debug.assert(msg.arg0 == 1);
+    std.debug.assert(msg.arg1 == 2);
+    std.debug.assert(msg.cap_or_stamp == 3);
+}
+
 pub fn main() !void {
     try abi.rt.initServer();
     log.info("I am root", .{});
-
-    const thread = try caps.Thread.create(caps.Process.self);
-    thread.close();
 
     try initfsd.init();
 
