@@ -97,7 +97,6 @@ pub const Frame = struct {
                 if (page == 0) continue;
 
                 pmem.deallocChunk(
-                    true,
                     addr.Phys.fromParts(.{ .page = page }),
                     .@"4KiB",
                 );
@@ -456,7 +455,7 @@ pub const Frame = struct {
             // TODO: use a per-CPU arena allocator
 
             const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-            errdefer pmem.deallocChunk(true, alloc, .@"4KiB");
+            errdefer pmem.deallocChunk( alloc, .@"4KiB");
             const old = try self.collectOldMappingsLocked();
 
             const new_page = alloc.toParts().page;

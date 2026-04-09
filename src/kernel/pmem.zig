@@ -229,13 +229,6 @@ fn freelistPush(l: *std.DoublyLinkedList, new_node: *std.DoublyLinkedList.Node) 
     }
 }
 
-fn debugZeroAllocs(result: addr.Phys, size: abi.ChunkSize) void {
-    if (conf.IS_DEBUG) {
-        std.debug.assert(isInMemoryKind(result, size.sizeBytes(), .usable));
-        std.crypto.secureZero(u64, result.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
-    }
-}
-
 // FIXME: return error{OutOfMemory}!addr.Phys
 pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
     pmem_lock.lock();
@@ -250,12 +243,13 @@ fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
     const minimum_level = levels.getPtr(size);
     if (freelistPop(&minimum_level.freelist)) |free_chunk| {
         const chunk_metadata: *ChunkMetadata = @fieldParentPtr("freelist_node", free_chunk);
-        std.crypto.secureZero(u8, std.mem.asBytes(chunk_metadata));
-
         const this_chunk = addr.Virt.fromPtr(chunk_metadata).hhdmToPhys();
         bitmapUnset(minimum_level.bitmap, bitmapIndex(this_chunk, size));
 
-        debugZeroAllocs(this_chunk, size);
+        if (conf.IS_DEBUG) {
+            std.debug.assert(isInMemoryKind(this_chunk, size.sizeBytes(), .usable));
+        }
+        std.crypto.secureZero(u64, this_chunk.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
         return this_chunk;
     }
 
@@ -278,11 +272,8 @@ fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
     return this_chunk;
 }
 
-pub fn deallocChunk(comptime zero: bool, ptr: addr.Phys, size: abi.ChunkSize) void {
+pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
     std.debug.assert(ptr.toParts().page != 0);
-
-    if (zero)
-        std.crypto.secureZero(u64, ptr.toHhdm().toPtr([*]u64)[0 .. size.sizeBytes() / 8]);
 
     pmem_lock.lock();
     defer pmem_lock.unlock();
@@ -470,7 +461,7 @@ pub fn free(chunk: addr.Phys, size: usize) void {
         log.err("trying to free a chunk that could not have been allocated", .{});
         return;
     };
-    return deallocChunk(true, chunk, _size);
+    return deallocChunk(chunk, _size);
 }
 
 pub fn isInMemoryKind(paddr: addr.Phys, size: usize, exp: ?boot.LimineMemmapType) bool {
