@@ -63,9 +63,18 @@ pub fn Daemon(comptime Ctx: type) type {
 
             var sys_msg: ?sys.Message = null;
             while (true) {
-                self.runOnce(&sys_msg) catch |err| {
-                    if (err == error.ChannelClosed) break;
-                    log.err("daemon handler wrapper error: {}", .{err});
+                self.runOnce(&sys_msg) catch |err| switch (err) {
+                    error.ChannelClosed => {
+                        log.err("daemon channel closed", .{});
+                        break;
+                    },
+                    error.BadHandle => {
+                        log.err("daemon receiver invalid", .{});
+                        break;
+                    },
+                    else => {
+                        log.warn("daemon handler wrapper error: {}", .{err});
+                    },
                 };
             }
         }
