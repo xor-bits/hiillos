@@ -169,13 +169,20 @@ pub fn main() !void {
 pub fn kbReader(stdin: abi.ring.Ring(u8)) !void {
     var shift = false;
     var ctrl = false;
+
+    const rx, const tx = try abi.caps.channel();
+    const result: abi.Ps2Protocol.Listen.Response =
+        try abi.lpc.call(abi.Ps2Protocol.Listen, .{
+            .sender = tx,
+        }, .{ .cap = import_ps2.handle });
+    try result.asErrorUnion();
+
     while (true) {
-        const ev_result = try abi.lpc.call(
-            abi.Ps2Protocol.Next,
-            .{},
-            .{ .cap = import_ps2.handle },
+        const ev_result = try abi.lpc.deserialize(
+            abi.InputListenerProtocol.Next,
+            try rx.recv(),
         );
-        const ev = try ev_result.asErrorUnion();
+        const ev = ev_result.ev;
 
         seat_lock.lock();
         defer seat_lock.unlock();

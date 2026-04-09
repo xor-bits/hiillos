@@ -84,65 +84,51 @@ pub fn main() !void {
     });
 }
 
-var waiting_lock: abi.thread.Mutex = .{};
-var waiting: std.ArrayList(abi.lpc.DetachedReply(abi.Ps2Protocol.Next.Response)) = .{};
-var event_queue: abi.Deque(abi.input.Event) = .{};
+var listeners_lock: abi.thread.Mutex = .{};
+var listeners: std.ArrayList(caps.Sender) = .{};
 
 pub fn pushEvent(ev: abi.input.Event) void {
-    waiting_lock.lock();
-    defer waiting_lock.unlock();
+    listeners_lock.lock();
+    defer listeners_lock.unlock();
 
-    if (waiting.items.len != 0) {
-        for (waiting.items) |*reply| {
-            reply.send(.{ .ok = ev }) catch |err| {
-                log.warn("failed to send input event reply: {}", .{err});
-            };
-        }
-        waiting.clearRetainingCapacity();
-        return;
+    var i: usize = 0;
+    while (i < listeners.items.len) {
+        const listener = listeners.items[i];
+
+        abi.lpc.send(abi.InputListenerProtocol.Next{
+            .ev = ev,
+        }, listener) catch {
+            _ = listeners.swapRemove(i);
+            continue;
+        };
+
+        i += 1;
     }
-
-    event_queue.pushBack(abi.mem.slab_allocator, ev) catch |err| {
-        log.warn("input event dropped: {}", .{err});
-    };
 }
 
-pub fn popEvent(reply: *abi.lpc.Reply(abi.Ps2Protocol.Next.Response)) void {
-    waiting_lock.lock();
-    defer waiting_lock.unlock();
-
-    if (event_queue.popFront()) |ev| {
-        reply.send(.{ .ok = ev });
-        return;
-    }
-
-    const new = waiting.addOne(abi.mem.slab_allocator) catch |err| {
-        log.warn("input waiter dropped: {}", .{err});
-        reply.send(.{ .err = .out_of_memory });
-        return;
-    };
-
-    new.* = reply.detach() catch |err| {
-        log.warn("input waiter dropped: {}", .{err});
-        reply.send(.{ .err = .out_of_memory });
-        _ = waiting.pop();
-        return;
-    };
-}
-
-fn next(
+fn listen(
     _: *abi.lpc.Daemon(System),
-    handler: abi.lpc.Handler(abi.Ps2Protocol.Next),
+    handler: abi.lpc.Handler(abi.Ps2Protocol.Listen),
 ) !void {
-    // TODO: create IPC pipes for each input listener
-    popEvent(handler.reply);
+    listeners_lock.lock();
+    const result = listeners.append(abi.mem.slab_allocator, handler.req.sender);
+    listeners_lock.unlock();
+
+    result catch |err| switch (err) {
+        error.OutOfMemory => {
+            handler.reply.send(.{ .err = .out_of_memory });
+            return;
+        },
+    };
+
+    handler.reply.send(.{ .ok = {} });
 }
 
 const System = struct {
     recv: caps.Receiver,
 
     pub const routes = .{
-        next,
+        listen,
     };
     pub const Request = abi.Ps2Protocol.Request;
 };

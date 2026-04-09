@@ -563,8 +563,22 @@ pub const HpetProtocol = util.Protocol(struct {
 });
 
 pub const Ps2Protocol = struct {
+    pub const Listen = struct {
+        sender: caps.Sender,
+        pub const Response = Result(void, sys.ErrorEnum);
+        pub const Union = Request;
+    };
+
+    pub const Request = lpc.Request(&.{
+        Listen,
+    });
+};
+
+pub const InputListenerProtocol = struct {
     pub const Next = struct {
-        pub const Response = Result(input.Event, sys.ErrorEnum);
+        ev: input.Event,
+
+        pub const Response = void;
         pub const Union = Request;
     };
 

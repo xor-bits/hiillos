@@ -73,13 +73,19 @@ var dir: std.atomic.Value(i32) = .init(1);
 fn tickKey() !void {
     var local_dir: i32 = 1;
 
+    const rx, const tx = try abi.caps.channel();
+    const result: abi.Ps2Protocol.Listen.Response =
+        try abi.lpc.call(abi.Ps2Protocol.Listen, .{
+            .sender = tx,
+        }, abi.caps.COMMON_PS2);
+    try result.asErrorUnion();
+
     while (true) {
-        const ev_result = try abi.lpc.call(
-            abi.Ps2Protocol.Next,
-            .{},
-            abi.caps.COMMON_PS2,
+        const ev_result = try abi.lpc.deserialize(
+            abi.InputListenerProtocol.Next,
+            try rx.recv(),
         );
-        const ev = try ev_result.asErrorUnion();
+        const ev = ev_result.ev;
 
         switch (ev) {
             .keyboard => |kb_ev| {

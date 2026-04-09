@@ -162,17 +162,22 @@ fn inputThreadMain(input: caps.Sender) !void {
         try self.setPrio(0);
     }
 
+    const rx, const tx = try abi.caps.channel();
+    const result: abi.Ps2Protocol.Listen.Response =
+        try abi.lpc.call(abi.Ps2Protocol.Listen, .{
+            .sender = tx,
+        }, input);
+    try result.asErrorUnion();
+
     while (true) {
-        const ev_result = try abi.lpc.call(
-            abi.Ps2Protocol.Next,
-            .{},
-            input,
+        const ev_result = try abi.lpc.deserialize(
+            abi.InputListenerProtocol.Next,
+            try rx.recv(),
         );
-        const ev = try ev_result.asErrorUnion();
+        const ev = ev_result.ev;
 
         system_lock.lock();
         defer system_lock.unlock();
-
         system.event(ev) catch |err| {
             log.err("event handler failure: {}", .{err});
         };

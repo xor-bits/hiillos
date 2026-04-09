@@ -15,6 +15,18 @@ pub const Error = error{
 
 //
 
+pub fn send(
+    msg: anytype,
+    sender: caps.Sender,
+) sys.Error!void {
+    const request = @unionInit(
+        @TypeOf(msg).Union,
+        @typeName(@TypeOf(msg)),
+        msg,
+    );
+    try sender.send(try serialize(request));
+}
+
 pub fn call(
     comptime Req: type,
     msg: Req,
