@@ -56,7 +56,7 @@ pub fn syscall(trap: *arch.TrapRegs) void {
     handle_syscall(id, thread, trap) catch |err| {
         @branchHint(.cold);
         if (err != Error.Retry)
-            log.warn("syscall error {}: {}", .{ id, err });
+            log.warn("syscall error {}: {} ({})", .{ id, err, trap.readMessage() });
         trap.syscall_id = abi.sys.encode(err);
     };
 

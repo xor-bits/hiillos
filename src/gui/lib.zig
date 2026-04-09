@@ -598,32 +598,38 @@ pub const Framebuffer = struct {
 
     pub fn calculateFrameSize(size: Size) error{Overflow}!struct { pitch: u32, bytes: u32 } {
         const real_width = try std.math.ceilPowerOfTwo(u32, size[0]);
-        const bytes = try std.math.mul(
-            u32,
-            try std.math.mul(
-                u32,
-                real_width,
-                try std.math.ceilPowerOfTwo(u32, size[1]),
-            ),
-            4,
-        );
+        const real_height = try std.math.ceilPowerOfTwo(u32, size[1]);
+        const real_pixels = try std.math.mul(u32, real_width, real_height);
+        const bytes = try std.math.mul(u32, real_pixels, 4);
+        const pitch = real_width * 4;
 
-        return .{ .pitch = real_width * 4, .bytes = bytes };
-    }
-
-    pub fn update(self: @This(), new: Size) !?@This() {
-        const new_info = try calculateFrameSize(new);
-        if (self.bytes >= new_info.bytes) {
-            // the old shmem can already hold the new framebuffer
-            return null;
-        }
-
-        return try .init(new);
+        return .{ .pitch = pitch, .bytes = bytes };
     }
 
     pub fn image(self: @This(), mapped_fb: []volatile u8) abi.util.Image([]volatile u8) {
-        if (mapped_fb.len < @as(u64, self.pitch) * self.size[1]) {
-            std.log.debug("mapped fb len less than size: {} < {any}", .{ mapped_fb.len, self });
+        if (self.bytes > mapped_fb.len) {
+            log.err("wm gave wrong shmem size info ({} > {})", .{
+                self.bytes, mapped_fb.len,
+            });
+            return .{
+                .width = 0,
+                .height = 0,
+                .pitch = 1,
+                .bits_per_pixel = 32,
+                .pixel_array = &.{},
+            };
+        }
+        if (@as(u64, self.pitch) * self.size[1] > self.bytes) {
+            log.err("wm gave wrong window size info ({} * {} > {})", .{
+                self.pitch, self.size[1], self.bytes,
+            });
+            return .{
+                .width = 0,
+                .height = 0,
+                .pitch = 1,
+                .bits_per_pixel = 32,
+                .pixel_array = &.{},
+            };
         }
         // std.debug.assert(mapped_fb.len >= @as(u64, self.pitch) * self.size[0] * 4);
         return .{

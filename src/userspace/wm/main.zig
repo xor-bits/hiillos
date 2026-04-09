@@ -403,14 +403,14 @@ const Window = struct {
     server_id: usize,
     rect: gui.Rect,
 
-    fb: ?Framebuffer = null,
+    fb: Framebuffer,
 
     conn: *Connection,
 
     window_list_node: std.DoublyLinkedList.Node = .{},
 
     pub fn deinit(self: @This()) void {
-        if (self.fb) |fb| fb.deinit();
+        self.fb.deinit();
     }
 
     pub fn pushEvent(self: *const @This(), ev: gui.WindowEvent.Inner) void {
@@ -420,17 +420,12 @@ const Window = struct {
         } });
     }
 
-    pub fn attach(self: *@This(), shmem: gui.Framebuffer) !void {
-        if (self.fb) |old| old.deinit();
-        self.fb = try Framebuffer.init(shmem);
-    }
-
     pub fn resize(self: *@This()) !void {
-        if (self.fb) |*fb| {
-            try fb.resize(self.rect.size, self.conn, self.client_id);
-        } else {
-            self.fb = try Framebuffer.init(try gui.Framebuffer.init(self.rect.size));
-        }
+        try self.fb.resize(
+            self.rect.size,
+            self.conn,
+            self.client_id,
+        );
     }
 };
 
@@ -458,15 +453,7 @@ const Framebuffer = struct {
             .pixel_array = @ptrFromInt(shmem_addr),
         };
 
-        return .{
-            .fb = fb,
-            .shmem = .{
-                .shmem = .{},
-                .pitch = shmem.pitch,
-                .size = shmem.size,
-                .bytes = shmem.bytes,
-            },
-        };
+        return .{ .fb = fb, .shmem = shmem };
     }
 
     pub fn deinit(self: @This()) void {
@@ -485,26 +472,31 @@ const Framebuffer = struct {
     ) !void {
         std.debug.assert(size[0] != 0);
         std.debug.assert(size[1] != 0);
+
         if (@reduce(.And, self.shmem.size == size)) {
             return;
-        } else if (try self.shmem.update(size)) |new| {
-            self.deinit();
-            self.* = try Framebuffer.init(new);
+        }
 
-            resize_event_conn.pushEvent(.{ .window = .{
-                .window_id = resize_event_window_id,
-                .event = .{ .resize = new },
-            } });
-        } else {
+        const new_info = try gui.Framebuffer.calculateFrameSize(size);
+
+        if (self.shmem.bytes >= new_info.bytes) {
+            // the old shmem can already hold the new framebuffer
+
+            self.shmem.shmem = .{};
+            self.shmem.size = size;
+            self.shmem.pitch = new_info.pitch;
             self.fb.width = size[0];
             self.fb.height = size[1];
-            self.shmem.size = size;
-
-            resize_event_conn.pushEvent(.{ .window = .{
-                .window_id = resize_event_window_id,
-                .event = .{ .resize = self.shmem },
-            } });
+            self.fb.pitch = new_info.pitch;
+        } else {
+            self.deinit();
+            self.* = try Framebuffer.init(try gui.Framebuffer.init(size));
         }
+
+        resize_event_conn.pushEvent(.{ .window = .{
+            .window_id = resize_event_window_id,
+            .event = .{ .resize = self.shmem },
+        } });
     }
 };
 
@@ -766,6 +758,8 @@ const System = struct {
                 .size = shmem.size,
             },
 
+            .fb = try Framebuffer.init(shmem),
+
             // the window is closed before the connection, so the pointer stays valid
             .conn = conn,
         };
@@ -773,8 +767,6 @@ const System = struct {
         const old_focused_window = self.focusedWindow();
         self.windows_list.append(&window_node.window_list_node);
         errdefer std.debug.assert(self.windows_list.pop() == &window_node.window_list_node);
-
-        try window_node.attach(shmem);
 
         try self.windows_map.putNoClobber(server_id, window_node);
         try conn.window_server_ids.putNoClobber(client_id, server_id);
@@ -828,7 +820,7 @@ const System = struct {
                 log.err("failed to resize a window: {}", .{err});
             };
 
-            const window_fb = (window.fb orelse return).fb;
+            const window_fb = window.fb.fb;
 
             const window_aabb = window.rect.asAabb();
             const window_border_aabb = window_aabb.border(window_borders);
