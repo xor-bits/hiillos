@@ -25,18 +25,26 @@ pub fn writePartition(
     // std.debug.print("{} clusters\n", .{info.total_clusters});
 
     // calculate how big the FATs can be,
-    // it can grows all the way to the cluster alignment
+    // it can grow all the way to the cluster alignment
     const reserved_sectors = 2;
-    const fat_region_min_bytes = info.total_clusters * @sizeOf(u32) * 2;
-    const fat_region_min_sectors = ceilDiv(fat_region_min_bytes, info.sector_size);
+    const fats = 2;
+    const fat_table_min_bytes = ceilMultipleOf(info.total_clusters * @sizeOf(u32), info.sector_size);
+    const fat_region_min_bytes = fat_table_min_bytes * fats;
+    const fat_region_min_sectors = @divExact(fat_region_min_bytes, info.sector_size);
     const fat_region_start_sector = reserved_sectors;
     const fat_region_end_sector = ceilMultipleOf(
         reserved_sectors + fat_region_min_sectors,
         info.sectors_per_cluster,
     );
     const fat_region_sectors = fat_region_end_sector - fat_region_start_sector;
-    std.debug.assert(ceilMultipleOf(fat_region_sectors, 2) == fat_region_sectors);
-    info.fat_table_sectors = @divExact(fat_region_sectors, 2);
+    std.debug.print("{}, {}, {}, {}\n", .{
+        fat_region_start_sector,
+        fat_region_end_sector,
+        fat_region_min_sectors,
+        fat_region_sectors,
+    });
+    std.debug.assert(ceilMultipleOf(fat_region_sectors, fats) == fat_region_sectors);
+    info.fat_table_sectors = @divExact(fat_region_sectors, fats);
     info.fat_table_len = info.fat_table_sectors * sector_size / @sizeOf(u32);
 
     var sector_alloc: Bump = .{};
