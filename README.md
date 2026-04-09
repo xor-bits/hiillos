@@ -35,10 +35,8 @@ zig build run --prominent-compile-errors --summary none \
     -Dgdb=true \
     # compile faster and with debug info
     -Doptimize=Debug \
-    # compile root specifically with higher optimization to speed up initfs decompression
-    -Doptimize_root=ReleaseSafe \
-    # less initfs compression for faster builds
-    -Dzst_l=10
+    # disable initfs compression for faster builds
+    -Draw_initfs
 ```
 
 ## Building an IMG

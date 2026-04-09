@@ -16,6 +16,7 @@ const Opts = struct {
     cpus: u8,
     kvm: bool,
     sound: bool,
+    raw_initfs: bool,
     comp_level: u8,
     comp_threads: u8,
     fb_log: bool,
@@ -102,6 +103,10 @@ fn options(b: *std.Build) Opts {
         // QEMU virtio-sound device
         .sound = b.option(bool, "sound",
             \\Add virtio-sound device to QEMU
+        ) orelse false,
+
+        .raw_initfs = b.option(bool, "raw_initfs",
+            \\skip compressing and decompressing initfs.tar with zstd
         ) orelse false,
 
         // initfs compression level
@@ -271,7 +276,7 @@ fn createImg(
         .name = "disk-image",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/disk_image.zig"),
-            .optimize = .ReleaseSafe,
+            .optimize = .Debug,
             .target = opts.native_target,
         }),
     });
@@ -302,9 +307,14 @@ fn createInitfsTarZst(
     const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
         "c",
-        b.fmt("-Izstd -{} -T{}", .{ opts.comp_level, opts.comp_threads }),
-        "-f",
     });
+    if (!opts.raw_initfs) {
+        initfs_tar_zst.addArg(b.fmt("-Izstd -{} -T{}", .{
+            opts.comp_level,
+            opts.comp_threads,
+        }));
+    }
+    initfs_tar_zst.addArg("-f");
     const initfs_tar_zst_file = initfs_tar_zst.addOutputFileArg("initfs.tar.zst");
     initfs_tar_zst.addArg("-C");
     initfs_tar_zst.addDirectoryArg(initfs.getDirectory());
@@ -593,6 +603,7 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 
     const config = b.addOptions();
     config.addOption(bool, "fb_log", opts.fb_log);
+    config.addOption(bool, "raw_initfs", opts.raw_initfs);
     mod.addOptions("config", config);
 
     const test_mod = b.createModule(.{

@@ -69,7 +69,7 @@ fn vmmVectorGrow(top: *usize, n_pages: usize) !void {
     }
 }
 
-var initfs_tar: std.ArrayList(u8) = .{};
+var initfs_tar: []const u8 = &.{};
 
 //
 
@@ -112,9 +112,9 @@ fn run() !void {
     log.info("decompressing", .{});
     try decompress();
 
+    log.info("initfs ready", .{});
     initfs_ready.complete();
 
-    log.info("initfs ready", .{});
     var server = abi.FsProtocol.Server(.{
         .scope = if (abi.conf.LOG_SERVERS) .initfs else null,
     }, .{
@@ -127,17 +127,21 @@ fn run() !void {
 
 fn decompress() !void {
     const initfs: []const u8 = getBootInfoAddr().initfsData();
-    var initfs_tar_zst = std.Io.Reader.fixed(initfs);
 
-    var initfs_tar_writer = std.Io.Writer.Allocating.init(vmm_vector);
+    if (abi.conf.SKIP_DECOMPRESS) {
+        initfs_tar = initfs;
+    } else {
+        var initfs_tar_zst = std.Io.Reader.fixed(initfs);
+        var initfs_tar_writer = std.Io.Writer.Allocating.init(vmm_vector);
 
-    var zstd_decompressor = std.compress.zstd.Decompress.init(&initfs_tar_zst, "", .{});
-    _ = try zstd_decompressor.reader.streamRemaining(&initfs_tar_writer.writer);
+        var zstd_decompressor = std.compress.zstd.Decompress.init(&initfs_tar_zst, "", .{});
+        _ = try zstd_decompressor.reader.streamRemaining(&initfs_tar_writer.writer);
 
-    initfs_tar = initfs_tar_writer.toArrayList();
+        initfs_tar = initfs_tar_writer.toArrayList().items;
+    }
 
-    log.info("decompressed initfs size: 0x{x}", .{initfs_tar.items.len});
-    std.debug.assert(std.mem.eql(u8, initfs_tar.items[257..][0..8], "ustar\x20\x20\x00"));
+    log.info("decompressed initfs size: 0x{x}", .{initfs_tar.len});
+    std.debug.assert(std.mem.eql(u8, initfs_tar[257..][0..8], "ustar\x20\x20\x00"));
 }
 
 fn openFileHandler(_: void, _: u32, req: struct { u128 }) struct { Error!void, caps.Frame } {
@@ -360,9 +364,9 @@ pub fn dirIterator() DirIterator {
 
 pub fn inodeOf(header: *const TarEntryHeader) usize {
     const header_ptr = @intFromPtr(header);
-    const blocks_ptr = @intFromPtr(initfs_tar.items.ptr);
+    const blocks_ptr = @intFromPtr(initfs_tar.ptr);
     std.debug.assert(blocks_ptr <= header_ptr);
-    std.debug.assert(header_ptr + @sizeOf(TarEntryHeader) <= blocks_ptr + initfs_tar.items.len);
+    std.debug.assert(header_ptr + @sizeOf(TarEntryHeader) <= blocks_ptr + initfs_tar.len);
     std.debug.assert((header_ptr - blocks_ptr) % 512 == 0);
     return (header_ptr - blocks_ptr) / 512;
 }
@@ -387,8 +391,8 @@ pub fn readHeader(header_i: usize) *const TarEntryHeader {
 
 fn tarBlocks() []const [512]u8 {
     const Block = [512]u8;
-    const len = initfs_tar.items.len / 512;
-    const blocks_ptr: [*]const Block = @ptrCast(initfs_tar.items.ptr);
+    const len = initfs_tar.len / 512;
+    const blocks_ptr: [*]const Block = @ptrCast(initfs_tar.ptr);
     return blocks_ptr[0..len];
 }
 
@@ -422,8 +426,8 @@ const Iterator = struct {
 };
 
 fn iterator() Iterator {
-    const len = initfs_tar.items.len / 512;
-    const blocks_ptr: [*]const [512]u8 = @ptrCast(initfs_tar.items.ptr);
+    const len = initfs_tar.len / 512;
+    const blocks_ptr: [*]const [512]u8 = @ptrCast(initfs_tar.ptr);
 
     return .{
         .blocks = blocks_ptr[0..len],

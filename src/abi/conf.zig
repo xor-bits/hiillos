@@ -4,6 +4,7 @@ const config = @import("config");
 // make these into zig build options
 
 pub const ENABLE_FB_LOG: bool = config.fb_log;
+pub const SKIP_DECOMPRESS: bool = config.raw_initfs;
 
 pub const LOG_EVERYTHING: bool = false;
 pub const LOG_STATS: bool = LOG_EVERYTHING or false;
