@@ -77,13 +77,20 @@ pub fn main() !void {
                 term.writeByte(byte);
                 term.flush(false);
             },
-            .fg_colour => {},
-            .bg_colour => {},
-            .reset => {},
-            .cursor_up => term.cursor.y -|= 1,
-            .cursor_down => term.cursor.y +|= 1,
-            .cursor_right => term.cursor.x +|= 1,
-            .cursor_left => term.cursor.x -|= 1,
+            .fg_colour => |col| {
+                term.fg = col;
+            },
+            .bg_colour => |col| {
+                term.bg = col;
+            },
+            .reset => {
+                term.fg = .white;
+                term.bg = .black;
+            },
+            .cursor_up => |count| term.cursor.y -|= @truncate(count),
+            .cursor_down => |count| term.cursor.y +|= @truncate(count),
+            .cursor_right => |count| term.cursor.x +|= @truncate(count),
+            .cursor_left => |count| term.cursor.x -|= @truncate(count),
             .cursor_next_line => |count| {
                 term.cursor.y +|= std.math.lossyCast(u32, count);
                 term.cursor.x = 0;
@@ -94,12 +101,21 @@ pub fn main() !void {
             },
             .erase_in_display => |mode| {
                 term.wrapCursor();
-                const area_to_clear = switch (mode) {
-                    .cursor_to_end => term.terminal_buf_front[term.cursor.x + term.cursor.y * term.size.width ..],
-                    .start_to_cursor => term.terminal_buf_front[0 .. term.cursor.x + term.cursor.y * term.size.width],
-                    .start_to_end => term.terminal_buf_front,
-                };
-                @memset(area_to_clear, ' ');
+                const limit = term.cursor.x + term.cursor.y * term.size.width;
+                switch (mode) {
+                    .cursor_to_end => {
+                        @memset(term.terminal_buf_front[limit..], ' ');
+                        @memset(term.terminal_buf_front_col[limit..], .{});
+                    },
+                    .start_to_cursor => {
+                        @memset(term.terminal_buf_front[0..limit], ' ');
+                        @memset(term.terminal_buf_front_col[0..limit], .{});
+                    },
+                    .start_to_end => {
+                        @memset(term.terminal_buf_front, ' ');
+                        @memset(term.terminal_buf_front_col, .{});
+                    },
+                }
             },
             .cursor_push => term.cursor_store = term.cursor,
             .cursor_pop => term.cursor = term.cursor_store,
@@ -193,8 +209,10 @@ const Pos = struct {
 pub const Terminal = struct {
     /// currently visible text data
     terminal_buf_front: []u8 = &.{},
+    terminal_buf_front_col: []CellColor = &.{},
     /// new text data, before a flush
     terminal_buf_back: []u8 = &.{},
+    terminal_buf_back_col: []CellColor = &.{},
 
     /// terminal size
     size: struct {
@@ -204,6 +222,8 @@ pub const Terminal = struct {
     /// cursor position
     cursor: Pos = .{},
     cursor_store: Pos = .{},
+    fg: abi.util.Colour = .white,
+    bg: abi.util.Colour = .black,
 
     /// cpu accessible pixel buffer
     framebuffer: gui.MappedFramebuffer,
@@ -211,6 +231,38 @@ pub const Terminal = struct {
     /// wm ipc handle, to send damaged regions
     wm_display: gui.WmDisplay,
     window: gui.Window,
+
+    const CellColor = struct {
+        fg_r: u8 = 0xff,
+        fg_g: u8 = 0xff,
+        fg_b: u8 = 0xff,
+        bg_r: u8 = 0x00,
+        bg_g: u8 = 0x00,
+        bg_b: u8 = 0x00,
+
+        fn pack(fg: abi.util.Colour, bg: abi.util.Colour) @This() {
+            return .{
+                .fg_r = fg.r,
+                .fg_g = fg.g,
+                .fg_b = fg.b,
+                .bg_r = bg.r,
+                .bg_g = bg.g,
+                .bg_b = bg.b,
+            };
+        }
+
+        fn unpack(self: @This()) [2]abi.util.Colour {
+            return .{ .{
+                .r = self.fg_r,
+                .g = self.fg_g,
+                .b = self.fg_b,
+            }, .{
+                .r = self.bg_r,
+                .g = self.bg_g,
+                .b = self.bg_b,
+            } };
+        }
+    };
 
     pub fn new(
         info: gui.Framebuffer,
@@ -232,6 +284,8 @@ pub const Terminal = struct {
         self: *@This(),
         info: ?gui.Framebuffer,
     ) !void {
+        const gpa = abi.mem.server_page_allocator;
+
         if (info) |new_info|
             try self.framebuffer.update(new_info, caps.Vmem.self);
 
@@ -245,47 +299,32 @@ pub const Terminal = struct {
         };
         const old_terminal_buf_size = old_size.width * old_size.height;
         const terminal_buf_size = self.size.width * self.size.height;
-        const whole_terminal_buf = try abi.mem.server_page_allocator.alloc(u8, terminal_buf_size * 2);
+        const whole_terminal_buf = try gpa.alloc(u8, terminal_buf_size * 2);
+        const whole_terminal_buf_col = try gpa.alloc(CellColor, terminal_buf_size * 2);
 
-        for (whole_terminal_buf) |*b| {
-            b.* = ' ';
-        }
+        @memset(whole_terminal_buf, ' ');
+        @memset(whole_terminal_buf_col, .{});
+
         for (0..@min(old_size.height, self.size.height)) |_y| {
             for (0..@min(old_size.width, self.size.width)) |_x| {
                 whole_terminal_buf[_x + _y * self.size.width] =
                     self.terminal_buf_front[_x + _y * old_size.width];
+                whole_terminal_buf_col[_x + _y * self.size.width] =
+                    self.terminal_buf_front_col[_x + _y * old_size.width];
             }
         }
 
         if (old_terminal_buf_size != 0) {
-            abi.mem.server_page_allocator.free(self.terminal_buf_front.ptr[0 .. old_terminal_buf_size * 2]);
+            gpa.free(self.terminal_buf_front.ptr[0 .. old_terminal_buf_size * 2]);
+            gpa.free(self.terminal_buf_front_col.ptr[0 .. old_terminal_buf_size * 2]);
         }
         self.terminal_buf_front = whole_terminal_buf[0..terminal_buf_size];
+        self.terminal_buf_front_col = whole_terminal_buf_col[0..terminal_buf_size];
         self.terminal_buf_back = whole_terminal_buf[terminal_buf_size..];
+        self.terminal_buf_back_col = whole_terminal_buf_col[terminal_buf_size..];
 
         self.wrapCursor();
         self.flush(true);
-    }
-
-    pub const Writer = struct {
-        term: *Terminal,
-
-        pub const Error = error{};
-        pub const Self = @This();
-
-        pub fn writeAll(self: *const Self, bytes: []const u8) !void {
-            self.term.writeBytes(bytes);
-        }
-
-        pub fn writeBytesNTimes(self: *const Self, bytes: []const u8, n: usize) !void {
-            for (0..n) |_| {
-                self.term.writeBytes(bytes);
-            }
-        }
-    };
-
-    pub fn writer(self: *@This()) Writer {
-        return .{ .term = self };
     }
 
     pub fn writeBytes(self: *@This(), bytes: []const u8) void {
@@ -312,6 +351,7 @@ pub const Terminal = struct {
 
                 if (self.terminal_buf_front.len == 0) return;
                 self.terminal_buf_front[self.cursor.x + self.cursor.y * self.size.width] = byte;
+                self.terminal_buf_front_col[self.cursor.x + self.cursor.y * self.size.width] = .pack(self.fg, self.bg);
             },
         }
 
@@ -334,7 +374,9 @@ pub const Terminal = struct {
             self.cursor.y -= 1;
 
             @memset(self.terminal_buf_front[0..self.size.width], ' ');
+            @memset(self.terminal_buf_front_col[0..self.size.width], .{});
             std.mem.rotate(u8, self.terminal_buf_front, self.size.width);
+            std.mem.rotate(CellColor, self.terminal_buf_front_col, self.size.width);
         }
     }
 
@@ -348,17 +390,21 @@ pub const Terminal = struct {
                 const y: u32 = @truncate(_y);
 
                 const i = x + y * self.size.width;
-                if (self.terminal_buf_front[i] == self.terminal_buf_back[i]) {
+                if (self.terminal_buf_front[i] == self.terminal_buf_back[i] and
+                    std.meta.eql(self.terminal_buf_front_col[i], self.terminal_buf_back_col[i]))
+                {
                     continue;
                 }
                 self.terminal_buf_back[i] = self.terminal_buf_front[i];
+                self.terminal_buf_back_col[i] = self.terminal_buf_front_col[i];
 
                 // update the physical pixel
-                const letter = &abi.font.glyphs[self.terminal_buf_front[i]];
                 var to = self.framebuffer.image.subimage(x * 8, y * 16, 8, 16) catch {
                     return;
                 };
-                to.fillGlyph(letter, 0xFF_FFFFFF, 0xFF_000000);
+                const letter = &abi.font.glyphs[self.terminal_buf_front[i]];
+                const fg, const bg = self.terminal_buf_front_col[i].unpack();
+                to.fillGlyph(letter, @bitCast(fg), @bitCast(bg));
 
                 damage.addRect(.{
                     .pos = .{ @as(i32, @intCast(x)) * 8, @as(i32, @intCast(y)) * 16 },

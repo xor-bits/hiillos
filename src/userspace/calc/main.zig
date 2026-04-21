@@ -11,9 +11,9 @@ comptime {
     abi.rt.installRuntime();
 }
 
-const background_col = gui.Colour.hex("#000000") catch unreachable;
-const button_col = gui.Colour.hex("#353535") catch unreachable;
-const text_col = gui.Colour.hex("#ffffff") catch unreachable;
+const background_col = abi.util.Colour.hex("#000000") catch unreachable;
+const button_col = abi.util.Colour.hex("#353535") catch unreachable;
+const text_col = abi.util.Colour.hex("#ffffff") catch unreachable;
 
 //
 

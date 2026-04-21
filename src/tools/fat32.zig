@@ -408,6 +408,7 @@ fn writeFatRegion(
                 last_cluster
             else
                 file.cluster + @as(u32, @intCast(i)) + 1;
+            // FIXME: thread 403056 panic: index out of bounds: index 105856, len 105856
             fat_table[file.cluster + i] = next;
         }
     }
