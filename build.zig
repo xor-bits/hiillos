@@ -132,9 +132,10 @@ pub fn build(b: *std.Build) !void {
 
     const abi = createAbi(b, &opts);
     const gui = createLibGui(b, abi);
+    const rbtree = b.dependency("rbtree", .{}).module("rbtree");
     const root_bin = createRootBin(b, &opts, abi);
-    const kernel_elf = try createKernelElf(b, &opts, abi);
-    const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui);
+    const kernel_elf = try createKernelElf(b, &opts, abi, rbtree);
+    const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui, rbtree);
     const hiillos_img = createImg(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
     runQemuProfiler(b, &opts, kernel_elf, hiillos_img);
@@ -296,12 +297,13 @@ fn createInitfsTarZst(
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
+    rbtree: *std.Build.Module,
 ) !std.Build.LazyPath {
 
     // create virtual initfs.tar.zst root
     const initfs = b.addNamedWriteFiles("create virtual initfs root");
 
-    try createInitfsTarZstProcesses(b, opts, abi, gui, initfs);
+    try createInitfsTarZstProcesses(b, opts, abi, gui, rbtree, initfs);
     try createInitfsTarZstAssets(b, initfs);
 
     const initfs_tar_zst = b.addSystemCommand(&.{
@@ -331,6 +333,7 @@ fn createInitfsTarZstProcesses(
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
+    rbtree: *std.Build.Module,
     initfs: *std.Build.Step.WriteFile,
 ) !void {
     const userspace_src_dir_path = b.path("src/userspace")
@@ -352,6 +355,7 @@ fn createInitfsTarZstProcesses(
             opts,
             abi,
             gui,
+            rbtree,
             initfs,
             entry.name,
         );
@@ -363,6 +367,7 @@ fn createInitfsTarZstProcess(
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
+    rbtree: *std.Build.Module,
     initfs: *std.Build.Step.WriteFile,
     name: []const u8,
 ) !void {
@@ -384,6 +389,7 @@ fn createInitfsTarZstProcess(
             .imports = &.{
                 .{ .name = "abi", .module = abi },
                 .{ .name = "gui", .module = gui },
+                .{ .name = "rbtree", .module = rbtree },
             },
             .target = opts.user_target,
             .optimize = opts.optimize,
@@ -475,6 +481,7 @@ fn createKernelElf(
     b: *std.Build,
     opts: *const Opts,
     abi: *std.Build.Module,
+    rbtree: *std.Build.Module,
 ) !std.Build.LazyPath {
     const git_rev_run = b.addSystemCommand(&.{ "git", "rev-parse", "HEAD" });
     const git_rev = git_rev_run.captureStdOut();
@@ -504,7 +511,7 @@ fn createKernelElf(
             },
             .{
                 .name = "rbtree",
-                .module = b.dependency("rbtree", .{}).module("rbtree"),
+                .module = rbtree,
             },
         },
     });

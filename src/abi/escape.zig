@@ -1,4 +1,5 @@
 const std = @import("std");
+const gui = @import("gui");
 
 const util = @import("util.zig");
 
@@ -69,7 +70,9 @@ pub const Parser = struct {
                     },
                     'm' => continue :state .cmd_sgr,
                     'A'...'F', 'J', 's', 'u' => continue :state .cmd_simple,
-                    else => continue :state .restart,
+                    else => {
+                        continue :state .restart;
+                    },
                 }
             },
             .cmd_sgr => {
@@ -82,32 +85,32 @@ pub const Parser = struct {
                 switch (sgr) {
                     0 => return .{ .reset = {} },
                     38 => {
-                        if (args.len == 3 and args[1] == '5') {
+                        if (args.len == 3 and args[1] == 5) {
                             // 5;n
                             // TODO: indexed colours
                             continue :state .restart;
-                        } else if (args.len == 5 and args[1] == '2') {
+                        } else if (args.len == 5 and args[1] == 2) {
                             // 2;r;g;b
-                            return .{ .fg_colour = util.Pixel{
-                                .red = @truncate(args[2] orelse 0),
-                                .green = @truncate(args[3] orelse 0),
-                                .blue = @truncate(args[4] orelse 0),
+                            return .{ .fg_colour = .{
+                                .r = @truncate(args[2] orelse 0),
+                                .g = @truncate(args[3] orelse 0),
+                                .b = @truncate(args[4] orelse 0),
                             } };
                         } else {
                             continue :state .restart;
                         }
                     },
                     48 => {
-                        if (args.len == 3 and args[1] == '5') {
+                        if (args.len == 3 and args[1] == 5) {
                             // 5;n
                             // TODO: indexed colours
                             continue :state .restart;
-                        } else if (args.len == 5 and args[1] == '2') {
+                        } else if (args.len == 5 and args[1] == 2) {
                             // 2;r;g;b
-                            return .{ .bg_colour = util.Pixel{
-                                .red = @truncate(args[2] orelse 0),
-                                .green = @truncate(args[3] orelse 0),
-                                .blue = @truncate(args[4] orelse 0),
+                            return .{ .bg_colour = .{
+                                .r = @truncate(args[2] orelse 0),
+                                .g = @truncate(args[3] orelse 0),
+                                .b = @truncate(args[4] orelse 0),
                             } };
                         } else {
                             continue :state .restart;
@@ -115,7 +118,9 @@ pub const Parser = struct {
                     },
 
                     // TODO: implement more of these
-                    else => continue :state .restart,
+                    else => {
+                        continue :state .restart;
+                    },
                 }
             },
             .cmd_simple => {
@@ -132,11 +137,14 @@ pub const Parser = struct {
                     'D' => return .{ .cursor_left = arg_0_default_1 },
                     'E' => return .{ .cursor_next_line = arg_0_default_1 },
                     'F' => return .{ .cursor_prev_line = arg_0_default_1 },
-                    'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch
-                        continue :state .restart },
+                    'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch {
+                        continue :state .restart;
+                    } },
                     's' => return .cursor_push,
                     'u' => return .cursor_pop,
-                    else => continue :state .restart,
+                    else => {
+                        continue :state .restart;
+                    },
                 }
             },
         }
@@ -173,6 +181,8 @@ const NumArrayBuilder = struct {
 
         self.numbers[self.numbers_len] = if (self.n_len == 0) null else self.n;
         self.numbers_len += 1;
+        self.n = 0;
+        self.n_len = 0;
     }
 
     fn pop(self: *@This()) ?usize {
@@ -189,12 +199,16 @@ const NumArrayBuilder = struct {
     }
 };
 
-pub fn setForeground(col: util.Pixel) Control {
+pub fn setForeground(col: util.Colour) Control {
     return .{ .fg_colour = col };
 }
 
-pub fn setBackground(col: util.Pixel) Control {
+pub fn setBackground(col: util.Colour) Control {
     return .{ .bg_colour = col };
+}
+
+pub fn reset() Control {
+    return .reset;
 }
 
 pub fn cursorUp(count: usize) Control {
@@ -244,9 +258,9 @@ pub const Control = union(enum) {
     ch: u8,
 
     /// \x1b[38;2;<r>;<g>;<b>m
-    fg_colour: util.Pixel,
+    fg_colour: util.Colour,
     /// \x1b[48;2;<r>;<g>;<b>m
-    bg_colour: util.Pixel,
+    bg_colour: util.Colour,
     /// \x1b[m
     reset,
 
@@ -282,11 +296,11 @@ pub const Control = union(enum) {
 
             .fg_colour => |c| try writer.print(
                 "\x1b[38;2;{};{};{}m",
-                .{ c.red, c.green, c.blue },
+                .{ c.r, c.g, c.b },
             ),
             .bg_colour => |c| try writer.print(
                 "\x1b[48;2;{};{};{}m",
-                .{ c.red, c.green, c.blue },
+                .{ c.r, c.g, c.b },
             ),
             .reset => try writer.print(
                 "\x1b[m",

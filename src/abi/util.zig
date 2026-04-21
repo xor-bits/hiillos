@@ -330,10 +330,10 @@ pub fn Image(storage: type) type {
             for (0..to.height) |y| {
                 for (0..to.width) |x| {
                     const from_idx = x * from_pixel_size + y * from.pitch;
-                    const from_pixel: *const volatile Pixel = @ptrCast(&from.pixel_array[from_idx]);
+                    const from_pixel: *const volatile Colour = @ptrCast(&from.pixel_array[from_idx]);
 
                     const to_idx = x * to_pixel_size + y * to.pitch;
-                    const to_pixel: *volatile Pixel = @ptrCast(&to.pixel_array[to_idx]);
+                    const to_pixel: *volatile Colour = @ptrCast(&to.pixel_array[to_idx]);
 
                     // print("loc: {d},{d}", .{ x, y });
                     // print("from: {*} to: {*}", .{ from_pixel, to_pixel });
@@ -358,10 +358,10 @@ pub fn Image(storage: type) type {
             for (0..to.height) |y| {
                 for (0..to.width) |x| {
                     const from_idx = x * from_pixel_size + y * from.pitch;
-                    const from_pixel: *const volatile Pixel = @ptrCast(&from.pixel_array[from_idx]);
+                    const from_pixel: *const volatile Colour = @ptrCast(&from.pixel_array[from_idx]);
 
                     const to_idx = x * to_pixel_size + y * to.pitch;
-                    const to_pixel: *volatile Pixel = @ptrCast(&to.pixel_array[to_idx]);
+                    const to_pixel: *volatile Colour = @ptrCast(&to.pixel_array[to_idx]);
 
                     // if (x == 0 and y == 0) {
                     //     log.debug("from = {}, to = {}", .{ from_pixel.*, to_pixel.* });
@@ -372,39 +372,39 @@ pub fn Image(storage: type) type {
                         const f1 = @Vector(3, f32){ 1.0, 1.0, 1.0 };
 
                         const from_rgb = @Vector(3, f32){
-                            @floatFromInt(from_pixel.red),
-                            @floatFromInt(from_pixel.green),
-                            @floatFromInt(from_pixel.blue),
+                            @floatFromInt(from_pixel.r),
+                            @floatFromInt(from_pixel.g),
+                            @floatFromInt(from_pixel.b),
                         } / f255;
-                        const from_a = @as(f32, @floatFromInt(from_pixel.alpha)) / 255.0;
+                        const from_a = @as(f32, @floatFromInt(from_pixel.a)) / 255.0;
                         const from_av = @Vector(3, f32){ from_a, from_a, from_a };
                         const to_rgb = @Vector(3, f32){
-                            @floatFromInt(to_pixel.red),
-                            @floatFromInt(to_pixel.green),
-                            @floatFromInt(to_pixel.blue),
+                            @floatFromInt(to_pixel.r),
+                            @floatFromInt(to_pixel.g),
+                            @floatFromInt(to_pixel.b),
                         } / f255;
-                        const to_a = @as(f32, @floatFromInt(to_pixel.alpha)) / 255.0;
+                        const to_a = @as(f32, @floatFromInt(to_pixel.a)) / 255.0;
                         const to_av = @Vector(3, f32){ to_a, to_a, to_a };
 
                         const final = (from_rgb * from_av + to_rgb * to_av * (f1 - from_av)) * f255;
                         const final_a = (from_a + to_a * (1.0 - from_a)) * 255.0;
 
                         to_pixel.* = .{
-                            .red = @intFromFloat(final[0]),
-                            .green = @intFromFloat(final[1]),
-                            .blue = @intFromFloat(final[2]),
-                            .alpha = @intFromFloat(final_a),
+                            .r = @intFromFloat(final[0]),
+                            .g = @intFromFloat(final[1]),
+                            .b = @intFromFloat(final[2]),
+                            .a = @intFromFloat(final_a),
                         };
                     } else {
                         const _to = to_pixel.*;
                         const _from = from_pixel.*;
-                        const alpha: u1 = @intFromBool(_from.alpha != 0);
+                        const alpha: u1 = @intFromBool(_from.a != 0);
 
                         to_pixel.* = .{
-                            .red = _from.red * alpha + _to.red * (1 - alpha),
-                            .green = _from.green * alpha + _to.green * (1 - alpha),
-                            .blue = _from.blue * alpha + _to.blue * (1 - alpha),
-                            .alpha = 255,
+                            .r = _from.r * alpha + _to.r * (1 - alpha),
+                            .g = _from.g * alpha + _to.g * (1 - alpha),
+                            .b = _from.b * alpha + _to.b * (1 - alpha),
+                            .a = 255,
                         };
                     }
 
@@ -417,11 +417,48 @@ pub fn Image(storage: type) type {
     };
 }
 
-pub const Pixel = extern struct {
-    blue: u8,
-    green: u8,
-    red: u8,
-    alpha: u8 = 0xff,
+pub const Colour = extern struct {
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+    a: u8 = 0xff,
+
+    pub fn hex(name: []const u8) !@This() {
+        if (name.len != 7 and name.len != 9) {
+            return error.InvalidHexCode;
+        }
+
+        std.debug.assert(name[0] == '#');
+        const num = try std.fmt.parseInt(u32, name[1..], 16);
+
+        return .{
+            .r = @truncate((num & 0x00_ff_00_00) >> 16),
+            .g = @truncate((num & 0x00_00_ff_00) >> 8),
+            .b = @truncate(num & 0x00_00_00_ff),
+            .a = if (name.len == 7) 255 else @truncate(num >> 24),
+        };
+    }
+
+    pub fn mono(brightness: u8) @This() {
+        return .{ .r = brightness, .g = brightness, .b = brightness };
+    }
+
+    pub const red: Colour = .{ .r = 0xff };
+    pub const green: Colour = .{ .g = 0xff };
+    pub const blue: Colour = .{ .b = 0xff };
+    pub const yellow: Colour = .{ .r = 0xff, .g = 0xff };
+    pub const cyan: Colour = .{ .g = 0xff, .b = 0xff };
+    pub const magenta: Colour = .{ .r = 0xff, .b = 0xff };
+
+    pub const orange: Colour = .{ .r = 0xff, .g = 0x80 };
+    pub const pink: Colour = .{ .r = 0xff, .b = 0x80 };
+    pub const purple: Colour = .{ .b = 0xff, .r = 0x80 };
+
+    pub const white: Colour = .mono(0xff);
+    pub const light_grey: Colour = .mono(0x87);
+    pub const grey: Colour = .mono(0x37);
+    pub const dark_grey: Colour = .mono(0x0c);
+    pub const black: Colour = .mono(0x00);
 };
 
 //

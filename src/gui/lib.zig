@@ -60,50 +60,6 @@ pub fn loadImage(
     };
 }
 
-pub const Colour = extern struct {
-    b: u8 = 0,
-    g: u8 = 0,
-    r: u8 = 0,
-    a: u8 = 0xff,
-
-    pub fn hex(name: []const u8) !@This() {
-        if (name.len != 7 and name.len != 9) {
-            return error.InvalidHexCode;
-        }
-
-        std.debug.assert(name[0] == '#');
-        const num = try std.fmt.parseInt(u32, name[1..], 16);
-
-        return .{
-            .r = @truncate((num & 0x00_ff_00_00) >> 16),
-            .g = @truncate((num & 0x00_00_ff_00) >> 8),
-            .b = @truncate(num & 0x00_00_00_ff),
-            .a = if (name.len == 7) 255 else @truncate(num >> 24),
-        };
-    }
-
-    pub fn mono(brightness: u8) @This() {
-        return .{ .r = brightness, .g = brightness, .b = brightness };
-    }
-
-    pub const red: Colour = .{ .r = 0xff };
-    pub const green: Colour = .{ .g = 0xff };
-    pub const blue: Colour = .{ .b = 0xff };
-    pub const yellow: Colour = .{ .r = 0xff, .g = 0xff };
-    pub const cyan: Colour = .{ .g = 0xff, .b = 0xff };
-    pub const magenta: Colour = .{ .r = 0xff, .b = 0xff };
-
-    pub const orange: Colour = .{ .r = 0xff, .g = 0x80 };
-    pub const pink: Colour = .{ .r = 0xff, .b = 0x80 };
-    pub const purple: Colour = .{ .b = 0xff, .r = 0x80 };
-
-    pub const white: Colour = .mono(0xff);
-    pub const light_grey: Colour = .mono(0x87);
-    pub const grey: Colour = .mono(0x37);
-    pub const dark_grey: Colour = .mono(0x0c);
-    pub const black: Colour = .mono(0x00);
-};
-
 pub const Pos = @Vector(2, i32);
 
 pub fn clamp(pos: Pos, area: Aabb) Pos {
@@ -244,8 +200,8 @@ pub const Rect = struct {
         self: @This(),
         image: anytype,
         text: []const u8,
-        fg: Colour,
-        bg: Colour,
+        fg: abi.util.Colour,
+        bg: abi.util.Colour,
     ) void {
         if (self.size[1] < 16) return;
 
@@ -391,7 +347,7 @@ pub const Aabb = struct {
     pub fn draw(
         self: @This(),
         image: anytype,
-        col: Colour,
+        col: abi.util.Colour,
     ) void {
         const selection = self.subimage(image) orelse return;
         selection.fill(@bitCast(col));
@@ -400,7 +356,7 @@ pub const Aabb = struct {
     pub fn drawHollow(
         self: @This(),
         image: anytype,
-        col: Colour,
+        col: abi.util.Colour,
         border_width: u16,
     ) void {
         if (self.isEmpty() or border_width == 0)

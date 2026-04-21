@@ -18,9 +18,9 @@ const window_borders = 1;
 /// in pixels
 const min_window_size: gui.Pos = @splat(10);
 
-const unfocused_border_colour = gui.Colour.hex("#252525") catch unreachable;
-const focused_border_colour = gui.Colour.hex("#31c0f0") catch unreachable;
-const background_colour = gui.Colour.hex("#1a1a27") catch unreachable;
+const unfocused_border_colour = abi.util.Colour.hex("#252525") catch unreachable;
+const focused_border_colour = abi.util.Colour.hex("#31c0f0") catch unreachable;
+const background_colour = abi.util.Colour.hex("#1a1a27") catch unreachable;
 
 //
 
