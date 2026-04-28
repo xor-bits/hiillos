@@ -10,7 +10,7 @@ const Opts = struct {
     optimize_root: std.builtin.OptimizeMode,
     display: bool,
     debug: u2,
-    ovmf_fd: []const u8,
+    ovmf_fd: ?std.Build.LazyPath,
     gdb: enum { false, true, wait },
     testing: bool,
     cpus: u8,
@@ -76,9 +76,9 @@ fn options(b: *std.Build) Opts {
         ) orelse 1,
 
         // OVMF.fd path
-        .ovmf_fd = b.option([]const u8, "ovmf",
+        .ovmf_fd = b.option(std.Build.LazyPath, "ovmf",
             \\OVMF.fd path
-        ) orelse "/usr/share/ovmf/x64/OVMF.fd",
+        ),
 
         // use GDB
         .gdb = b.option(@FieldType(Opts, "gdb"), "gdb",
@@ -241,8 +241,16 @@ fn runQemu(
         3 => qemu_step.addArgs(&.{ "-d", "int,cpu_reset,guest_errors" }),
     }
 
-    const ovmf_fd = opts.ovmf_fd;
-    qemu_step.addArgs(&.{ "-bios", ovmf_fd });
+    qemu_step.addArg("-bios");
+    if (opts.ovmf_fd) |ovmf_fd| {
+        qemu_step.addFileArg(ovmf_fd);
+    } else {
+        // FIXME: this is a dumb hack to read env vars in build.zig
+        // but I don't know if there is any other way anymore in 0.16
+        const get_ovmf_fd_step = b.addSystemCommand(&.{ "sh", "-c", "echo -n $OVMF_FD" });
+        const ovmf_fd_desc_file = get_ovmf_fd_step.captureStdOut(.{});
+        qemu_step.addFileContentArg(ovmf_fd_desc_file);
+    }
 
     switch (opts.gdb) {
         .false => {},
