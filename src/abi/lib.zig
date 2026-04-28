@@ -13,6 +13,7 @@ pub const font = @import("font");
 pub const fs = @import("fs.zig");
 pub const input = @import("input.zig");
 pub const io = @import("io.zig");
+pub const Io = @import("Io.zig");
 pub const loader = @import("loader.zig");
 pub const lock = @import("lock.zig");
 pub const lpc = @import("lpc.zig");

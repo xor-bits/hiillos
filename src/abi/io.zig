@@ -230,8 +230,11 @@ pub const File = union(enum) {
 };
 
 pub var stdio: abi.PmProtocol.AllStdio = undefined;
+pub var stdin_lock: abi.thread.Mutex = .{};
 pub var stdin: File = .{ .none = {} };
+pub var stdout_lock: abi.thread.Mutex = .{};
 pub var stdout: File = .{ .none = {} };
+pub var stderr_lock: abi.thread.Mutex = .{};
 pub var stderr: File = .{ .none = {} };
 
 pub fn init() !void {
@@ -241,9 +244,21 @@ pub fn init() !void {
         .{ .cap = 1 },
     )).asErrorUnion();
 
-    stdin = try stdio.stdin.open();
-    stdout = try stdio.stdout.open();
-    stderr = try stdio.stderr.open();
+    {
+        stdin_lock.lock();
+        defer stdin_lock.unlock();
+        stdin = try stdio.stdin.open();
+    }
+    {
+        stdout_lock.lock();
+        defer stdout_lock.unlock();
+        stdout = try stdio.stdout.open();
+    }
+    {
+        stderr_lock.lock();
+        defer stderr_lock.unlock();
+        stderr = try stdio.stderr.open();
+    }
 
     // seqcst fence
     _ = @atomicLoad(u8, @as(*const u8, @ptrCast(&stderr)), .seq_cst);

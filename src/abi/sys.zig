@@ -1134,7 +1134,7 @@ pub const FutexFlags = packed struct {
 
 /// sleep if the stored value at the given address is the given value
 pub fn futexWait(
-    addr: *anyopaque,
+    addr: *const anyopaque,
     value: usize,
     flags: FutexFlags,
 ) Error!void {
@@ -1159,7 +1159,7 @@ pub fn futexWait(
 
 /// wake up a given count of threads that were waiting on a given address
 pub fn futexWake(
-    addr: *anyopaque,
+    addr: *const anyopaque,
     count: usize,
     flags: FutexFlags,
 ) Error!void {

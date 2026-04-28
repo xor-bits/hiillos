@@ -7,6 +7,7 @@ const log = std.log.scoped(.coreutils);
 const Error = abi.sys.Error;
 
 pub const std_options = abi.std_options;
+pub const std_options_debug_io = abi.Io.Threaded.global_single_threaded.io();
 pub const panic = abi.panic;
 comptime {
     abi.rt.installRuntime();

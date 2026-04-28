@@ -134,9 +134,9 @@ pub fn build(b: *std.Build) !void {
 
     const opts = options(b);
 
-    const abi = createAbi(b, &opts);
-    const gui = createLibGui(b, abi);
     const rbtree = b.dependency("rbtree", .{}).module("rbtree");
+    const abi = createAbi(b, &opts, rbtree);
+    const gui = createLibGui(b, abi);
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, io, &opts, abi, rbtree);
     const initfs_tar_zst = try createInitfsTarZst(b, io, &opts, abi, gui, rbtree);
@@ -614,7 +614,11 @@ fn createRootBin(
 }
 
 // create the shared ABI library
-fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
+fn createAbi(
+    b: *std.Build,
+    opts: *const Opts,
+    rbtree: *std.Build.Module,
+) *std.Build.Module {
     const syscall_generator_tool = b.addExecutable(.{
         .name = "generate_syscall_wrapper",
         .root_module = b.createModule(.{
@@ -632,6 +636,9 @@ fn createAbi(b: *std.Build, opts: *const Opts) *std.Build.Module {
 
     const mod = b.addModule("abi", .{
         .root_source_file = b.path("src/abi/lib.zig"),
+        .imports = &.{
+            .{ .name = "rbtree", .module = rbtree },
+        },
     });
     mod.addAnonymousImport("syscall", .{ .root_source_file = syscall_zig });
     mod.addImport("font", font);
