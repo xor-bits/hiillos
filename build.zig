@@ -42,7 +42,7 @@ fn options(b: *std.Build) Opts {
         .cpu_arch = .x86_64,
         .os_tag = .other,
         .abi = .none,
-        .dynamic_linker = .init("initfs:///sbin/pm"),
+        // .dynamic_linker = .init("initfs:///sbin/pm"),
     });
 
     const kernel_target = b.resolveTargetQuery(.{
@@ -78,10 +78,10 @@ fn options(b: *std.Build) Opts {
         // OVMF.fd path
         .ovmf_fd = b.option([]const u8, "ovmf",
             \\OVMF.fd path
-        ) orelse std.posix.getenv("OVMF_FD") orelse "/usr/share/ovmf/x64/OVMF.fd",
+        ) orelse "/usr/share/ovmf/x64/OVMF.fd",
 
         // use GDB
-        .gdb = b.option(@TypeOf(@as(Opts, undefined).gdb), "gdb",
+        .gdb = b.option(@FieldType(Opts, "gdb"), "gdb",
             \\use GDB
         ) orelse .false,
 
@@ -128,14 +128,18 @@ fn options(b: *std.Build) Opts {
 //
 
 pub fn build(b: *std.Build) !void {
+    var threaded = std.Io.Threaded.init(b.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const opts = options(b);
 
     const abi = createAbi(b, &opts);
     const gui = createLibGui(b, abi);
     const rbtree = b.dependency("rbtree", .{}).module("rbtree");
     const root_bin = createRootBin(b, &opts, abi);
-    const kernel_elf = try createKernelElf(b, &opts, abi, rbtree);
-    const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui, rbtree);
+    const kernel_elf = try createKernelElf(b, io, &opts, abi, rbtree);
+    const initfs_tar_zst = try createInitfsTarZst(b, io, &opts, abi, gui, rbtree);
     const hiillos_img = createImg(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
 
     runQemuProfiler(b, &opts, kernel_elf, hiillos_img);
@@ -277,10 +281,11 @@ fn createImg(
         .name = "disk-image",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/disk_image.zig"),
-            .optimize = .Debug,
+            .optimize = .ReleaseSafe,
             .target = opts.native_target,
         }),
     });
+    b.installArtifact(disk_image_tool);
 
     const run_disk_image_tool = b.addRunArtifact(disk_image_tool);
     run_disk_image_tool.addDirectoryArg(wf.getDirectory());
@@ -294,6 +299,7 @@ fn createImg(
 
 fn createInitfsTarZst(
     b: *std.Build,
+    io: std.Io,
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
@@ -303,8 +309,8 @@ fn createInitfsTarZst(
     // create virtual initfs.tar.zst root
     const initfs = b.addNamedWriteFiles("create virtual initfs root");
 
-    try createInitfsTarZstProcesses(b, opts, abi, gui, rbtree, initfs);
-    try createInitfsTarZstAssets(b, initfs);
+    try createInitfsTarZstProcesses(b, io, opts, abi, gui, rbtree, initfs);
+    try createInitfsTarZstAssets(b, io, initfs);
 
     const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
@@ -330,6 +336,7 @@ fn createInitfsTarZst(
 
 fn createInitfsTarZstProcesses(
     b: *std.Build,
+    io: std.Io,
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
@@ -340,13 +347,14 @@ fn createInitfsTarZstProcesses(
         .getPath3(b, null);
 
     var userspace_src_dir = try userspace_src_dir_path.openDir(
+        io,
         "",
         .{ .iterate = true },
     );
-    defer userspace_src_dir.close();
+    defer userspace_src_dir.close(io);
 
     var it = userspace_src_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         // root doesn't go into initfs.tar.zst
         if (std.mem.eql(u8, entry.name, "root")) continue;
 
@@ -406,17 +414,18 @@ fn createInitfsTarZstProcess(
 
 fn createInitfsTarZstAssets(
     b: *std.Build,
+    io: std.Io,
     initfs: *std.Build.Step.WriteFile,
 ) !void {
     const asset_dir_path = b.path("asset").getPath3(b, null);
 
-    var asset_dir = try asset_dir_path.openDir("", .{ .iterate = true });
-    defer asset_dir.close();
+    var asset_dir = try asset_dir_path.openDir(io, "", .{ .iterate = true });
+    defer asset_dir.close(io);
 
     var walker = try asset_dir.walk(b.allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
 
         _ = initfs.addCopyFile(
@@ -426,42 +435,49 @@ fn createInitfsTarZstAssets(
     }
 }
 
-fn appendSources(b: *std.Build, writer: anytype, sub_path: []const u8) !void {
+fn appendSources(
+    b: *std.Build,
+    io: std.Io,
+    writer: *std.Io.Writer,
+    sub_path: []const u8,
+) !void {
     const dir_path = b.path(sub_path).getPath3(b, null);
 
-    var dir = try dir_path.openDir("", .{ .iterate = true });
-    defer dir.close();
+    var dir = try dir_path.openDir(io, "", .{ .iterate = true });
+    defer dir.close(io);
 
     var walker = try dir.walk(b.allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".zig")) continue;
 
-        const file = try entry.dir.openFile(entry.basename, .{});
-        defer file.close();
+        const file = try entry.dir.openFile(io, entry.basename, .{});
+        defer file.close(io);
 
-        try std.fmt.format(writer,
+        try writer.print(
             \\    "{s}",
             \\
         , .{entry.path});
     }
 }
 
-fn generateSourcesZig(b: *std.Build) !*std.Build.Module {
+fn generateSourcesZig(
+    b: *std.Build,
+    io: std.Io,
+) !*std.Build.Module {
     // collect all kernel source files for the stack tracer
 
-    var sources_zig_contents: std.ArrayList(u8) = .{};
-    errdefer sources_zig_contents.deinit(b.allocator);
+    var sources_zig_writer = std.Io.Writer.Allocating.init(b.allocator);
+    const writer = &sources_zig_writer.writer;
 
-    const sources_zig_writer = sources_zig_contents.writer(b.allocator);
-    try sources_zig_writer.writeAll(
+    try writer.writeAll(
         \\pub const sources: []const []const u8 = &.{
         \\
     );
-    try appendSources(b, sources_zig_writer, "src/kernel");
-    try sources_zig_writer.writeAll(
+    try appendSources(b, io, writer, "src/kernel");
+    try writer.writeAll(
         \\};
         \\
     );
@@ -469,7 +485,7 @@ fn generateSourcesZig(b: *std.Build) !*std.Build.Module {
     const kernel_source = b.addWriteFiles();
     const sources_zig = kernel_source.add(
         "sources.zig",
-        sources_zig_contents.items,
+        try sources_zig_writer.toOwnedSlice(),
     );
 
     return b.addModule("sources", .{
@@ -479,12 +495,16 @@ fn generateSourcesZig(b: *std.Build) !*std.Build.Module {
 
 fn createKernelElf(
     b: *std.Build,
+    io: std.Io,
     opts: *const Opts,
     abi: *std.Build.Module,
     rbtree: *std.Build.Module,
 ) !std.Build.LazyPath {
     const git_rev_run = b.addSystemCommand(&.{ "git", "rev-parse", "HEAD" });
-    const git_rev = git_rev_run.captureStdOut();
+    const git_rev = git_rev_run.captureStdOut(.{
+        .trim_whitespace = .all,
+        .basename = "git-rev.txt",
+    });
     const git_rev_mod = b.createModule(.{
         .root_source_file = git_rev,
     });
@@ -507,7 +527,7 @@ fn createKernelElf(
             },
             .{
                 .name = "sources",
-                .module = try generateSourcesZig(b),
+                .module = try generateSourcesZig(b, io),
             },
             .{
                 .name = "rbtree",

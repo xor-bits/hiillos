@@ -1,9 +1,10 @@
 const std = @import("std");
 
 pub fn writePartition(
+    io: std.Io,
     alloc: std.mem.Allocator,
-    writer: *std.fs.File.Writer,
-    root: std.fs.Dir,
+    writer: *std.Io.File.Writer,
+    root: std.Io.Dir,
     sector_size: u16,
     physical_sector: u32,
 ) !usize {
@@ -15,11 +16,12 @@ pub fn writePartition(
     };
 
     var tree = try collectTree(
+        io,
         alloc,
         root,
         info.bytes_per_cluster,
     );
-    defer tree.deinit(alloc);
+    defer tree.deinit(io, alloc);
 
     info.total_clusters = @max(tree.clustersNeeded(), 65525);
     // std.debug.print("{} clusters\n", .{info.total_clusters});
@@ -37,12 +39,6 @@ pub fn writePartition(
         info.sectors_per_cluster,
     );
     const fat_region_sectors = fat_region_end_sector - fat_region_start_sector;
-    std.debug.print("{}, {}, {}, {}\n", .{
-        fat_region_start_sector,
-        fat_region_end_sector,
-        fat_region_min_sectors,
-        fat_region_sectors,
-    });
     std.debug.assert(ceilMultipleOf(fat_region_sectors, fats) == fat_region_sectors);
     info.fat_table_sectors = @divExact(fat_region_sectors, fats);
     info.fat_table_len = info.fat_table_sectors * sector_size / @sizeOf(u32);
@@ -91,6 +87,7 @@ pub fn writePartition(
     std.debug.assert(writer.pos + writer.interface.end ==
         (info.data_region_sector + info.physical_sector) * info.sector_size);
     try writeDataRegion(
+        io,
         &writer.interface,
         info,
         &tree,
@@ -113,8 +110,8 @@ fn ceilMultipleOf(v: u32, base: u32) u32 {
 
 const Tree = struct {
     arena: std.heap.ArenaAllocator,
-    dirs: std.ArrayList(Dir) = .{},
-    files: std.ArrayList(File) = .{},
+    dirs: std.ArrayList(Dir) = .empty,
+    files: std.ArrayList(File) = .empty,
     // absolute_path: []const u8,
     // lookup: std.StringArrayHashMapUnmanaged() = .{},
 
@@ -143,7 +140,7 @@ const Tree = struct {
             });
         }
 
-        var it = try std.fs.path.componentIterator(dir_path);
+        var it = std.fs.path.componentIterator(dir_path);
         var cur: u16 = 0;
         while (it.next()) |dir| {
             cur = self.findDir(cur, dir.name) orelse
@@ -219,10 +216,11 @@ const Tree = struct {
 
     fn deinit(
         self: *@This(),
+        io: std.Io,
         alloc: std.mem.Allocator,
     ) void {
         for (self.files.items) |f|
-            f.inner.close();
+            f.inner.close(io);
         self.dirs.deinit(alloc);
         self.files.deinit(alloc);
         self.arena.deinit();
@@ -241,7 +239,7 @@ const Dir = struct {
 
 const File = struct {
     basename: []const u8,
-    inner: std.fs.File,
+    inner: std.Io.File,
     clusters: u32,
     size: u32 = 0,
     parent: u16,
@@ -249,8 +247,9 @@ const File = struct {
 };
 
 fn collectTree(
+    io: std.Io,
     alloc: std.mem.Allocator,
-    root: std.fs.Dir,
+    root: std.Io.Dir,
     bytes_per_cluster: u64,
 ) !Tree {
     var tree: Tree = .{
@@ -265,15 +264,16 @@ fn collectTree(
     var walker = try root.walk(alloc);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         switch (entry.kind) {
             .file => {
                 const file = try entry.dir.openFile(
+                    io,
                     entry.basename,
                     .{},
                 );
-                errdefer file.close();
-                const stat = try file.stat();
+                errdefer file.close(io);
+                const stat = try file.stat(io);
                 const clusters = std.math.divCeil(
                     u64,
                     stat.size,
@@ -310,53 +310,6 @@ fn collectTree(
 
     return tree;
 }
-
-fn estimateSize(
-    alloc: std.mem.Allocator,
-    root: std.fs.Dir,
-    bytes_per_cluster: u64,
-) !SizeEstimation {
-    var walker = try root.walk(alloc);
-    defer walker.deinit();
-
-    var size: SizeEstimation = .{};
-    while (try walker.next()) |entry| {
-        switch (entry.kind) {
-            .file => {
-                const stat = try entry.dir.statFile(
-                    entry.basename,
-                );
-                const clusters = std.math.divCeil(
-                    u64,
-                    stat.size,
-                    bytes_per_cluster,
-                ) catch unreachable;
-
-                size.files += 1;
-                size.clusters_for_files += @intCast(clusters);
-            },
-            .directory => {
-                size.dirs += 1;
-            },
-            else => {},
-        }
-    }
-    return size;
-}
-
-const SizeEstimation = struct {
-    dirs: u32 = 0,
-    files: u32 = 0,
-    clusters_for_files: u32 = 0,
-
-    fn merge(a: @This(), b: @This()) @This() {
-        return .{
-            .dirs = a.dirs + b.dirs,
-            .files = a.files + b.files,
-            .clusters_for_files = a.clusters_for_files + b.clusters_for_files,
-        };
-    }
-};
 
 const Info = struct {
     sector_size: u16,
@@ -418,6 +371,7 @@ fn writeFatRegion(
 }
 
 fn writeDataRegion(
+    io: std.Io,
     writer: *std.Io.Writer,
     info: Info,
     tree: *const Tree,
@@ -483,7 +437,7 @@ fn writeDataRegion(
         std.debug.assert(next == file.cluster);
         next = file.cluster + file.clusters;
 
-        var file_reader = file.inner.reader(&.{});
+        var file_reader = file.inner.reader(io, &.{});
         const written = try file_reader.interface.streamRemaining(writer);
 
         if (written != file.size)
@@ -521,6 +475,7 @@ fn writeBootRecord(
 
     // std.debug.print("info={any}\n", .{info});
 
+    // FIXME: this crashes the compiler in debug mode somehow
     try writer.writeStruct(BootRecord{
         .bpb = .{
             .bytes_per_sector = info.sector_size,
@@ -555,7 +510,7 @@ const BootRecord = packed struct {
     }
 };
 
-const BiosParameterBlock = packed struct {
+const BiosParameterBlock = packed struct(u288) {
     infinite_loop_code: u24 = 0x90_feeb,
     oem: u64 = 0x3233_7461_662e_6968, // hi.fat32
     bytes_per_sector: u16,
@@ -573,7 +528,7 @@ const BiosParameterBlock = packed struct {
     total_sectors: u32,
 };
 
-const ExtendedBootRecord = packed struct {
+const ExtendedBootRecord = packed struct(u3808) {
     sectors_per_fat: u32,
     flags: u16 = 0,
     fat_version_minor: u8 = 0,
@@ -609,7 +564,7 @@ const FsInfo = extern struct {
 const DirEntry = extern struct {
     short_name: [8]u8 = @splat(' '),
     short_ext: [3]u8 = @splat(' '),
-    attibs: packed struct {
+    attibs: packed struct(u8) {
         read_only: bool = false,
         hidden: bool = false,
         system: bool = false,
@@ -720,7 +675,7 @@ const DirEntry = extern struct {
 };
 
 const LongFileNameEntry = extern struct {
-    sequence: packed struct {
+    sequence: packed struct(u8) {
         number: u5,
         _0: bool = false,
         last_logical: bool,
@@ -766,13 +721,13 @@ const LongFileNameEntry = extern struct {
     }
 };
 
-const Time = packed struct {
+const Time = packed struct(u16) {
     double_seconds: u5 = 0,
     minutes: u6 = 0,
     hours: u5 = 0,
 };
 
-const Date = packed struct {
+const Date = packed struct(u16) {
     day: u5 = 1,
     month: u4 = 1,
     year_since_1980: u7 = 0,

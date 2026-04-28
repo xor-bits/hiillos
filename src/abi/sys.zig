@@ -1084,10 +1084,10 @@ pub fn x86IrqAck(x86_irq: u32) Error!void {
 }
 
 pub fn handleIdentify(cap: u32) abi.ObjectType {
-    return std.meta.intToEnum(
+    return std.enums.fromInt(
         abi.ObjectType,
         syscall(.handle_identify, .{cap}, .{}) catch unreachable,
-    ) catch .null;
+    ) orelse .null;
 }
 
 pub fn handleRights(cap: u32) Error!Rights {

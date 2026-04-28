@@ -13,7 +13,7 @@ pub const Partition = struct {
 };
 
 pub fn writePartitionTable(
-    writer: *std.fs.File.Writer,
+    writer: *std.Io.File.Writer,
     partitions: []const Partition,
     sector_size: u64,
 ) !void {
@@ -239,7 +239,7 @@ const Crc32Writer = struct {
     }
 };
 
-const ProtectiveMasterBootRecord = packed struct {
+const ProtectiveMasterBootRecord = packed struct(u4096) {
     _0: u3568 = 0,
     boot_indicator: u8 = 0, // not legacy bootable
     starting_chs: u24 = 0x200, // GPT partition header in CHS
@@ -275,7 +275,7 @@ const Entry = extern struct {
     part_guid: Guid,
     lba_first: u64,
     lba_last: u64,
-    attribs: packed struct {
+    attribs: packed struct(u64) {
         _: u64 = 0,
     } = .{},
     name: [36]u16,

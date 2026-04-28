@@ -2,20 +2,18 @@ const std = @import("std");
 
 //
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-    const args = try std.process.argsAlloc(arena);
     if (args.len != 2) return error.@"missing output file argument";
 
-    var output_file = try std.fs.cwd().createFile(args[1], .{});
-    defer output_file.close();
+    var output_file = try std.Io.Dir.cwd().createFile(io, args[1], .{});
+    defer output_file.close(io);
 
     var buffer: [0x2000]u8 = undefined;
 
-    var output_writer = output_file.writer(&buffer);
+    var output_writer = output_file.writer(io, &buffer);
     const output = &output_writer.interface;
     defer output.flush() catch unreachable;
 

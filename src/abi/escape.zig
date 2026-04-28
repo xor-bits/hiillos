@@ -137,7 +137,10 @@ pub const Parser = struct {
                     'D' => return .{ .cursor_left = arg_0_default_1 },
                     'E' => return .{ .cursor_next_line = arg_0_default_1 },
                     'F' => return .{ .cursor_prev_line = arg_0_default_1 },
-                    'J' => return .{ .erase_in_display = std.meta.intToEnum(EraseInDisplay, arg_0_default_0) catch {
+                    'J' => return .{ .erase_in_display = std.enums.fromInt(
+                        EraseInDisplay,
+                        arg_0_default_0,
+                    ) orelse {
                         continue :state .restart;
                     } },
                     's' => return .cursor_push,

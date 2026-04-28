@@ -84,8 +84,8 @@ pub fn main() !void {
     });
 }
 
-var listeners_lock: abi.thread.Mutex = .{};
-var listeners: std.ArrayList(caps.Sender) = .{};
+var listeners_lock: abi.lock.Futex = .{};
+var listeners: std.ArrayList(caps.Sender) = .empty;
 
 pub fn pushEvent(ev: abi.input.Event) void {
     listeners_lock.lock();

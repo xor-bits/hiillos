@@ -360,7 +360,7 @@ const Connection = struct {
     next_client_window_id: usize = 1,
     window_server_ids: std.AutoHashMap(usize, usize) = .init(abi.mem.slab_allocator),
 
-    event_queue: abi.Deque(gui.Event) = .{},
+    event_queue: std.Deque(gui.Event) = .empty,
     reply: ?abi.lpc.DetachedReply(gui.WmDisplayProtocol.NextEvent.Response) = null,
 
     pub fn pushEvent(

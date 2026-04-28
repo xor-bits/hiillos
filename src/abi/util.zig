@@ -18,12 +18,24 @@ pub fn copyForwardsVolatile(comptime T: type, dest: []volatile T, source: []cons
     for (dest[0..source.len], source) |*d, s| d.* = s;
 }
 
+// FIXME: this is not necessary
 pub fn AsVolatile(comptime T: type) type {
-    var ptr = @typeInfo(T);
-    ptr.pointer.is_volatile = true;
-    return @Type(ptr);
+    const ptr = @typeInfo(T).pointer;
+    return @Pointer(
+        ptr.size,
+        .{
+            .@"addrspace" = ptr.address_space,
+            .@"align" = ptr.alignment,
+            .@"allowzero" = ptr.is_allowzero,
+            .@"const" = ptr.is_const,
+            .@"volatile" = true,
+        },
+        ptr.child,
+        ptr.sentinel(),
+    );
 }
 
+// FIXME: this is not necessary
 pub fn volat(ptr: anytype) AsVolatile(@TypeOf(ptr)) {
     return ptr;
 }
@@ -107,22 +119,6 @@ pub fn debugFieldOffsets(comptime T: type) void {
         const offs = @intFromPtr(&@field(&v, field.name)) - @intFromPtr(&v);
         log.info(" - 0x{x}: {s}", .{ offs, field.name });
     }
-}
-
-// less effort than spamming align(1) on every field,
-// since zig packed structs are not like in every other language
-pub fn pack(comptime T: type) type {
-    var s = comptime @typeInfo(T).Struct;
-    const n_fields = comptime s.fields.len;
-
-    var fields: [n_fields]std.builtin.Type.StructField = undefined;
-    inline for (0..n_fields) |i| {
-        fields[i] = s.fields[i];
-        fields[i].alignment = 1;
-    }
-    s.fields = fields[0..];
-
-    return @Type(std.builtin.Type{ .Struct = s });
 }
 
 pub fn Image(storage: type) type {
@@ -776,24 +772,23 @@ pub fn Protocol(comptime spec: type) type {
 
     var variants: [info.@"struct".fields.len]Variant = undefined;
 
-    var handlers_fields: [info.@"struct".fields.len]std.builtin.Type.StructField = undefined;
+    var handler_field_names: [info.@"struct".fields.len][]const u8 = undefined;
+    var handler_field_types: [info.@"struct".fields.len]type = undefined;
+    var handler_field_attrs: [info.@"struct".fields.len]std.builtin.Type.StructField.Attributes = undefined;
 
-    var message_variant_fields: [info.@"struct".fields.len]std.builtin.Type.EnumField = undefined;
-    var message_variant_field_idx = 0;
-    for (&message_variant_fields, info.@"struct".fields) |*enum_field, *spec_field| {
-        enum_field.* = .{
-            .name = spec_field.name,
-            .value = message_variant_field_idx,
-        };
-        message_variant_field_idx += 1;
+    const MessageVariantTagInt = if (info.@"struct".fields.len == 0) void else u8;
+    var message_variant_field_names: [info.@"struct".fields.len][]const u8 = undefined;
+    var message_variant_field_values: [info.@"struct".fields.len]MessageVariantTagInt = undefined;
+    for (info.@"struct".fields, 0..) |*spec_field, i| {
+        message_variant_field_names[i] = spec_field.name;
+        message_variant_field_values[i] = i;
     }
-    const _message_variant_enum = std.builtin.Type{ .@"enum" = std.builtin.Type.Enum{
-        .tag_type = if (message_variant_fields.len == 0) void else u8,
-        .fields = &message_variant_fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    } };
-    const MessageVariant: type = @Type(_message_variant_enum);
+    const MessageVariant = @Enum(
+        MessageVariantTagInt,
+        .exhaustive,
+        &message_variant_field_names,
+        &message_variant_field_values,
+    );
 
     inline for (info.@"struct".fields, 0..) |field, i| {
         // RPC call param serializer/deserializer
@@ -849,24 +844,20 @@ pub fn Protocol(comptime spec: type) type {
             .handler = field.name,
         };
 
-        handlers_fields[i] = std.builtin.Type.StructField{
-            .name = field.name,
-            .type = fn (ctx: anytype, sender: u32, req: TupleWithoutFirst(input_ty)) output_ty,
-            .default_value_ptr = null,
-            .alignment = @alignOf(field.type),
-            .is_comptime = false,
-        };
+        handler_field_names[i] = field.name;
+        handler_field_types[i] = fn (ctx: anytype, sender: u32, req: TupleWithoutFirst(input_ty)) output_ty;
+        handler_field_attrs[i] = .{};
     }
 
     const variants_const = variants; // ok zig randomly doesnt like accessing vars from nested things
 
-    const Handlers = @Type(.{ .@"struct" = std.builtin.Type.Struct{
-        .layout = .auto,
-        .backing_integer = null,
-        .fields = &handlers_fields,
-        .decls = &.{},
-        .is_tuple = false,
-    } });
+    const Handlers = @Struct(
+        .auto,
+        null,
+        &handler_field_names,
+        &handler_field_types,
+        &handler_field_attrs,
+    );
     _ = Handlers;
 
     return struct {
@@ -1086,11 +1077,7 @@ const MessageUsage = struct {
         const size_without_padding = @sizeOf(self.MakeStruct());
         const size_with_padding = std.mem.alignForward(usize, size_without_padding, @sizeOf(usize));
 
-        const padding = @Type(std.builtin.Type{ .array = std.builtin.Type.Array{
-            .len = size_with_padding - size_without_padding,
-            .child = u8,
-            .sentinel_ptr = null,
-        } });
+        const padding = [size_with_padding - size_without_padding]u8;
         self.data[self.data_cnt] = .{
             .name = "_padding",
             .type = padding,
@@ -1102,51 +1089,47 @@ const MessageUsage = struct {
     }
 
     fn MakeStruct(comptime self: @This()) type {
-        var fields: [self.data_cnt]std.builtin.Type.StructField = undefined;
+        var field_names: [self.data_cnt][]const u8 = undefined;
+        var field_types: [self.data_cnt]type = undefined;
+        var field_attrs: [self.data_cnt]std.builtin.Type.StructField.Attributes = undefined;
+
         for (self.data[0..self.data_cnt], 0..) |s, i| {
-            fields[i] = .{
-                .name = s.name,
-                .type = s.type,
-                .default_value_ptr = &@as(s.type, undefined),
-                .is_comptime = false,
-                .alignment = @alignOf(s.type),
-            };
+            field_names[i] = s.name;
+            field_types[i] = s.type;
+            field_attrs[i] = .{};
+            // field_attrs[i] = .{ .default_value_ptr = &@as(s.type, undefined) };
         }
 
-        const ty: std.builtin.Type = .{ .@"struct" = .{
-            .layout = .@"extern",
-            .backing_integer = null,
-            .fields = &fields,
-            .decls = &.{},
-            .is_tuple = false,
-        } };
-
-        return @Type(ty);
+        return @Struct(
+            .@"extern",
+            null,
+            &field_names,
+            &field_types,
+            &field_attrs,
+        );
     }
 
     fn MakeIo(comptime self: @This()) type {
-        var fields: [self.data_cnt - 1]std.builtin.Type.StructField = undefined;
+        // var field_names: [self.data_cnt - 1][]const u8 = undefined;
+        var field_types: [self.data_cnt - 1]type = undefined;
+        // var field_attrs: [self.data_cnt - 1]std.builtin.Type.StructField.Attributes = undefined;
 
         inline for (self.data[0 .. self.data_cnt - 1]) |data_f| {
-            fields[std.fmt.parseInt(usize, data_f.name, 10) catch unreachable] = .{
-                .name = data_f.name, // std.fmt.comptimePrint("{}", .{i}),
-                .type = data_f.fake_type,
-                .default_value_ptr = null,
-                .is_comptime = false,
-                .alignment = @alignOf(data_f.fake_type),
-            };
-            // @compileLog("field", data_f.name, data_f.fake_type);
+            const i = std.fmt.parseInt(usize, data_f.name, 10) catch unreachable;
+            // field_names[i] = data_f.name;
+            field_types[i] = data_f.fake_type;
+            // field_attrs[i] = .{};
         }
 
-        const ty: std.builtin.Type = .{ .@"struct" = .{
-            .layout = .auto,
-            .backing_integer = null,
-            .fields = &fields,
-            .decls = &.{},
-            .is_tuple = true,
-        } };
+        return @Tuple(&field_types);
 
-        return @Type(ty);
+        // return @Struct(
+        //     .auto,
+        //     null,
+        //     &field_names,
+        //     &field_types,
+        //     &field_attrs,
+        // );
     }
 
     fn makeConverter(comptime self: @This()) type {
@@ -1237,10 +1220,10 @@ const MessageUsage = struct {
                 var data_as_regs: [regs]u64 = undefined;
                 data_as_regs[0] = msg.arg0;
                 const data: Struct = @bitCast(data_as_regs);
-                return std.meta.intToEnum(
+                return std.enums.fromInt(
                     self.data[0].fake_type,
                     @field(data, self.data[0].name),
-                ) catch null;
+                );
             }
 
             pub fn deserialize(msg: *const sys.Message) Error!?Io {
@@ -1313,13 +1296,11 @@ fn TupleWithoutFirst(comptime tuple: type) type {
     // if (s.fields.len == 2)
     //     return s.fields[1].type;
 
-    var fields: [s.fields.len - 1]std.builtin.Type.StructField = undefined;
+    var field_types: [s.fields.len - 1]type = undefined;
     inline for (s.fields[1..], 0..) |f, i| {
-        fields[i] = f;
-        fields[i].name = s.fields[i].name;
+        field_types[i] = f.type;
     }
-    s.fields = &fields;
-    return @Type(.{ .@"struct" = s });
+    return @Tuple(&field_types);
 }
 
 fn tuplePopFirst(tuple: anytype) TupleWithoutFirst(@TypeOf(tuple)) {

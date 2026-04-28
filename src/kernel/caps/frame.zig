@@ -52,7 +52,7 @@ pub const Frame = struct {
             .is_physical = false,
             .pages = pages,
             .size_bytes = size_bytes,
-            .mappings = .{},
+            .mappings = .empty,
         };
 
         return obj;
@@ -238,7 +238,7 @@ pub const Frame = struct {
         idx: u32,
         is_write: bool,
     ) error{Retry}!u32 {
-        if (self.is_transient) return Error.Retry;
+        if (self.is_transient) return error.Retry;
 
         std.debug.assert(idx < self.pages.len);
         const page = self.pages[idx];
@@ -251,7 +251,7 @@ pub const Frame = struct {
 
         // trying to write, but it is not allocated yet
         // (either not initialized or intitialized to read-only)
-        if (is_not_init and is_write) return Error.Retry;
+        if (is_not_init and is_write) return error.Retry;
 
         // trying to read or exec while it is not allocated yet
         if (is_not_init) return readonly_zero_page_now;
@@ -455,7 +455,7 @@ pub const Frame = struct {
             // TODO: use a per-CPU arena allocator
 
             const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-            errdefer pmem.deallocChunk( alloc, .@"4KiB");
+            errdefer pmem.deallocChunk(alloc, .@"4KiB");
             const old = try self.collectOldMappingsLocked();
 
             const new_page = alloc.toParts().page;
@@ -556,7 +556,7 @@ pub const TlbShootdown = struct {
 
         switch (obj.completion) {
             .transient => |frame| frame.tlb_shootdown_refcnt.inc(),
-            .unmap => |_| {},
+            .unmap => {},
         }
 
         return obj;

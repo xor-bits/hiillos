@@ -147,7 +147,7 @@ pub fn main() noreturn {
     log.info("kernel main", .{});
     log.info("zig version: {s}", .{builtin.zig_version_string});
     log.info("kernel version: 0.0.2{s}", .{if (builtin.is_test) "-testing" else ""});
-    log.info("kernel git revision: {s}", .{comptime std.mem.trimRight(u8, @embedFile("git-rev"), "\n\r")});
+    log.info("kernel git revision: {s}", .{comptime std.mem.trim(u8, @embedFile("git-rev"), " \n\r")});
 
     log.info("CPUID features: {}", .{arch.CpuFeatures.read()});
 

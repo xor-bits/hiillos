@@ -182,37 +182,36 @@ pub fn DetachedReply(comptime T: type) type {
 }
 
 pub fn Request(comptime requests: []const type) type {
-    var enum_fields: [requests.len]std.builtin.Type.EnumField = undefined;
-    var union_fields: [requests.len]std.builtin.Type.UnionField = undefined;
-    for (requests, &enum_fields, &union_fields, 0..) |req, *enum_field, *union_field, i| {
-        union_field.alignment = @alignOf(req);
-        union_field.name = @typeName(req);
-        union_field.type = req;
-        enum_field.name = @typeName(req);
-        enum_field.value = i;
-    }
-
     const TagType = if (requests.len == 0 or requests.len == 1)
         u0
     else
-        @Type(.{ .int = .{
-            .bits = std.math.log2_int_ceil(usize, union_fields.len),
-            .signedness = .unsigned,
-        } });
+        @Int(.unsigned, std.math.log2_int_ceil(usize, requests.len));
 
-    const Tag = @Type(.{ .@"enum" = std.builtin.Type.Enum{
-        .tag_type = TagType,
-        .decls = &.{},
-        .fields = &enum_fields,
-        .is_exhaustive = true,
-    } });
+    var enum_field_names: [requests.len][]const u8 = undefined;
+    var enum_field_values: [requests.len]TagType = undefined;
+    var union_field_types: [requests.len]type = undefined;
+    var union_field_attrs: [requests.len]std.builtin.Type.UnionField.Attributes = undefined;
+    for (requests, 0..) |req, i| {
+        enum_field_names[i] = @typeName(req);
+        enum_field_values[i] = i;
+        union_field_types[i] = req;
+        union_field_attrs[i] = .{};
+    }
 
-    return @Type(.{ .@"union" = std.builtin.Type.Union{
-        .layout = .auto,
-        .tag_type = Tag,
-        .decls = &.{},
-        .fields = &union_fields,
-    } });
+    const Tag = @Enum(
+        TagType,
+        .exhaustive,
+        &enum_field_names,
+        &enum_field_values,
+    );
+
+    return @Union(
+        .auto,
+        Tag,
+        &enum_field_names,
+        &union_field_types,
+        &union_field_attrs,
+    );
 }
 
 pub fn typeId(comptime T: type) usize {
@@ -317,7 +316,7 @@ pub fn serializeInner(msg: anytype) Message(messageInfo(@TypeOf(msg))) {
         },
         .vector => |t| {
             var res: Message(msg_info) = .{};
-            for (0..t.len) |i| {
+            inline for (0..t.len) |i| {
                 const val = serializeInner(msg[i]);
                 std.mem.copyForwards(
                     u8,
@@ -508,10 +507,10 @@ pub fn deserializeInner(comptime T: type, msg: Message(messageInfo(T))) Error!T 
     }
 
     switch (@typeInfo(T)) {
-        .@"enum" => |t| return std.meta.intToEnum(
+        .@"enum" => |t| return std.enums.fromInt(
             T,
             try deserializeInner(t.tag_type, msg),
-        ) catch return Error.InvalidData,
+        ) orelse return Error.InvalidData,
         .optional => |t| {
             const non_null, const data = msg.split(messageInfo(bool));
             if (try deserializeInner(bool, non_null)) {

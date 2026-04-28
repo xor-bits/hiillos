@@ -238,7 +238,7 @@ pub const LimineMpRequest = extern struct {
     },
     revision: u64 = 0,
     response: ?*LimineMpResponse = null,
-    flags: packed struct {
+    flags: packed struct(u64) {
         request_x86_64_x2apic: bool,
         _: u63 = 0,
     },

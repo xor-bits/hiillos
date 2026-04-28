@@ -24,7 +24,7 @@ pub fn wait(
 
     // TODO: sizes other than u32 and private mode
     if (flags.private or flags.size != .bits32) {
-        return Error.Unimplemented;
+        return error.Unimplemented;
     }
 
     const futex = try physAddr(*std.atomic.Value(u32), thread, futex_ptr);
@@ -72,7 +72,7 @@ pub fn wake(
 
     // TODO: private mode
     if (flags.private) {
-        return Error.Unimplemented;
+        return error.Unimplemented;
     }
 
     const futex = try physAddr(*std.atomic.Value(u8), thread, futex_ptr);
@@ -106,7 +106,7 @@ pub fn requeue(
     thread: *caps.Thread,
 ) Error!void {
     _ = .{ trap, thread };
-    return Error.Unimplemented;
+    return error.Unimplemented;
 }
 
 // find the hhdm address of a futex
@@ -121,14 +121,14 @@ fn physAddr(
     comptime std.debug.assert(size == @alignOf(pointer.child));
 
     if (!std.mem.isAligned(futex_ptr.raw, size)) {
-        return Error.InvalidAddress;
+        return error.InvalidAddress;
     }
 
     var data_iter = thread.proc.vmem.data(futex_ptr, is_write);
     defer data_iter.deinit();
     // can fail with Error.Retry or Error.InvalidAddress
     const futex_phys_ptr = try data_iter.next() orelse
-        return Error.InvalidAddress;
+        return error.InvalidAddress;
 
     // the chunk always ends at page boundry and the address is aligned
     // so the acquired chunk should always be long enough and aligned

@@ -4,11 +4,11 @@
     .dependencies = .{
         .limine = .{
             .url = "https://github.com/limine-bootloader/limine/archive/refs/tags/v8.3.2-binary.tar.gz",
-            .hash = "1220691d9f8b2dfbc5e2727e3400d983b88db37ad7b2468735932ec12b37d304c90e",
+            .hash = "N-V-__8AAFFzRwBpHZ-LLfvF4nJ-NADZg7iNs3rXskaHNZMu",
         },
         .qoi = .{
-            .url = "git+https://github.com/xor-bits/qoi.git#ef6a688fbeb294e36c9088286ebefc1b27d7ab71",
-            .hash = "qoi-0.0.1-im2KtYJAAAA2i7rzjql8JqrjY8p5-AKBXRYMRS2XiMsl",
+            .url = "git+https://github.com/xor-bits/qoi.git#ebf13c4b3442fdf469a02d3aac502810a9682ac9",
+            .hash = "qoi-0.0.1-im2KtUNAAACe4jNR4GL3LuonUg7VA6_AoEul9oDMfkM2",
         },
         .rbtree = .{
             .url = "git+https://github.com/xor-bits/rbtree.git#a3149b5831bfd948d4681572fe42683131dbb524",
@@ -17,5 +17,5 @@
     },
     .paths = .{"."},
     .fingerprint = 0x85b8bb43b41d4850,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
 }

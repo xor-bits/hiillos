@@ -536,7 +536,7 @@ pub const Entry = packed struct {
             idx |= @as(u3, @truncate(self.page_index & 0b1)) << 2;
         idx |= @as(u3, self.cache_disable) << 1;
         idx |= @as(u3, self.write_through) << 0;
-        return std.meta.intToEnum(abi.sys.CacheType, idx) catch unreachable;
+        return std.enums.fromInt(abi.sys.CacheType, idx) orelse unreachable;
     }
 
     pub fn getFlags(

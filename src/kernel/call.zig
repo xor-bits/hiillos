@@ -25,7 +25,7 @@ pub fn syscall(trap: *arch.TrapRegs) void {
     // TODO: once every CPU has reached this, bootloader_reclaimable memory could be freed
     // just some few things need to be copied, but the page map(s) and stack(s) are already copied
 
-    const id = std.meta.intToEnum(abi.sys.Id, trap.syscall_id) catch {
+    const id = std.enums.fromInt(abi.sys.Id, trap.syscall_id) orelse {
         @branchHint(.cold);
         log.warn("invalid syscall: {x}", .{trap.syscall_id});
         trap.syscall_id = abi.sys.encode(abi.sys.Error.InvalidSyscall);
@@ -206,9 +206,10 @@ fn handle_syscall(
         },
         .frame_dummy_access => {
             const offset_byte = trap.arg1;
-            const mode: abi.sys.FaultCause = std.meta.intToEnum(abi.sys.FaultCause, trap.arg2) catch {
-                return Error.InvalidArgument;
-            };
+            const mode: abi.sys.FaultCause = std.enums.fromInt(
+                abi.sys.FaultCause,
+                trap.arg2,
+            ) orelse return Error.InvalidArgument;
             const rights = mode.rights();
             const frame: *caps.Frame = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),
@@ -378,9 +379,10 @@ fn handle_syscall(
         },
         .vmem_dummy_access => {
             const vaddr = try addr.Virt.fromUser(trap.arg1);
-            const mode: abi.sys.FaultCause = std.meta.intToEnum(abi.sys.FaultCause, trap.arg2) catch {
-                return Error.InvalidArgument;
-            };
+            const mode: abi.sys.FaultCause = std.enums.fromInt(
+                abi.sys.FaultCause,
+                trap.arg2,
+            ) orelse return Error.InvalidArgument;
             const rights = mode.rights();
             const vmem: *caps.Vmem = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),

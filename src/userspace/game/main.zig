@@ -14,14 +14,14 @@ comptime {
 
 var input_buffer: abi.ring.Ring(Input) = undefined;
 var should_stop: std.atomic.Value(bool) = .init(false);
-const max_rooms = 80;
-const random_connections = 40;
-// const max_rooms = 8;
-// const random_connections = 4;
+// const max_rooms = 80;
+// const random_connections = 40;
+const max_rooms = 8;
+const random_connections = 4;
 const max_spawns = 8;
 const spawn_attempts = 20;
-const tick_speed = 5_000_000;
-// const tick_speed = 500_000_000;
+// const tick_speed = 5_000_000;
+const tick_speed = 500_000_000;
 
 fn StaticArrayList(comptime T: type, comptime max: usize) type {
     return struct {
@@ -104,7 +104,7 @@ pub fn main() !void {
     var state: GameState = .{
         .rooms = &rooms,
         .rng = rng,
-        .open_set_alloc = .init(abi.mem.server_page_allocator),
+        .open_set_alloc = .empty,
     };
     connectRooms(&state, rng);
     state.rooms[0].state = .cleared;
@@ -514,13 +514,13 @@ fn aiTick(
 fn pathfindClosestUnexploredDoor(
     state: *GameState,
 ) ?Direction {
-    defer _ = state.open_set_alloc.reset(.retain_capacity);
+    defer _ = state.open_set_alloc.reset(abi.mem.server_page_allocator, .retain_capacity);
 
     var came_from: [max_rooms]Direction = undefined;
     var g_score: [max_rooms]u16 = @splat(std.math.maxInt(u16));
     var open_set: rbtree.RedBlackTree = .{};
 
-    const start_node: *OpenSetNode = state.open_set_alloc.create() catch @panic("OOM");
+    const start_node: *OpenSetNode = state.open_set_alloc.create(abi.mem.server_page_allocator) catch @panic("OOM");
     start_node.* = .{
         .f_score = 0,
         .pos = state.current_room,
@@ -566,7 +566,7 @@ fn pathfindClosestUnexploredDoor(
             if (neighbour_g_score < g_score[@intFromEnum(neighbour_pos)]) {
                 came_from[@intFromEnum(neighbour_pos)] = neighbour_dir.flip();
                 g_score[@intFromEnum(neighbour_pos)] = neighbour_g_score;
-                const node: *OpenSetNode = state.open_set_alloc.create() catch @panic("OOM");
+                const node: *OpenSetNode = state.open_set_alloc.create(abi.mem.server_page_allocator) catch @panic("OOM");
                 node.* = .{
                     .f_score = 0,
                     .pos = neighbour_pos,
@@ -590,14 +590,14 @@ fn pathfindTiles(
 ) Direction {
     const room = &state.rooms[@intFromEnum(state.current_room)];
 
-    defer _ = state.open_set_alloc.reset(.retain_capacity);
+    defer _ = state.open_set_alloc.reset(abi.mem.server_page_allocator, .retain_capacity);
 
     var open_set: rbtree.RedBlackTree = .{};
     var g_score: [Display.h][Display.w]u32 = @splat(@splat(std.math.maxInt(u32)));
     // var f_score: [Display.h ][ Display.w]u32 = @splat(std.math.maxInt(u32));
     var came_from: [Display.h][Display.w]Direction = undefined;
 
-    const start_node: *OpenSetNode = state.open_set_alloc.create() catch @panic("OOM");
+    const start_node: *OpenSetNode = state.open_set_alloc.create(abi.mem.server_page_allocator) catch @panic("OOM");
     start_node.* = .{
         .f_score = from.distanceManhattan(to),
         .pos = from,
@@ -632,7 +632,7 @@ fn pathfindTiles(
             if (neighbour_g_score < g_score[neighbour_pos.y][neighbour_pos.x]) {
                 came_from[neighbour_pos.y][neighbour_pos.x] = neighbour_dir;
                 g_score[neighbour_pos.y][neighbour_pos.x] = neighbour_g_score;
-                const node: *OpenSetNode = state.open_set_alloc.create() catch @panic("OOM");
+                const node: *OpenSetNode = state.open_set_alloc.create(abi.mem.server_page_allocator) catch @panic("OOM");
                 node.* = .{
                     .f_score = neighbour_pos.distanceManhattan(to),
                     .pos = from,

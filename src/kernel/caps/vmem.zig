@@ -22,7 +22,7 @@ pub const Vmem = struct {
 
     lock: lock.TrackingSpinMutex = .{},
     hal_vmem: caps.HalVmem,
-    mappings: std.ArrayList(*caps.Mapping) = .{},
+    mappings: std.ArrayList(*caps.Mapping) = .empty,
     // bitset of all cpus that have used this vmem
     // cpus: u256 = 0,
 
@@ -103,7 +103,7 @@ pub const Vmem = struct {
                 // });
 
                 // FIXME: why wouldnt the return be null
-                if (!mapping.overlaps(self.vaddr, 1)) return Error.InvalidAddress;
+                if (!mapping.overlaps(self.vaddr, 1)) return error.InvalidAddress;
 
                 self.cur_frame = mapping.frame.data(
                     self.vaddr.raw - mapping.getVaddr().raw + mapping.frame_first_page * 0x1000,

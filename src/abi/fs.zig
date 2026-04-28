@@ -82,8 +82,7 @@ pub const path = struct {
     };
 
     pub fn absolutePartIterator(p: []const u8) AbsolutePartIterator {
-        return .{ .inner = std.fs.path.componentIterator(p) catch
-            @compileError("this is unix-like") };
+        return .{ .inner = std.fs.path.componentIterator(p) };
     }
 };
 

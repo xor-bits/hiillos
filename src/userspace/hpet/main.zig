@@ -190,7 +190,7 @@ fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
 
         // log.debug("HPET INTERRUPT", .{});
 
-        const main_counter = regs.readMainCounter();
+        const main_counter = regs.main_counter_value;
 
         for (timers[0..timer_count], 0..) |*timer, i| {
             timer.lock.lock();
@@ -210,7 +210,7 @@ fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
             }
 
             // wake up every waiter that has its deadline completed
-            while (timer.deadlines.removeOrNull()) |next| {
+            while (timer.deadlines.pop()) |next| {
                 if (next.deadline <= main_counter) {
                     // wake it up if its ready
                     next.reply.reply(.{}) catch |err| {
@@ -238,17 +238,17 @@ pub fn asNanos(t: u64) u128 {
 
 pub fn elapsedNanos(from_then: u64) u128 {
     const regs = hpet_regs.?;
-    return @as(u128, regs.readMainCounter() - from_then) * regs.readSpeed() / 1_000_000;
+    return @as(u128, regs.main_counter_value - from_then) * regs.caps_and_id.counter_period_femtoseconds / 1_000_000;
 }
 
 pub fn timestampNanos() u128 {
     const regs = hpet_regs.?;
-    return @as(u128, regs.readMainCounter()) * regs.readSpeed() / 1_000_000;
+    return @as(u128, regs.main_counter_value) * regs.caps_and_id.counter_period_femtoseconds / 1_000_000;
 }
 
 pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
     const regs = hpet_regs.?;
-    const _counter = timestamp_nanos * 1_000_000 / regs.readSpeed();
+    const _counter = timestamp_nanos * 1_000_000 / regs.caps_and_id.counter_period_femtoseconds;
     if (_counter > std.math.maxInt(u64)) {
         @branchHint(.cold);
         log.err("FIXME: deadline val is bigger than max main counter val", .{});
@@ -288,7 +288,7 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
             new = timer_current;
         }
 
-        timer.deadlines.add(new) catch |err| {
+        timer.deadlines.push(abi.mem.server_page_allocator, new) catch |err| {
             log.err("lost track of timers: {}", .{err});
         };
     } else {
@@ -338,7 +338,7 @@ const Timer = struct {
         fn inner(_: void, a: Deadline, b: Deadline) std.math.Order {
             return std.math.order(a.deadline, b.deadline);
         }
-    }.inner) = .init(abi.mem.slab_allocator, {}),
+    }.inner) = .empty,
     usable: bool = false,
 
     fn count(self: *@This()) u64 {
@@ -369,14 +369,6 @@ const HpetRegs = extern struct {
     pad2: [25]u64,
     main_counter_value: u64,
 
-    fn readMainCounter(self: *volatile @This()) u64 {
-        return @as(*volatile u64, &self.main_counter_value).*;
-    }
-
-    fn readSpeed(self: *volatile @This()) u32 {
-        return @as(*volatile u32, &self.caps_and_id.counter_period_femtoseconds).*;
-    }
-
     fn timer(self: *volatile @This(), n: usize) *volatile TimerRegs {
         const timer_base: usize = @intFromPtr(self);
         return @ptrFromInt(timer_base + 0x100 + 0x20 * n);
@@ -389,7 +381,7 @@ const TimerRegs = extern struct {
     // fsb_interrupt_route: FsbInterruptRoute,
 };
 
-const Caps = packed struct {
+const Caps = packed struct(u64) {
     rev_id: u8,
     n_timers_minus_one: u5,
     u64_capable: u1,
@@ -399,18 +391,18 @@ const Caps = packed struct {
     counter_period_femtoseconds: u32,
 };
 
-const Config = packed struct {
+const Config = packed struct(u64) {
     enable_config: u1,
     legacy_replacement_config: u1,
     reserved: u62,
 };
 
-const InterruptStatus = packed struct {
+const InterruptStatus = packed struct(u64) {
     timer_n_status: u32,
     reserved: u32,
 };
 
-const TimerNConfigAndCaps = packed struct {
+const TimerNConfigAndCaps = packed struct(u64) {
     reserved0: u1 = 0,
     int_type_config: u1 = 0,
     int_enable_config: u1 = 1,

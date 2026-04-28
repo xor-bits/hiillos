@@ -2,14 +2,10 @@ const std = @import("std");
 const gpt = @import("gpt.zig");
 const fat32 = @import("fat32.zig");
 
-pub var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
-pub fn main() !void {
-    const alloc = gpa.allocator();
-    defer _ = gpa.deinit();
-
-    const args = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, args);
     if (args.len != 3)
         return error.@"usage: disk-image <virtual-efi-system-root> <hiillos-img>";
 
@@ -18,27 +14,31 @@ pub fn main() !void {
 
     // std.debug.print("root={s}\nimg={s}\n", .{ virtual_efi_system_root, hiillos_img });
 
-    const cwd = std.fs.cwd();
+    const cwd = std.Io.Dir.cwd();
 
     const root = try cwd.openDir(
+        io,
         virtual_efi_system_root,
         .{ .iterate = true },
     );
+    defer root.close(io);
 
     const disk_img = try cwd.createFile(
+        io,
         hiillos_img,
         .{},
     );
-    defer disk_img.close();
+    defer disk_img.close(io);
 
     var buffer: [0x10000]u8 = undefined;
-    var writer = disk_img.writer(&buffer);
+    var writer = disk_img.writer(io, &buffer);
 
     const esp_lba_first = 2048;
     const sector_size = 512;
     try writer.seekTo(esp_lba_first * sector_size);
     const size_sectors = try fat32.writePartition(
-        alloc,
+        io,
+        std.heap.smp_allocator,
         &writer,
         root,
         sector_size,
@@ -59,31 +59,3 @@ pub fn main() !void {
 
     try writer.interface.flush();
 }
-
-// fn estimateSize() void {
-//     var size = 256 * 1024 * 1024;
-//     const min_fat32_size = 65525 * 512;
-//     const min_gpt_size = 68 * 512;
-//
-// }
-
-// pub fn createDiskImage(
-//     b: *std.Build,
-//     efi_system: anytype,
-// ) std.Build.LazyPath {
-//     _ = b;
-//     iterDir(efi_system);
-//     std.debug.panic("{any}\n", .{efi_system});
-// }
-
-// fn iterDir(dir: anytype) void {
-//     inline for (@typeInfo(@TypeOf(dir)).@"struct".fields) |field| {
-//         if (field.type == std.Build.LazyPath) {
-//             std.debug.print("{s}\n", .{field.name});
-//         } else {
-//             std.debug.print("go up to {s}\n", .{field.name});
-//             iterDir(@field(dir, field.name));
-//             std.debug.print("go down from {s}\n", .{field.name});
-//         }
-//     }
-// }

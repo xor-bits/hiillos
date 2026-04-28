@@ -138,9 +138,9 @@ const Context = struct {
 
 pub const System = struct {
     lock: abi.lock.Futex = .{},
-    processes: std.ArrayList(?Process) = .{},
+    processes: std.ArrayList(?Process) = .empty,
     // empty process ids into ↑
-    free_slots: abi.Deque(u32) = .{},
+    free_slots: std.Deque(u32) = .empty,
 
     pub fn exec(
         self: *System,

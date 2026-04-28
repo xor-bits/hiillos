@@ -24,7 +24,6 @@ pub const rt = @import("rt.zig");
 pub const sys = @import("sys.zig");
 pub const thread = @import("thread.zig");
 pub const util = @import("util.zig");
-pub const Deque = @import("deque.zig").Deque;
 pub const IdLru = @import("id_lru.zig").IdLru;
 
 //
@@ -58,19 +57,23 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     var log = UnifiedLog.init(&buffer);
     const writer = &log.interface;
 
-    var iter = std.debug.StackIterator.init(
-        @returnAddress(),
-        @frameAddress(),
-    );
-    debug.printPanic(
-        mem.slab_allocator,
-        writer,
-        name,
-        msg,
-        &iter,
-        getSelfDwarf(),
-        &.{},
-    ) catch {};
+    // var addr_buf: [64]usize = undefined;
+    // const stack_trace = std.debug.captureCurrentStackTrace(.{}, &addr_buf);
+    _ = name;
+    _ = msg;
+    // var iter = std.debug.StackIterator.init(
+    //     @returnAddress(),
+    //     @frameAddress(),
+    // );
+    // debug.printPanic(
+    //     mem.slab_allocator,
+    //     writer,
+    //     name,
+    //     msg,
+    //     &iter,
+    //     getSelfDwarf(),
+    //     &.{},
+    // ) catch {};
     writer.flush() catch {};
 
     process.exit(1);
@@ -226,7 +229,7 @@ pub const ChunkSize = enum(u5) {
     }
 
     pub fn next(self: @This()) ?@This() {
-        return std.meta.intToEnum(@This(), @intFromEnum(self) + 1) catch return null;
+        return std.enums.fromInt(@This(), @intFromEnum(self) + 1);
     }
 
     pub fn sizeBytes(self: @This()) usize {
@@ -288,9 +291,9 @@ pub fn unilog(comptime fmt: []const u8, args: anytype) void {
 }
 
 pub const UnifiedLog = struct {
-    interface: std.io.Writer,
+    interface: std.Io.Writer,
 
-    const vtable: std.io.Writer.VTable = .{
+    const vtable: std.Io.Writer.VTable = .{
         .drain = drain,
     };
 
@@ -616,7 +619,7 @@ pub const Stat = extern struct {
     mode: Mode,
 };
 
-pub const Mode = packed struct {
+pub const Mode = packed struct(u32) {
     other_x: bool,
     other_w: bool,
     other_r: bool,

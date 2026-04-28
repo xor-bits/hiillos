@@ -47,10 +47,10 @@ const APIC_TIMER_DIV: u32 = 0b0010; // div by 8
 //
 
 /// all I/O APICs
-var ioapics: std.ArrayList(IoApicInfo) = .{};
+var ioapics: std.ArrayList(IoApicInfo) = .empty;
 var ioapic_lock: lock.TrackingSpinMutex = .{};
 /// all Local APIC IDs that I/O APICs can use as interrupt destinations
-var ioapic_lapics: std.ArrayList(IoApicLapic) = .{};
+var ioapic_lapics: std.ArrayList(IoApicLapic) = .empty;
 
 var ioapic_lapic_lock: lock.TrackingSpinMutex = .{};
 

@@ -609,7 +609,7 @@ pub fn reset() void {
     ints.int3();
 }
 
-pub const GdtDescriptor = packed struct {
+pub const GdtDescriptor = packed struct(u64) {
     raw: u64 = 0,
 
     pub const Self = @This();
@@ -1526,7 +1526,7 @@ pub const Cr4 = packed struct {
     }
 };
 
-pub const Rflags = packed struct {
+pub const Rflags = packed struct(u64) {
     carry_flag: bool = false,
     reserved0: bool = true,
     parity_flag: bool = false,
@@ -1614,7 +1614,7 @@ pub const FxRegs = extern struct {
     }
 };
 
-pub const MxCsr = packed struct {
+pub const MxCsr = packed struct(u32) {
     invalid_operation: bool = false,
     denormal: bool = false,
     divide_by_zero: bool = false,

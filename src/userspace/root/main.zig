@@ -215,28 +215,31 @@ pub fn main() !void {
     //     .info_frame = boot_info.mcfg_info,
     // });
 
-    var servers: std.ArrayList(Server) = .{};
+    var servers: std.ArrayList(Server) = .empty;
 
-    var resources = std.ArrayHashMap(
+    var resources: std.HashMap(
         [99]u8,
         Resource,
         StringContext,
-        true,
-    ).init(abi.mem.slab_allocator);
-
+        80,
+    ) = .init(abi.mem.slab_allocator);
     try resources.ensureUnusedCapacity(10);
 
     try initfsd.wait();
 
     const boot_info = @as(*const volatile abi.BootInfo, @ptrFromInt(initfsd.boot_info_addr.load(.acquire))).*;
 
-    const initfsd_entry = try resources.getOrPut(("hiillos.initfsd.ipc" ++ "\x00" ** 80).*);
+    const initfsd_entry = try resources.getOrPut(
+        ("hiillos.initfsd.ipc" ++ "\x00" ** 80).*,
+    );
     initfsd_entry.value_ptr.* = .{
         .handle = (try initfsd.getSender()).cap,
         .type = .sender,
         .given = 1,
     };
-    const hpet_entry = try resources.getOrPut(("hiillos.root.hpet" ++ "\x00" ** 82).*);
+    const hpet_entry = try resources.getOrPut(
+        ("hiillos.root.hpet" ++ "\x00" ** 82).*,
+    );
     hpet_entry.value_ptr.* = .{
         .handle = boot_info.hpet.cap,
         .type = .frame,
@@ -248,25 +251,33 @@ pub fn main() !void {
     //     .type = .frame,
     //     .given = 1,
     // };
-    const fb_entry = try resources.getOrPut(("hiillos.root.fb" ++ "\x00" ** 84).*);
+    const fb_entry = try resources.getOrPut(
+        ("hiillos.root.fb" ++ "\x00" ** 84).*,
+    );
     fb_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer.cap,
         .type = .frame,
         .given = 1,
     };
-    const fb_info_entry = try resources.getOrPut(("hiillos.root.fb_info" ++ "\x00" ** 79).*);
+    const fb_info_entry = try resources.getOrPut(
+        ("hiillos.root.fb_info" ++ "\x00" ** 79).*,
+    );
     fb_info_entry.value_ptr.* = .{
         .handle = boot_info.framebuffer_info.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_entry = try resources.getOrPut(("hiillos.root.mcfg" ++ "\x00" ** 82).*);
+    const mcfg_entry = try resources.getOrPut(
+        ("hiillos.root.mcfg" ++ "\x00" ** 82).*,
+    );
     mcfg_entry.value_ptr.* = .{
         .handle = boot_info.mcfg.cap,
         .type = .frame,
         .given = 1,
     };
-    const mcfg_info_entry = try resources.getOrPut(("hiillos.root.mcfg_info" ++ "\x00" ** 77).*);
+    const mcfg_info_entry = try resources.getOrPut(
+        ("hiillos.root.mcfg_info" ++ "\x00" ** 77).*,
+    );
     mcfg_info_entry.value_ptr.* = .{
         .handle = boot_info.mcfg_info.cap,
         .type = .frame,
@@ -363,7 +374,7 @@ fn collectAllServers(servers: *std.ArrayList(Server)) !void {
 
 fn createAllExports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
+    resources: *std.HashMap([99]u8, Resource, StringContext, 80),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -407,7 +418,7 @@ fn createAllExports(
 
 fn createAllImports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
+    resources: *std.HashMap([99]u8, Resource, StringContext, 80),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -478,7 +489,7 @@ fn loadAllServers(
 
 fn grantAllExports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
+    resources: *std.HashMap([99]u8, Resource, StringContext, 80),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -515,7 +526,7 @@ fn grantAllExports(
 
 fn grantAllImports(
     servers: *std.ArrayList(Server),
-    resources: *std.ArrayHashMap([99]u8, Resource, StringContext, true),
+    resources: *std.HashMap([99]u8, Resource, StringContext, 80),
 ) !void {
     for (servers.items) |*server| {
         const server_manifest = (try server.bin.manifest()) orelse continue;
@@ -573,7 +584,7 @@ fn grantAllImports(
     }
 }
 
-const Resource = packed struct {
+const Resource = struct {
     handle: u32,
     /// If handle is a sender, this is the optional receiver end.
     /// Not used with other types
@@ -587,7 +598,7 @@ const StringContext = struct {
     pub fn hash(_: @This(), s: [99]u8) u32 {
         return std.array_hash_map.hashString(s[0..]);
     }
-    pub fn eql(_: @This(), a: [99]u8, b: [99]u8, _: usize) bool {
+    pub fn eql(_: @This(), a: [99]u8, b: [99]u8) bool {
         return std.array_hash_map.eqlString(a[0..], b[0..]);
     }
 };

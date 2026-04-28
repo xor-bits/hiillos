@@ -54,19 +54,20 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         .buffer = &buffer,
     };
 
-    var iter = std.debug.StackIterator.init(
-        @returnAddress(),
-        @frameAddress(),
-    );
-    abi.debug.printPanic(
-        pmem.page_allocator,
-        &writer,
-        "kernel",
-        msg,
-        &iter,
-        getSelfDwarf(),
-        &source_files,
-    ) catch {};
+    writer.print("todo fix kernel panic msg: {s}", .{msg}) catch {};
+    // var iter = std.debug.StackIterator.init(
+    //     @returnAddress(),
+    //     @frameAddress(),
+    // );
+    // abi.debug.printPanic(
+    //     pmem.page_allocator,
+    //     &writer,
+    //     "kernel",
+    //     msg,
+    //     &iter,
+    //     getSelfDwarf(),
+    //     &source_files,
+    // ) catch {};
 
     writer.writeAll("\n") catch {};
     arch.hcf();
@@ -81,13 +82,14 @@ pub const Addr2Line = struct {
             return;
         };
         defer dwarf.deinit(pmem.page_allocator);
-        try abi.debug.printSourceAtAddress(
-            pmem.page_allocator,
-            writer,
-            &dwarf,
-            self.addr,
-            &source_files,
-        );
+        _ = self;
+        // try abi.debug.printSourceAtAddress(
+        //     pmem.page_allocator,
+        //     writer,
+        //     &dwarf,
+        //     self.addr,
+        //     &source_files,
+        // );
     }
 };
 

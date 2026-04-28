@@ -67,9 +67,9 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
     if (!initialized) return;
 
     const FbWriter = struct {
-        interface: std.io.Writer,
+        interface: std.Io.Writer,
 
-        const vtable: std.io.Writer.VTable = .{
+        const vtable: std.Io.Writer.VTable = .{
             .drain = drain,
         };
 

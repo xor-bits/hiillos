@@ -123,57 +123,25 @@ pub fn getSelfDwarf(
 
     const header = try std.elf.Header.read(&elf);
 
-    var sections = std.debug.Dwarf.null_section_array;
+    var sections: std.debug.Dwarf.SectionArray = @splat(null);
 
     for (sectionsHeaders(elf_bin, header)) |shdr| {
         const name = getString(elf_bin, header, shdr.sh_name);
+        if (name.len == 0) continue;
         // std.log.info("shdr: {s}", .{name});
 
-        if (std.mem.eql(u8, name, ".debug_info")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.debug_info)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".debug_abbrev")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.debug_abbrev)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".debug_str")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.debug_str)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".debug_line")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.debug_line)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".debug_ranges")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.debug_ranges)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".eh_frame")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.eh_frame)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
-        } else if (std.mem.eql(u8, name, ".eh_frame_hdr")) {
-            sections[@intFromEnum(std.debug.Dwarf.Section.Id.eh_frame_hdr)] = .{
-                .data = getSectionData(elf_bin, shdr),
-                .owned = false,
-            };
+        inline for (comptime std.enums.values(std.debug.Dwarf.Section.Id)) |sect_id| {
+            if (std.mem.eql(u8, name[1..], @tagName(sect_id))) {
+                sections[@intFromEnum(sect_id)] = .{
+                    .data = getSectionData(elf_bin, shdr),
+                    .owned = false,
+                };
+            }
         }
     }
 
-    var dwarf: std.debug.Dwarf = .{
-        .endian = .little,
-        .sections = sections,
-        .is_macho = false,
-    };
-
-    try dwarf.open(allocator);
+    var dwarf: std.debug.Dwarf = .{ .sections = sections };
+    try dwarf.open(allocator, .native);
     return dwarf;
 }
 

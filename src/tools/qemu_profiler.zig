@@ -152,7 +152,7 @@ fn printHotSpots(
     for (0..count) |i| {
         const entry = entries.get(i);
         var rip_buf: [100]u8 = undefined;
-        var rip_buf_writer = std.io.fixedBufferStream(&rip_buf);
+        var rip_buf_writer = std.Io.fixedBufferStream(&rip_buf);
         try std.fmt.format(
             rip_buf_writer.writer(),
             "0x{x}",

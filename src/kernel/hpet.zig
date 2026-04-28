@@ -33,7 +33,7 @@ pub fn init(hpet: *const Hpet) !void {
 
     hpet_once.complete();
 
-    log.info("HPET speed: 1ms = {d} ticks", .{1_000_000_000_000 / @as(u64, @as(*volatile u32, &regs.caps_and_id.counter_period_femtoseconds).*)});
+    log.info("HPET speed: 1ms = {d} ticks", .{@as(u64, 1_000_000_000_000) / regs.caps_and_id.counter_period_femtoseconds});
 }
 
 // TODO: something useful could be done while waiting
@@ -42,11 +42,11 @@ pub fn hpetSpinWait(micros: u32, just_before: anytype) void {
     const regs: *volatile HpetRegs = addr.Phys.fromParts(.{ .page = hpet_frame.?.pages[0] })
         .toHhdm().toPtr(*volatile HpetRegs);
 
-    const ticks = (@as(u64, micros) * 1_000_000_000) / @as(*volatile u32, &regs.caps_and_id.counter_period_femtoseconds).*;
+    const ticks = (@as(u64, micros) * 1_000_000_000) / regs.caps_and_id.counter_period_femtoseconds;
 
     just_before.run();
-    const deadline = @as(*volatile u64, &regs.main_counter_value).* + ticks;
-    while (@as(*volatile u64, &regs.main_counter_value).* <= deadline) {
+    const deadline = regs.main_counter_value + ticks;
+    while (regs.main_counter_value <= deadline) {
         std.atomic.spinLoopHint();
     }
 }
@@ -78,7 +78,7 @@ const Hpet = extern struct {
     page_protection: u8 align(1),
 };
 
-const Flags = packed struct {
+const Flags = packed struct(u8) {
     comparator_count: u5,
     counter_size: u1,
     reserved: u1,
@@ -95,7 +95,7 @@ const HpetRegs = extern struct {
     main_counter_value: u64,
 };
 
-const Caps = packed struct {
+const Caps = packed struct(u64) {
     rev_id: u8,
     n_timers_minus_one: u5,
     u64_capable: u1,
@@ -105,7 +105,7 @@ const Caps = packed struct {
     counter_period_femtoseconds: u32,
 };
 
-const Config = packed struct {
+const Config = packed struct(u64) {
     enable_config: u1,
     legacy_replacement_config: u1,
     reserved: u62,

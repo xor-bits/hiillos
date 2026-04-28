@@ -20,7 +20,7 @@ pub const Process = struct {
 
     vmem: *caps.Vmem,
     lock: lock.TrackingSpinMutex = .{},
-    caps: std.ArrayListUnmanaged(caps.CapabilitySlot) = .{},
+    caps: std.ArrayList(caps.CapabilitySlot) = .empty,
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,

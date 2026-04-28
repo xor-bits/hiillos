@@ -587,7 +587,7 @@ const SocketNode = struct {
         socket_node_allocator_lock.lock();
         defer socket_node_allocator_lock.unlock();
 
-        const node = try socket_node_allocator.create();
+        const node = try socket_node_allocator.create(abi.mem.server_page_allocator);
         node.* = .{
             .parent = parent,
             .cap = cap,
@@ -638,7 +638,7 @@ const FileNode = struct {
         file_node_allocator_lock.lock();
         defer file_node_allocator_lock.unlock();
 
-        const node = try file_node_allocator.create();
+        const node = try file_node_allocator.create(abi.mem.server_page_allocator);
         node.* = .{
             .parent = parent,
             .inode = inode,
@@ -740,7 +740,7 @@ const DirNode = struct {
         dir_node_allocator_lock.lock();
         defer dir_node_allocator_lock.unlock();
 
-        const node: *@This() = try dir_node_allocator.create();
+        const node: *@This() = try dir_node_allocator.create(abi.mem.server_page_allocator);
         node.* = .{
             .parent = parent orelse node,
             .inode = inode,
@@ -1021,9 +1021,9 @@ const DirNode = struct {
     // }
 };
 
-var socket_node_allocator: std.heap.MemoryPool(SocketNode) = std.heap.MemoryPool(SocketNode).init(abi.mem.server_page_allocator);
+var socket_node_allocator: std.heap.MemoryPool(SocketNode) = .empty;
 var socket_node_allocator_lock: abi.thread.Mutex = .{};
-var file_node_allocator: std.heap.MemoryPool(FileNode) = std.heap.MemoryPool(FileNode).init(abi.mem.server_page_allocator);
+var file_node_allocator: std.heap.MemoryPool(FileNode) = .empty;
 var file_node_allocator_lock: abi.thread.Mutex = .{};
-var dir_node_allocator: std.heap.MemoryPool(DirNode) = std.heap.MemoryPool(DirNode).init(abi.mem.server_page_allocator);
+var dir_node_allocator: std.heap.MemoryPool(DirNode) = .empty;
 var dir_node_allocator_lock: abi.thread.Mutex = .{};
