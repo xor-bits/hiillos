@@ -8,6 +8,8 @@ const gpa = abi.mem.slab_allocator;
 
 pub const std_options = abi.std_options;
 pub const panic = abi.panic;
+pub const debug = abi.debug;
+pub const std_options_debug_io = std.Io.failing;
 comptime {
     abi.rt.installRuntime();
 }
@@ -120,6 +122,14 @@ pub fn main() !void {
     };
     system_lock.unlock();
 
+    try abi.thread.spawn(struct {
+        fn f() !void {
+            const frames_drawn = frame.load(.monotonic);
+            abi.syslog("wm frames: {}", .{frames_drawn});
+            abi.time.sleep(1_000_000_000);
+        }
+    }.f, .{});
+
     try abi.thread.spawn(connectionThreadMain, .{wm_socket_rx});
     try abi.thread.spawn(inputThreadMain, .{seat.input});
     compositorThreadMain();
@@ -141,6 +151,7 @@ fn exec(path: []const u8) !void {
     _ = try initial_app.asErrorUnion();
 }
 
+var frame: std.atomic.Value(usize) = .init(0);
 fn compositorThreadMain() noreturn {
     const frametime_ns: u32 = 8_333_333;
     // const frametime_ns: u32 = 16_666_667;
@@ -150,6 +161,7 @@ fn compositorThreadMain() noreturn {
         system.draw();
         system_lock.unlock();
 
+        _ = frame.fetchAdd(1, .monotonic);
         nanos += frametime_ns;
         abi.time.sleepDeadline(nanos);
     }
@@ -176,8 +188,15 @@ fn inputThreadMain(input: caps.Sender) !void {
         );
         const ev = ev_result.ev;
 
+        // log.info("input start {any}", .{ev});
+        // defer log.info("input end", .{});
+
         system_lock.lock();
         defer system_lock.unlock();
+
+        // log.info("input locked", .{});
+        // defer log.info("input unlocked", .{});
+
         system.event(ev) catch |err| {
             log.err("event handler failure: {}", .{err});
         };

@@ -6,6 +6,8 @@ const kernel = @import("kernel");
 
 pub const std_options = kernel.std_options;
 pub const panic = kernel.panic;
+pub const debug = kernel.debug;
+pub const std_options_debug_io = kernel.std_options_debug_io;
 
 const log = std.log.scoped(.@"test");
 

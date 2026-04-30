@@ -17,11 +17,14 @@ const logs = @import("logs.zig");
 const pmem = @import("pmem.zig");
 const proc = @import("proc.zig");
 
+pub const debug = @import("debug.zig");
+
 //
 
 const conf = abi.conf;
 pub const std_options = logs.std_options;
 pub const panic = logs.panic;
+pub const std_options_debug_io = std.Io.failing;
 const Error = abi.sys.Error;
 const volat = abi.util.volat;
 
@@ -33,6 +36,8 @@ pub var hhdm_offset: usize = 0xFFFF_8000_0000_0000;
 pub const CpuLocalStorage = struct {
     // used to read the pointer to this struct through GS
     self_ptr: *CpuLocalStorage = undefined,
+
+    panicking: bool = false,
 
     cpu_config: arch.CpuConfig = undefined,
     held_lock_count: u8 = 0,
@@ -188,6 +193,8 @@ pub fn main() noreturn {
     acpi.init() catch |err| {
         std.debug.panic("failed to initialize LAPIC: {any}", .{err});
     };
+
+    if (true) @panic("test");
 
     // set things (like the global kernel address space) up for the capability system
     log.info("initializing caps", .{});

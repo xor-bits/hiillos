@@ -1,26 +1,81 @@
 const std = @import("std");
 
+const abi = @import("lib.zig");
 const caps = @import("caps.zig");
 const fs = @import("fs.zig");
 const lock = @import("lock.zig");
 const mem = @import("mem.zig");
+const process = @import("process.zig");
 const sys = @import("sys.zig");
 const thread = @import("thread.zig");
 
 //
 
+pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    @branchHint(.cold);
+
+    // const name = if (@hasDecl(root, "manifest"))
+    //     root.manifest.getName()
+    // else
+    //     "<unknown>";
+
+    var buffer: [256]u8 = undefined;
+    var log = abi.UnifiedLog.init(&buffer);
+    const writer = &log.interface;
+    const terminal: std.Io.Terminal = .{
+        .writer = writer,
+        .mode = .escape_codes,
+    };
+
+    tryPrintPanic(
+        terminal,
+        msg,
+        first_trace_addr,
+    ) catch {};
+    terminal.writer.writeAll("\ndone\n") catch {};
+
+    process.exit(1);
+}
+
+pub inline fn tryPrintPanic(
+    terminal: std.Io.Terminal,
+    msg: []const u8,
+    first_trace_addr: ?usize,
+) !void {
+    const writer = terminal.writer;
+
+    try writer.print("panic: {s}\n", .{msg});
+    try writer.flush();
+
+    if (@errorReturnTrace()) |err_trace| if (err_trace.index > 0) {
+        try writer.writeAll("error return context:\n");
+        try std.debug.writeErrorReturnTrace(err_trace, terminal);
+        try writer.flush();
+
+        try writer.writeAll("\nstack trace:\n");
+    };
+
+    try std.debug.writeCurrentStackTrace(.{
+        .first_address = first_trace_addr orelse @returnAddress(),
+        .allow_unsafe_unwind = true,
+    }, terminal);
+    try writer.flush();
+}
+
 pub fn getDebugInfoAllocator() std.mem.Allocator {
     return mem.server_page_allocator;
+}
+
+pub fn printLineFromFile(_: std.Io, _: *std.Io.Writer, _: std.debug.SourceLocation) !void {
+    return error.Unsupported;
 }
 
 pub const SelfInfo = struct {
     pub const init: SelfInfo = .{};
     pub const can_unwind = false;
-    pub const UnwindContext = struct {
-        // pub fn init(p: anytype) @This() {
-        //     return .{};
-        // }
-    };
+    pub const UnwindContext = std.debug.Dwarf.SelfUnwinder;
+
+    // lock: lock.SpinMutex = .locked,
 
     // debug_info.getSymbols(
     //     io,
@@ -34,10 +89,8 @@ pub const SelfInfo = struct {
     pub fn getModuleName(
         _: *const SelfInfo,
         _: std.Io,
-        address: usize,
+        _: usize,
     ) error{Unsupported}![]const u8 {
-        _ = address;
-        // std.debug;
         return error.Unsupported;
     }
 
@@ -65,6 +118,7 @@ pub const SelfInfo = struct {
     }
 
     var once: lock.Once(thread.Mutex) = .{};
+    var self_elf: error{ReadFailed}![]const u8 = undefined;
     var self_dwarf: error{ReadFailed}!std.debug.Dwarf = undefined;
     var self_dwarf_lock: lock.Futex = .unlocked;
 
@@ -80,8 +134,8 @@ pub const SelfInfo = struct {
     }
 
     fn trySelfDwarf() anyerror!std.debug.Dwarf {
-        const elf_bin = try tryLoadSelfExe();
-        return getSelfDwarf(mem.slab_allocator, elf_bin);
+        self_elf = tryLoadSelfExe() catch error.ReadFailed;
+        return getSelfDwarf(mem.slab_allocator, try self_elf);
     }
 
     fn tryLoadSelfExe() anyerror![]const u8 {
@@ -105,85 +159,6 @@ pub const SelfInfo = struct {
     }
 };
 
-pub fn printPanic(
-    allocator: std.mem.Allocator,
-    writer: *std.Io.Writer,
-    name: []const u8,
-    msg: []const u8,
-    iter: *std.debug.StackIterator,
-    dwarf_info: anyerror!std.debug.Dwarf,
-    sources: []const SourceFile,
-) !void {
-    try writer.print("{s} panicked: {s}\nstack trace:\n", .{ name, msg });
-
-    var dwarf = dwarf_info catch |err| {
-        try writer.print("failed to open DWARF info: {}\n", .{err});
-        while (iter.next()) |r_addr| {
-            try writer.print("  \x1B[90m0x{x:0>16}\x1B[0m\n", .{r_addr});
-        }
-        return;
-    };
-    defer dwarf.deinit(allocator);
-
-    while (iter.next()) |r_addr| {
-        try printSourceAtAddress(
-            allocator,
-            writer,
-            &dwarf,
-            r_addr,
-            sources,
-        );
-    }
-}
-
-pub fn printSourceAtAddress(
-    allocator: std.mem.Allocator,
-    writer: *std.Io.Writer,
-    debug_info: *std.debug.Dwarf,
-    address: usize,
-    sources: []const SourceFile,
-) !void {
-    const sym = debug_info.getSymbol(allocator, address) catch {
-        try writer.print("\x1B[90m0x{x}\x1B[0m\n", .{address});
-        return;
-    };
-    defer if (sym.source_location) |loc| allocator.free(loc.file_name);
-
-    try writer.print("\x1B[1m", .{});
-
-    if (sym.source_location) |*sl| {
-        try writer.print(
-            "{s}:{d}:{d}",
-            .{ sl.file_name, sl.line, sl.column },
-        );
-    } else {
-        try writer.print("???:?:?", .{});
-    }
-
-    try writer.print(
-        "\x1B[0m: \x1B[90m0x{x} in {s} ({s})\x1B[0m\n",
-        .{ address, sym.name, sym.compile_unit_name },
-    );
-
-    // std.debug.printSourceAtAddress(debug_info: *SelfInfo, out_stream: anytype, address: usize, tty_config: io.tty.Config)
-
-    const loc = sym.source_location orelse return;
-    const source_file = findSourceFile(loc.file_name, sources) orelse return;
-
-    var source_line: []const u8 = "<out-of-bounds>";
-    var lines_iter = std.mem.splitScalar(u8, source_file.contents, '\n');
-    for (0..loc.line) |_| {
-        source_line = lines_iter.next() orelse "<out-of-bounds>";
-    }
-
-    try writer.print("{s}\n", .{source_line});
-
-    const space_needed = @as(usize, @intCast(@max(loc.column, 1) - 1));
-
-    try writer.splatBytesAll(" ", space_needed);
-    try writer.writeAll("\x1B[92m^\x1B[0m\n");
-}
-
 pub fn findSourceFile(
     path: []const u8,
     sources: []const SourceFile,
@@ -192,10 +167,8 @@ pub fn findSourceFile(
         // b path is a full absolute path,
         // while a is relative to the git repo
 
-        var a = std.fs.path.componentIterator(s.path) catch
-            continue;
-        var b = std.fs.path.componentIterator(path) catch
-            continue;
+        var a = std.fs.path.componentIterator(s.path);
+        var b = std.fs.path.componentIterator(path);
 
         const a_last = a.last() orelse continue;
         const b_last = b.last() orelse continue;

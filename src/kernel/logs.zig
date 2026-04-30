@@ -18,6 +18,7 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
     .log_level = .debug,
 };
+pub const panic = std.debug.FullPanic(panicFn);
 
 //
 
@@ -32,8 +33,16 @@ pub fn print(
     printLocked(force_fb, fmt, args);
 }
 
-pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+fn panicFn(
+    msg: []const u8,
+    first_trace_addr: ?usize,
+) noreturn {
     @branchHint(.cold);
+
+    const local = arch.cpuLocal();
+    if (local.panicking) arch.hcf();
+    local.panicking = true;
+    defer local.panicking = false;
 
     // kill other CPUs too
     for (0..255) |i| {
@@ -44,8 +53,6 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     if (conf.KERNEL_PANIC_RSOD)
         fb.clear();
 
-    // TODO: maybe `std.debug.Dwarf.ElfModule` contains everything?
-
     var buffer: [256]u8 = undefined;
     var writer = std.Io.Writer{
         .vtable = &.{
@@ -53,43 +60,41 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         },
         .buffer = &buffer,
     };
+    const terminal: std.Io.Terminal = .{
+        .writer = &writer,
+        .mode = .no_color,
+    };
 
-    writer.print("todo fix kernel panic msg: {s}", .{msg}) catch {};
-    // var iter = std.debug.StackIterator.init(
-    //     @returnAddress(),
-    //     @frameAddress(),
-    // );
-    // abi.debug.printPanic(
-    //     pmem.page_allocator,
-    //     &writer,
-    //     "kernel",
-    //     msg,
-    //     &iter,
-    //     getSelfDwarf(),
-    //     &source_files,
-    // ) catch {};
+    abi.debug.tryPrintPanic(
+        terminal,
+        msg,
+        first_trace_addr,
+    ) catch {};
 
-    writer.writeAll("\n") catch {};
+    writer.writeAll("\ndone\n") catch {};
     arch.hcf();
 }
 
 pub const Addr2Line = struct {
     addr: usize,
 
-    pub fn format(self: Addr2Line, writer: *std.Io.Writer) !void {
-        var dwarf = getSelfDwarf() catch |err| {
-            try writer.print("failed to open DWARF info: {}\n", .{err});
-            return;
-        };
-        defer dwarf.deinit(pmem.page_allocator);
+    pub fn format(
+        self: Addr2Line,
+        writer: *std.Io.Writer,
+    ) !void {
         _ = self;
-        // try abi.debug.printSourceAtAddress(
+        _ = writer;
+        // self_dwarf_lock.lock();
+        // defer self_dwarf_lock.unlock();
+        // const dwarf = getSelfDwarf() orelse return;
+
+        // abi.debug.printSourceAtAddress(
         //     pmem.page_allocator,
         //     writer,
-        //     &dwarf,
+        //     dwarf,
         //     self.addr,
         //     &source_files,
-        // );
+        // ) catch {};
     }
 };
 
@@ -179,9 +184,17 @@ fn open(comptime path: []const u8) abi.debug.SourceFile {
     };
 }
 
-fn getSelfDwarf() !std.debug.Dwarf {
-    const kernel_file = boot.kernel_file.response orelse return error.NoKernelFile;
+var self_dwarf: ?std.debug.Dwarf = null;
+var self_dwarf_init: bool = false;
+var self_dwarf_lock: lock.TrackingSpinMutex = .unlocked;
+
+fn getSelfDwarf() ?*std.debug.Dwarf {
+    if (self_dwarf_init) return &(self_dwarf orelse return null);
+    self_dwarf_init = true;
+
+    const kernel_file = boot.kernel_file.response orelse return null;
     const elf_bin = kernel_file.executable_file.data();
 
-    return try abi.debug.getSelfDwarf(pmem.page_allocator, elf_bin);
+    self_dwarf = abi.debug.getSelfDwarf(pmem.page_allocator, elf_bin) catch return null;
+    return &self_dwarf.?;
 }

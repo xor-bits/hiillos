@@ -1,5 +1,5 @@
 coreutils --coreutils-prog=echo installing coreutils symlinks ...
 coreutils install
 echo starting window manager ...
-# sh
-wm
+sh
+# wm

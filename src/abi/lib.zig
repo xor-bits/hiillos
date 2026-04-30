@@ -37,93 +37,13 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
     .log_level = if (@hasDecl(root, "log_level")) root.log_level else .debug,
 };
-pub const panic = std.debug.FullPanic(panicFn);
+pub const panic = std.debug.FullPanic(debug.panicFn);
 
 fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
 
     unilog(level_txt ++ prefix2 ++ format ++ "\n", args);
-}
-
-pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
-    @branchHint(.cold);
-
-    const name = if (@hasDecl(root, "manifest"))
-        root.manifest.getName()
-    else
-        "<unknown>";
-
-    var buffer: [256]u8 = undefined;
-    var log = UnifiedLog.init(&buffer);
-    const writer = &log.interface;
-
-    var addr_buf: [64]usize = undefined;
-    const stack_trace = std.debug.captureCurrentStackTrace(.{
-        .allow_unsafe_unwind = true,
-        .first_address = first_trace_addr,
-    }, &addr_buf);
-
-    _ = stack_trace;
-
-    // var addr_buf: [64]usize = undefined;
-    // const stack_trace = std.debug.captureCurrentStackTrace(.{}, &addr_buf);
-    _ = name;
-    _ = msg;
-    // var iter = std.debug.StackIterator.init(
-    //     @returnAddress(),
-    //     @frameAddress(),
-    // );
-    // debug.printPanic(
-    //     mem.slab_allocator,
-    //     writer,
-    //     name,
-    //     msg,
-    //     &iter,
-    //     getSelfDwarf(),
-    //     &.{},
-    // ) catch {};
-    writer.flush() catch {};
-
-    process.exit(1);
-}
-
-var self_exe: sys.Error![]const u8 = undefined;
-var self_exe_once: lock.Once(thread.Mutex) = .{};
-
-fn getSelfDwarf() !std.debug.Dwarf {
-    return debug.getSelfDwarf(mem.slab_allocator, try loadSelfExe());
-}
-
-fn loadSelfExe() sys.Error![]const u8 {
-    if (self_exe_once.tryRun()) {
-        self_exe = tryLoadSelfExe();
-        self_exe_once.complete();
-    } else {
-        self_exe_once.wait();
-    }
-
-    return try self_exe;
-}
-
-fn tryLoadSelfExe() sys.Error![]const u8 {
-    if (@hasDecl(root, "manifest"))
-        return sys.Error.NotFound;
-
-    const vmem = caps.Vmem.self;
-
-    const frame = try fs.openSelfExe();
-    const size = try frame.getSize();
-
-    const addr = try vmem.map(
-        frame,
-        0,
-        0,
-        size,
-        .{},
-    );
-
-    return @as([*]const u8, @ptrFromInt(addr))[0..size];
 }
 
 //

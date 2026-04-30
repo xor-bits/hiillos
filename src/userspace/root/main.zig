@@ -11,6 +11,8 @@ const caps = abi.caps;
 
 pub const std_options = abi.std_options;
 pub const panic = abi.panic;
+pub const debug = abi.debug;
+pub const std_options_debug_io = std.Io.failing;
 
 pub export var manifest = abi.loader.Manifest.new(.{
     .name = "root",

@@ -153,6 +153,13 @@ pub const Keyboard = struct {
     }
 
     pub fn run(self: *@This()) !void {
+        const health_check_thread = try abi.caps.Thread.create(abi.caps.Process.self);
+        try abi.thread.spawnOptions(healthCheck, .{
+            try health_check_thread.clone(),
+        }, .{
+            .thread = health_check_thread,
+        });
+
         while (true) {
             const inb = try self.controller.readWaitKeyboard();
             if (try self.runOn(inb)) |ev| {
@@ -162,17 +169,32 @@ pub const Keyboard = struct {
                 if (ev.code == .print_screen and abi.conf.KERNEL_PANIC_SYSCALL)
                     abi.sys.kernelPanic();
 
-                if (ev.code == .f1) {
-                    log.info("HPET health check", .{});
-                    abi.time.sleepWith(1_000, .{
-                        .cap = main.import_hpet.handle,
-                    });
-                    log.info("HPET health check success", .{});
+                if (ev.code == .f1 and ev.state == .press) {
+                    health_check_thread.start() catch |err| {
+                        log.err("health check still running: {}", .{err});
+                    };
                 }
 
                 main.pushEvent(.{ .keyboard = ev });
                 // log.info("key event {}", .{ev});
             }
+        }
+    }
+
+    fn healthCheck(
+        self: abi.caps.Thread,
+    ) !void {
+        defer self.close();
+        // if (true) return;
+
+        while (true) {
+            try self.stop();
+
+            log.info("HPET health check (50ms)", .{});
+            abi.time.sleepWith(50_000_000, .{
+                .cap = main.import_hpet.handle,
+            });
+            log.info("HPET health check success", .{});
         }
     }
 

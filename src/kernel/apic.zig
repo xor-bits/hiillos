@@ -75,7 +75,7 @@ pub const Locals = struct {
     acknowledged_interrupts: u256 = 0,
 
     pub fn inFlight(self: *@This(), vector: u8) void {
-        // log.debug("inFlight({})", .{vector});
+        // log.debug("inFlight({*}, {})", .{ self, vector });
         const irq_cap = self.interrupt_handlers[vector - IRQ_AVAIL_LOW].load() orelse {
             log.warn("userspace interrupt {} without a handler", .{vector});
             eoi(); // not handled by user-space (yet) -> just EOI
@@ -92,7 +92,7 @@ pub const Locals = struct {
 
     /// returns false if the interrupt was not in-flight
     pub fn ack(self: *@This(), vector: u8) bool {
-        // log.debug("ack({})", .{vector});
+        // log.debug("ack({*}, {})", .{ self, vector });
         self.lock.lock();
         defer self.lock.unlock();
 

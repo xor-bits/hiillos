@@ -10,6 +10,8 @@ const Error = abi.sys.Error;
 
 pub const std_options = abi.std_options;
 pub const panic = abi.panic;
+pub const debug = abi.debug;
+pub const std_options_debug_io = std.Io.failing;
 comptime {
     abi.rt.installRuntime();
 }
@@ -188,7 +190,7 @@ fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
         _ = notify.wait();
         try irq.ack();
 
-        // log.debug("HPET INTERRUPT", .{});
+        log.debug("HPET INTERRUPT", .{});
 
         const main_counter = regs.main_counter_value;
 
@@ -202,6 +204,7 @@ fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
             // wake up the current waiter
             if (current.deadline <= main_counter) {
                 timer.current = null;
+                log.debug("found expired deadline {}", .{i});
                 current.reply.reply(.{}) catch |err| {
                     log.err("invalid reply cap: {}", .{err});
                 };
@@ -213,6 +216,7 @@ fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
             while (timer.deadlines.pop()) |next| {
                 if (next.deadline <= main_counter) {
                     // wake it up if its ready
+                    log.debug("found additional expired deadline {}", .{i});
                     next.reply.reply(.{}) catch |err| {
                         log.err("invalid reply cap: {}", .{err});
                     };
@@ -291,9 +295,11 @@ pub fn sleepDeadline(reply: caps.Reply, timestamp_nanos: u128) void {
         timer.deadlines.push(abi.mem.server_page_allocator, new) catch |err| {
             log.err("lost track of timers: {}", .{err});
         };
+        log.debug("pushed a 2nd deadline {}", .{least_used});
     } else {
         @as(*volatile u64, &regs.timer(least_used).comparator_value).* = new.deadline;
         timer.current = new;
+        log.debug("set only deadline {}", .{least_used});
     }
 }
 

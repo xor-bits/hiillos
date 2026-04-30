@@ -9,6 +9,8 @@ pub const log_level = .info;
 
 pub const std_options = abi.std_options;
 pub const panic = abi.panic;
+pub const debug = abi.debug;
+pub const std_options_debug_io = std.Io.failing;
 comptime {
     abi.rt.installRuntime();
 }
