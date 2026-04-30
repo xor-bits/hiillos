@@ -7,6 +7,7 @@ const Ctx = @import("main.zig").Ctx;
 //
 
 pub fn main(ctx: Ctx) !void {
+    if (true) @panic("y");
     while (true) {
         try ctx.stdout.writeAll("y\n");
         // abi.time.sleep(100_000);

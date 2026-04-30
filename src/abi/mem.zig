@@ -6,7 +6,7 @@ const abi = @import("lib.zig");
 //
 
 pub const server_page_allocator = std.mem.Allocator{
-    .ptr = @ptrFromInt(0x1000),
+    .ptr = undefined,
     .vtable = &.{
         .alloc = ServerPageAllocator.alloc,
         .resize = ServerPageAllocator.resize,

@@ -37,6 +37,7 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
     .log_level = if (@hasDecl(root, "log_level")) root.log_level else .debug,
 };
+pub const panic = std.debug.FullPanic(panicFn);
 
 fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
     const level_txt = comptime message_level.asText();
@@ -45,7 +46,7 @@ fn logFn(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_li
     unilog(level_txt ++ prefix2 ++ format ++ "\n", args);
 }
 
-pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
     @branchHint(.cold);
 
     const name = if (@hasDecl(root, "manifest"))
@@ -56,6 +57,14 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     var buffer: [256]u8 = undefined;
     var log = UnifiedLog.init(&buffer);
     const writer = &log.interface;
+
+    var addr_buf: [64]usize = undefined;
+    const stack_trace = std.debug.captureCurrentStackTrace(.{
+        .allow_unsafe_unwind = true,
+        .first_address = first_trace_addr,
+    }, &addr_buf);
+
+    _ = stack_trace;
 
     // var addr_buf: [64]usize = undefined;
     // const stack_trace = std.debug.captureCurrentStackTrace(.{}, &addr_buf);

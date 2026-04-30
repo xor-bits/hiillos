@@ -1,6 +1,109 @@
 const std = @import("std");
 
+const caps = @import("caps.zig");
+const fs = @import("fs.zig");
+const lock = @import("lock.zig");
+const mem = @import("mem.zig");
+const sys = @import("sys.zig");
+const thread = @import("thread.zig");
+
 //
+
+pub fn getDebugInfoAllocator() std.mem.Allocator {
+    return mem.server_page_allocator;
+}
+
+pub const SelfInfo = struct {
+    pub const init: SelfInfo = .{};
+    pub const can_unwind = false;
+    pub const UnwindContext = struct {
+        // pub fn init(p: anytype) @This() {
+        //     return .{};
+        // }
+    };
+
+    // debug_info.getSymbols(
+    //     io,
+    //     symbol_allocator,
+    //     text_arena.allocator(),
+    //     options.address,
+    //     options.resolve_inline_callers,
+    //     &symbols,
+    // ) catch |err| {
+
+    pub fn getModuleName(
+        _: *const SelfInfo,
+        _: std.Io,
+        address: usize,
+    ) error{Unsupported}![]const u8 {
+        _ = address;
+        // std.debug;
+        return error.Unsupported;
+    }
+
+    pub fn getSymbols(
+        _: *const SelfInfo,
+        _: std.Io,
+        symbol_allocator: std.mem.Allocator,
+        text_arena: std.mem.Allocator,
+        address: usize,
+        resolve_inline_callers: bool,
+        symbols: *std.ArrayList(std.debug.Symbol),
+    ) std.debug.SelfInfoError!void {
+        self_dwarf_lock.lock();
+        defer self_dwarf_lock.unlock();
+        const di = try load();
+
+        try di.getSymbols(
+            symbol_allocator,
+            text_arena,
+            .native,
+            address,
+            resolve_inline_callers,
+            symbols,
+        );
+    }
+
+    var once: lock.Once(thread.Mutex) = .{};
+    var self_dwarf: error{ReadFailed}!std.debug.Dwarf = undefined;
+    var self_dwarf_lock: lock.Futex = .unlocked;
+
+    fn load() error{ReadFailed}!*std.debug.Dwarf {
+        if (once.tryRun()) {
+            defer once.complete();
+            self_dwarf = trySelfDwarf() catch error.ReadFailed;
+        } else {
+            once.wait();
+        }
+
+        return &try self_dwarf;
+    }
+
+    fn trySelfDwarf() anyerror!std.debug.Dwarf {
+        const elf_bin = try tryLoadSelfExe();
+        return getSelfDwarf(mem.slab_allocator, elf_bin);
+    }
+
+    fn tryLoadSelfExe() anyerror![]const u8 {
+        if (@hasDecl(@import("root"), "manifest"))
+            return error.NotFound;
+
+        const vmem = caps.Vmem.self;
+
+        const frame = try fs.openSelfExe();
+        const size = try frame.getSize();
+
+        const addr = try vmem.map(
+            frame,
+            0,
+            0,
+            size,
+            .{},
+        );
+
+        return @as([*]const u8, @ptrFromInt(addr))[0..size];
+    }
+};
 
 pub fn printPanic(
     allocator: std.mem.Allocator,
