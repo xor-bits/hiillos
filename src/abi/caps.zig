@@ -141,8 +141,10 @@ pub const Thread = extern struct {
         sys.handleClose(this.cap);
     }
 
-    pub fn readRegs(this: @This(), regs: *sys.ThreadRegs) sys.Error!void {
-        try sys.threadReadRegs(this.cap, regs);
+    pub fn readRegs(this: @This()) sys.Error!sys.ThreadRegs {
+        var regs: sys.ThreadRegs = undefined;
+        try sys.threadReadRegs(this.cap, &regs);
+        return regs;
     }
 
     pub fn writeRegs(this: @This(), regs: *const sys.ThreadRegs) sys.Error!void {
@@ -165,6 +167,7 @@ pub const Thread = extern struct {
         return try sys.threadWait(this.cap);
     }
 
+    // FIXME: rename
     pub fn threadSetSigHandler(this: @This(), ip: usize) sys.Error!void {
         return try sys.threadSetSigHandler(this.cap, ip);
     }
