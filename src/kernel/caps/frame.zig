@@ -346,7 +346,7 @@ pub const Frame = struct {
                     );
                 }
 
-                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().lapic_id)));
+                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().id)));
                 // const ipi_count = @popCount(ipi_bitmap);
 
                 if (self.deinitTlbShootdown()) {
