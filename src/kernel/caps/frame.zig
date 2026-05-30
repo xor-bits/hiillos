@@ -548,8 +548,8 @@ pub const TlbShootdown = struct {
         completion: Completion,
         target: Target,
     ) !*@This() {
-        if (conf.LOG_OBJ_CALLS)
-            log.info("TlbShootdown.init completion={} target={}", .{ completion, target });
+        caps.incCount(.tlb_shootdown, .{ .completion = completion, .target = target });
+        errdefer caps.decCount(.tlb_shootdown);
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .completion = completion, .target = target };
@@ -574,6 +574,7 @@ pub const TlbShootdown = struct {
         }
 
         if (!self.refcnt.dec()) return null;
+        caps.decCount(.tlb_shootdown);
 
         defer caps.slab_allocator.allocator().destroy(self);
 

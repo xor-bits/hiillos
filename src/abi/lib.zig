@@ -194,6 +194,9 @@ pub const ObjectType = enum(u8) {
     x86_irq_allocator,
     /// x86 specific capability that gives access to one IRQ (= interrupt request)
     x86_irq,
+
+    /// kernel internal object for tlb sync
+    tlb_shootdown,
 };
 
 /// kernel object size in bit-width (minus 12)

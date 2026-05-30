@@ -177,7 +177,11 @@ pub const Capability = struct {
 
     pub fn deinit(self: @This()) void {
         switch (self.type) {
-            .null, .hal_vmem => unreachable,
+            .null,
+            .hal_vmem,
+            .tlb_shootdown,
+            => unreachable,
+
             inline else => |t| {
                 return self.as(t).deinit();
             },
@@ -198,7 +202,11 @@ pub const Capability = struct {
             .x86_ioport => X86IoPort,
             .x86_irq_allocator => X86IrqAllocator,
             .x86_irq => X86Irq,
-            .null, .hal_vmem => @compileError("invalid type " ++ @tagName(ty)),
+
+            .null,
+            .hal_vmem,
+            .tlb_shootdown,
+            => @compileError("invalid type " ++ @tagName(ty)),
         };
     }
 
@@ -209,7 +217,11 @@ pub const Capability = struct {
 
     pub fn refcnt(self: @This()) *abi.epoch.RefCnt {
         switch (self.type) {
-            .null, .hal_vmem => unreachable,
+            .null,
+            .hal_vmem,
+            .tlb_shootdown,
+            => unreachable,
+
             inline else => |t| {
                 // FIXME: prevent reordering so that the offset would be same on all objects
                 if (@offsetOf(typeOf(t), "refcnt") != 0)
