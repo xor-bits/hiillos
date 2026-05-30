@@ -13,6 +13,9 @@ pub const LOG_USER: bool = LOG_EVERYTHING or false;
 
 pub const LOG_SYSCALL_STATS: bool = LOG_STATS or false;
 pub const LOG_OBJ_STATS: bool = LOG_STATS or false;
+/// instead of printing obj counts every time an object is created,
+/// print them on each timer interrupt
+pub const LOG_OBJ_STATS_PERIODIC: bool = LOG_STATS or false;
 pub const LOG_SYSCALLS: bool = LOG_GENERIC or false;
 pub const LOG_OBJ_CALLS: bool = LOG_GENERIC or false;
 pub const LOG_CAP_CHANGES: bool = LOG_GENERIC or false;

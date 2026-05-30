@@ -1299,6 +1299,10 @@ pub const Idt = extern struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC timer interrupt", .{});
 
+                if (conf.LOG_OBJ_STATS_PERIODIC and cpuLocal().id == 0) {
+                    caps.printCounts();
+                }
+
                 if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
                     // only userspace can preempt
                     // log.debug("time slice preempt", .{});

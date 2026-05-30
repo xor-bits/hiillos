@@ -69,12 +69,7 @@ pub fn incCount(ty: abi.ObjectType, init_args: anytype) void {
     if (!conf.LOG_OBJ_STATS) return;
     _ = obj_counts.getPtr(ty).fetchAdd(1, .monotonic);
 
-    log.debug("objects: (new {})", .{ty});
-    var it = obj_counts.iterator();
-    while (it.next()) |e| {
-        const v = e.value.load(.monotonic);
-        log.debug(" - {}: {}", .{ e.key, v });
-    }
+    if (!conf.LOG_OBJ_STATS_PERIODIC) printCounts();
 }
 
 pub fn decCount(ty: abi.ObjectType) void {
@@ -82,6 +77,15 @@ pub fn decCount(ty: abi.ObjectType) void {
         log.info("{t}.deinit", .{ty});
     if (!conf.LOG_OBJ_STATS) return;
     _ = obj_counts.getPtr(ty).fetchSub(1, .monotonic);
+}
+
+pub fn printCounts() void {
+    log.debug("objects:", .{});
+    var it = obj_counts.iterator();
+    while (it.next()) |e| {
+        const v = e.value.load(.monotonic);
+        log.debug(" - {}: {}", .{ e.key, v });
+    }
 }
 
 var obj_counts: std.EnumArray(abi.ObjectType, std.atomic.Value(usize)) = .initFill(.init(0));
