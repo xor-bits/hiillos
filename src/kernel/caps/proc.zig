@@ -123,6 +123,9 @@ pub const Process = struct {
             return;
         }
 
+        if (conf.IS_DEBUG and thread.dbg_filter) {
+            log.debug("wait cause: procWaitExit", .{});
+        }
         const cleanup = self.exit_waiters.pushThreadLocked(
             &self.lock,
             thread,

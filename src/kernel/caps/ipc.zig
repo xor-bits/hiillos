@@ -195,6 +195,9 @@ pub const Channel = struct {
                 return error.ChannelClosed;
             }
 
+            if (conf.IS_DEBUG and thread.dbg_filter) {
+                log.debug("wait cause: recv", .{});
+            }
             const cleanup = self.recv_queue.pushThreadLocked(
                 &self.lock,
                 thread,
@@ -389,6 +392,9 @@ pub const Channel = struct {
             thread.message = msg;
             thread.lock.unlock();
 
+            if (conf.IS_DEBUG and thread.dbg_filter) {
+                log.debug("wait cause: call", .{});
+            }
             const cleanup = self.send_queue.pushThreadLocked(
                 &self.lock,
                 thread,
@@ -652,6 +658,9 @@ pub const Notify = struct {
             return;
         }
 
+        if (conf.IS_DEBUG and thread.dbg_filter) {
+            log.debug("wait cause: wait", .{});
+        }
         const cleanup = self.queue.pushThreadLocked(
             &self.queue_lock,
             thread,

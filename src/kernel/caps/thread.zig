@@ -37,6 +37,7 @@ pub const Thread = struct {
 
     // lock for modifying the thread
     lock: lock.TrackingSpinMutex = .{},
+    dbg_filter: bool = false,
     /// scheduler priority
     priority: u2 = 2,
     cpu_time: u64 = 0,
@@ -206,6 +207,9 @@ pub const Thread = struct {
             .running => {
                 // TODO: IPI
                 self.status = .stopping;
+                if (conf.IS_DEBUG and thread.dbg_filter) {
+                    log.debug("wait cause: stop", .{});
+                }
                 const cleanup = self.stop_waiters.pushLockedThreadLocked(
                     &self.lock,
                     thread,
@@ -304,6 +308,9 @@ pub const Thread = struct {
             return;
         }
 
+        if (conf.IS_DEBUG and thread.dbg_filter) {
+            log.debug("wait cause: threadWaitExit", .{});
+        }
         const cleanup = self.exit_waiters.pushLockedThreadLocked(
             &self.lock,
             thread,

@@ -60,6 +60,10 @@ pub const Handle = extern struct {
     pub fn close(this: @This()) void {
         sys.handleClose(this.cap);
     }
+
+    pub fn dbgFilter(this: @This(), enable: bool) sys.Error!void {
+        return try sys.handleDbgFilter(this.cap, enable);
+    }
 };
 
 /// capability to manage a single process

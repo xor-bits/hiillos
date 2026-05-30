@@ -51,6 +51,9 @@ pub fn wait(
     // sleep the thread
     if (conf.LOG_FUTEX)
         std.log.debug("futex wait {*} {*}", .{ thread, futex });
+    if (conf.IS_DEBUG and thread.dbg_filter) {
+        log.debug("wait cause: futexWait", .{});
+    }
     const cleanup = futex_queue.queue.pushLockedThreadLocked(
         &futex_queue.lock,
         thread,

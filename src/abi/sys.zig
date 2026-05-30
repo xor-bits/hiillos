@@ -139,6 +139,8 @@ pub const Id = enum(usize) {
     handle_duplicate,
     /// close a handle to some object, might or might not delete the object
     handle_close,
+    /// enable/disable filtered kernel debug logging for this kernel object
+    handle_dbg_filter,
 
     /// sleep if the stored value at the given address is the given value
     futex_wait,
@@ -1107,6 +1109,13 @@ pub fn handleDuplicate(cap: u32) Error!u32 {
 pub fn handleClose(cap: u32) void {
     if (builtin.is_test) return;
     _ = syscall(.handle_close, .{cap}, .{}) catch unreachable;
+}
+
+pub fn handleDbgFilter(cap: u32, enable: bool) !void {
+    _ = try syscall(.handle_dbg_filter, .{
+        cap,
+        @intFromBool(enable),
+    }, .{});
 }
 
 pub const FutexFlags = packed struct {

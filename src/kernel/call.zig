@@ -868,6 +868,25 @@ fn handle_syscall(
             ) catch return;
             cap.deinit();
         },
+        .handle_dbg_filter => {
+            if (!conf.IS_DEBUG) return Error.InvalidSyscall;
+
+            const cap = try thread.proc.getCapability(
+                @truncate(trap.arg0),
+                .{},
+            );
+            defer cap.deinit();
+
+            switch (cap.type) {
+                inline .thread => |as| {
+                    const obj = cap.as(as);
+                    obj.lock.lock();
+                    obj.dbg_filter = trap.arg1 != 0;
+                    obj.lock.unlock();
+                },
+                else => {},
+            }
+        },
 
         .futex_wait => try futex.wait(trap, thread),
         .futex_wake => try futex.wake(trap, thread),

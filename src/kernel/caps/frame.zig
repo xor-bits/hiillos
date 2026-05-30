@@ -361,7 +361,6 @@ pub const Frame = struct {
                     const locals = _locals.load(.acquire) orelse continue;
 
                     if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
-                        // log.debug("issuing a TLB shootdown from transient page", .{});
                         apic.interProcessorInterrupt(
                             locals.lapic_id,
                             apic.IRQ_IPI_TLB_SHOOTDOWN,
@@ -455,7 +454,7 @@ pub const Frame = struct {
             // TODO: use a per-CPU arena allocator
 
             const alloc = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-            errdefer pmem.deallocChunk( alloc, .@"4KiB");
+            errdefer pmem.deallocChunk(alloc, .@"4KiB");
             const old = try self.collectOldMappingsLocked();
 
             const new_page = alloc.toParts().page;
@@ -514,6 +513,10 @@ pub const Frame = struct {
         proc.switchFrom(trap, thread);
 
         // FIXME: self.lock is held longer than necessary
+
+        if (conf.IS_DEBUG and thread.dbg_filter) {
+            log.debug("wait cause: transientQueueSleep", .{});
+        }
 
         return self.transient_sleep_queue.pushThreadLocked(
             &self.lock,
@@ -577,9 +580,6 @@ pub const TlbShootdown = struct {
         caps.decCount(.tlb_shootdown);
 
         defer caps.slab_allocator.allocator().destroy(self);
-
-        if (conf.LOG_OBJ_CALLS)
-            log.info("TlbShootdown.deinit", .{});
 
         switch (self.completion) {
             .transient => |frame| {
