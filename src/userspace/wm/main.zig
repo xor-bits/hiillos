@@ -442,7 +442,7 @@ const Framebuffer = struct {
             0,
             0,
             shmem.bytes,
-            .{},
+            .{ .write = true },
         );
 
         const fb = abi.util.Image([*]volatile u8){
@@ -489,8 +489,18 @@ const Framebuffer = struct {
             self.fb.height = size[1];
             self.fb.pitch = new_info.pitch;
         } else {
+            const new_self = try Framebuffer.init(try gui.Framebuffer.init(size));
+            const w = @min(self.fb.width, new_self.fb.width);
+            const h = @min(self.fb.height, new_self.fb.height);
+            const old = self.fb.subimage(0, 0, w, h) catch
+                unreachable;
+            const new = new_self.fb.subimage(0, 0, w, h) catch
+                unreachable;
+            old.copyTo(new) catch
+                unreachable;
+
             self.deinit();
-            self.* = try Framebuffer.init(try gui.Framebuffer.init(size));
+            self.* = new_self;
         }
 
         resize_event_conn.pushEvent(.{ .window = .{
@@ -816,6 +826,7 @@ const System = struct {
         while (it) |node| : (it = node.next) {
             const window: *Window = @fieldParentPtr("window_list_node", node);
 
+            // FIXME: dont send IPC messages while drawing, thats dumb
             window.resize() catch |err| {
                 log.err("failed to resize a window: {}", .{err});
             };
