@@ -76,19 +76,6 @@ pub fn subscribe(self: *@This()) Error!*caps.Notify {
     return self.notify.clone();
 }
 
-pub fn ack(self: *@This()) Error!void {
-    if (conf.LOG_OBJ_CALLS)
-        log.info("X86Irq.ack", .{});
-
-    const handler = self.handler orelse {
-        return Error.IrqNotReady;
-    };
-
-    if (!handler.locals.ack(handler.vector)) {
-        return Error.IrqNotReady;
-    }
-}
-
 //
 
 pub const X86IrqAllocator = struct {

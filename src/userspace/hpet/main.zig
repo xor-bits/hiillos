@@ -181,12 +181,13 @@ fn sleepDeadlineHandler(ctx: *Context, _: u32, req: struct { u128 }) struct { vo
 }
 
 fn hpetThreadMain(irq: caps.X86Irq, notify: caps.Notify) !void {
+    defer irq.close();
+
     // log.debug("HPET timer thread", .{});
 
     const regs = hpet_regs.?;
     while (true) {
         _ = notify.wait();
-        try irq.ack();
 
         // log.debug("HPET INTERRUPT", .{});
 

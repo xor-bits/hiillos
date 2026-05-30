@@ -1313,7 +1313,6 @@ pub const Idt = extern struct {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI EOI interrupt", .{});
 
                 apic.eoi();
-                cpuLocal().lapic.ackIpi();
             }
         }).asInt();
         entries[apic.IRQ_IPI_PREEMPT] = Entry.generateTrap(struct {
@@ -1353,10 +1352,8 @@ pub const Idt = extern struct {
 
                     // log.info("extra interrupt i=0x{x}", .{i + IRQ_AVAIL_LOW});
 
-                    cpuLocal().lapic.inFlight(i + apic.IRQ_AVAIL_LOW);
-                    // apic.eoi();
-
-                    // no EOI as it is handled by userspace ACKs sent to caps.X86Irq
+                    cpuLocal().lapic.notify(i + apic.IRQ_AVAIL_LOW);
+                    apic.eoi();
                 }
             }).asInt();
         }

@@ -798,10 +798,6 @@ pub const X86Irq = extern struct {
         return .{ .cap = cap };
     }
 
-    pub fn ack(self: @This()) sys.Error!void {
-        try sys.x86IrqAck(self.cap);
-    }
-
     pub fn handle(this: @This()) Handle {
         return .{ .cap = this.cap };
     }

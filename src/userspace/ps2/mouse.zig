@@ -126,8 +126,6 @@ pub const Mouse = struct {
         } else {
             return error.BadMouse;
         }
-
-        controller.ackMouse();
         try controller.flush();
     }
 

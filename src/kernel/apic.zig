@@ -63,106 +63,14 @@ pub const Locals = struct {
     interrupt_handlers: [IRQ_AVAIL_COUNT]Handler =
         [1]Handler{.{}} ** IRQ_AVAIL_COUNT,
 
-    // bitfield of this lapic's in-flight interrupts
-    // in HW, EOIs are sent in order, highest priority interrupt is EOI'd first
-    // but in hiillos, any interrupt can be ACK'd at any point, so this stack makes
-    // EOI's "ordered" (example, 2 in-flight interrupts: The low priority interrupt
-    // receives an ACK, but doesnt send an EOI. Then the high priority interrupt
-    // receives an ACK and sends 2 EOIs: one for itself and one for the lower priority
-    // interrupt that was already ACK'd)
-    lock: lock.TrackingSpinMutex = .{},
-    in_flight_interrupts: u256 = 0,
-    acknowledged_interrupts: u256 = 0,
-
-    pub fn inFlight(self: *@This(), vector: u8) void {
-        // log.debug("inFlight({})", .{vector});
+    pub fn notify(self: *@This(), vector: u8) void {
+        // log.debug("notify({})", .{vector});
         const irq_cap = self.interrupt_handlers[vector - IRQ_AVAIL_LOW].load() orelse {
             log.warn("userspace interrupt {} without a handler", .{vector});
-            eoi(); // not handled by user-space (yet) -> just EOI
             return;
         };
         defer irq_cap.deinit();
-
-        self.lock.lock();
-        self.in_flight_interrupts |= @as(u256, 1) << vector;
-        self.lock.unlock();
-
         _ = irq_cap.notify.notify();
-    }
-
-    /// returns false if the interrupt was not in-flight
-    pub fn ack(self: *@This(), vector: u8) bool {
-        // log.debug("ack({})", .{vector});
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        const bit = @as(u256, 1) << vector;
-
-        if (self.in_flight_interrupts & bit == 0) {
-            // cant ack because it isnt in-flight
-            return false;
-        }
-
-        self.acknowledged_interrupts |= bit;
-
-        const highest_in_flight = @as(u256, 1) << @intCast(@ctz(self.in_flight_interrupts));
-
-        if (self.acknowledged_interrupts & highest_in_flight == 0) {
-            // some lower priority interrupt got ACK'd -> no EOIs
-            return true;
-        }
-
-        const locals: *main.CpuLocalStorage = @alignCast(@fieldParentPtr("lapic", self));
-        if (arch.cpuLocal().lapic_id != locals.lapic_id) {
-            @branchHint(.cold);
-            interProcessorInterrupt(locals.lapic_id, IRQ_IPI_EOI);
-        } else {
-            self.sendEois();
-        }
-
-        return true;
-    }
-
-    pub fn ackIpi(self: *@This()) void {
-        // log.debug("ackIpi()", .{});
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        self.sendEois();
-    }
-
-    fn sendEois(self: *@This()) void {
-        // log.debug("sendEois()", .{});
-
-        // some bit manipulation magic to get the number of
-        // EOIs to send + unset their in_flight and ack bits
-
-        // ex:       in_flight: 00101101
-        //                 ack: 00100001
-        //                diff: 00001100
-        //        highest_diff: 00001000
-        // ordered_eoi_bitmask: 11111000
-        //                eois: 00100000
-        //              popcnt: 1
-        //
-
-        if (self.acknowledged_interrupts == 0) {
-            return;
-        }
-
-        const eois = commonHighestBits(
-            self.in_flight_interrupts,
-            self.acknowledged_interrupts,
-        );
-
-        self.in_flight_interrupts ^= eois;
-        self.acknowledged_interrupts ^= eois;
-
-        const popcnt = @popCount(eois);
-
-        for (0..popcnt) |_| {
-            eoi();
-        }
     }
 };
 

@@ -818,15 +818,7 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(handle);
         },
         .x86_irq_ack => {
-            const irq: *caps.X86Irq = try thread.proc.getCapabilityAs(
-                @truncate(trap.arg0),
-                .x86_irq,
-                .{},
-            );
-            defer irq.deinit();
-
-            try irq.ack();
-            trap.syscall_id = abi.sys.encode(0);
+            return Error.InvalidSyscall;
         },
 
         .handle_identify => {
