@@ -63,7 +63,7 @@ fn StaticQueue(comptime T: type) type {
     return struct {
         queue: [16]T = undefined,
         head: u4 = 0,
-        len: u4 = 0,
+        len: u8 = 0,
         lock: lock.TrackingSpinMutex = .{},
 
         pub fn pop(self: *@This()) T {
@@ -241,4 +241,20 @@ pub fn smpmain(smpinfo: *boot.LimineMpInfo) noreturn {
 test "trivial test" {
     try std.testing.expect(builtin.target.cpu.arch == .x86_64);
     try std.testing.expect(builtin.target.abi == .none);
+}
+
+test "StaticQueue" {
+    var q: StaticQueue(usize) = .{};
+
+    for (0..16) |_| {
+        for (0..16) |i| {
+            try std.testing.expect(q.tryPush(i));
+        }
+        try std.testing.expect(!q.tryPush(0));
+
+        for (0..16) |i| {
+            try std.testing.expect(q.tryPop() == i);
+        }
+        try std.testing.expect(q.tryPop() == null);
+    }
 }
