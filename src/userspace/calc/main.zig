@@ -163,8 +163,6 @@ const Calculator = struct {
 pub fn main() !void {
     try abi.rt.init();
 
-    const vmem = caps.Vmem.self;
-
     const wm_display = try gui.WmDisplay.connect();
     defer wm_display.deinit();
 
@@ -179,7 +177,7 @@ pub fn main() !void {
     var shift: bool = false;
 
     var calc = Calculator{
-        .fb = try gui.MappedFramebuffer.init(window.fb, vmem),
+        .fb = try gui.MappedFramebuffer.init(window.fb, caps.Vmem.self),
     };
 
     while (true) {
@@ -269,48 +267,61 @@ pub fn main() !void {
 
         try window.damage(wm_display, null);
 
+        try nextEvent(&calc, wm_display, &shift);
+    }
+}
+
+pub fn nextEvent(
+    calc: *Calculator,
+    wm_display: gui.WmDisplay,
+    shift: *bool,
+) !void {
+    while (true) {
         calc.clicked = false;
         const ev = try wm_display.nextEvent();
         switch (ev) {
             .window => |wev| switch (wev.event) {
                 .resize => |new_fb| {
-                    try calc.fb.update(new_fb, vmem);
+                    try calc.fb.update(new_fb, caps.Vmem.self);
                 },
-                .cursor_moved => |pos| calc.cursor = pos,
+                .cursor_moved => |pos| {
+                    calc.cursor = pos;
+                    continue;
+                },
                 .mouse_button => |mbe| {
                     if (mbe.button == .left and mbe.state != .release) calc.clicked = true;
                 },
                 .keyboard_input => |key| {
                     if (key.code == .left_shift or key.code == .right_shift) {
-                        shift = key.state != .release;
-                        continue;
+                        shift.* = key.state != .release;
+                        break;
                     }
 
                     if (key.state == .release) {
-                        continue;
+                        break;
                     }
 
                     if (key.code == .enter) {
-                        solve(&calc);
-                        continue;
+                        solve(calc);
+                        break;
                     }
 
                     if (key.code == .backspace) {
                         calc.text_len -|= 1;
-                        continue;
+                        break;
                     }
 
                     if (key.code == .escape) {
                         abi.process.exit(0);
                     }
 
-                    if (shift) {
+                    if (shift.*) {
                         if (key.code.toCharShift()) |ch| {
-                            append(&calc, ch);
+                            append(calc, ch);
                         }
                     } else {
                         if (key.code.toChar()) |ch| {
-                            append(&calc, ch);
+                            append(calc, ch);
                         }
                     }
                 },
@@ -319,6 +330,7 @@ pub fn main() !void {
             },
             else => {},
         }
+        break;
     }
 }
 
