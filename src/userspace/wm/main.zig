@@ -145,9 +145,20 @@ fn compositorThreadMain() noreturn {
     const frametime_ns: u32 = 8_333_333;
     // const frametime_ns: u32 = 16_666_667;
     var nanos = abi.time.nanoTimestamp();
+    var highlight_damage = false;
     while (true) {
+        if (highlight_damage) {
+            system_lock.lock();
+            system.highlightDamage();
+            system_lock.unlock();
+
+            nanos += frametime_ns;
+            abi.time.sleepDeadline(nanos);
+        }
+
         system_lock.lock();
         system.draw();
+        highlight_damage = system.highlight_damage;
         system_lock.unlock();
 
         nanos += frametime_ns;
@@ -542,6 +553,7 @@ const System = struct {
     windows_list: std.DoublyLinkedList = .{},
 
     damage: gui.Damage = .{},
+    highlight_damage: bool = false,
 
     alt_held: bool = false,
     held_window: HeldWindow = .{ .none = {} },
@@ -570,6 +582,10 @@ const System = struct {
         }
         if (ev.code == .enter and ev.state == .press and self.alt_held) {
             exec("initfs:///sbin/term") catch {};
+            return;
+        }
+        if (ev.code == .f1 and ev.state == .press and self.alt_held) {
+            self.highlight_damage ^= true;
             return;
         }
 
@@ -808,7 +824,17 @@ const System = struct {
         return @fieldParentPtr("window_list_node", node);
     }
 
-    fn draw(self: *@This()) void {
+    fn highlightDamage(
+        self: *@This(),
+    ) void {
+        const dmg_unrestricted = self.damage.aabb orelse return;
+        const dmg = dmg_unrestricted.intersect(self.display) orelse return;
+        dmg.drawHollow(self.fb, .magenta, 2);
+    }
+
+    fn draw(
+        self: *@This(),
+    ) void {
         const dmg_unrestricted = self.damage.take() orelse return;
         const dmg = dmg_unrestricted.intersect(self.display) orelse return;
 
