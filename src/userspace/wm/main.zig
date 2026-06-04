@@ -738,12 +738,12 @@ const System = struct {
     }
 
     fn forwardMouseWheel(self: *@This(), delta_z: i16) void {
-        const window = self.focusedWindow() orelse return;
+        const window = self.findHoveredWindow() orelse return;
         window.pushEvent(.{ .mouse_wheel = delta_z });
     }
 
     fn forwardCursorMove(self: *@This()) void {
-        const window = self.focusedWindow() orelse return;
+        const window = self.findHoveredWindow() orelse return;
         const window_aabb = window.rect.asAabb();
 
         if (@reduce(.Or, self.cursor < window_aabb.min))
