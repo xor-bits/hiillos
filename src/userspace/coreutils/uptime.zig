@@ -18,5 +18,5 @@ pub fn main(ctx: Ctx) !void {
     try ctx.stdout.print(
         \\ 00:00:00 up {} days, {d:02}:{d:02}
         \\
-    , .{ uptime_days, uptime_hours, uptime_mins });
+    , .{ uptime_days, uptime_hours % 24, uptime_mins % 60 });
 }
