@@ -23,6 +23,7 @@ pub const Id = enum(usize) {
     frame_read,
     /// write into a `Frame` capability
     frame_write,
+    // TODO: commit and uncommit
     /// dummy read/write/exec access to a specific page of a `Frame`,
     /// effectively triggering a page fault without having to map
     frame_dummy_access,
@@ -264,6 +265,8 @@ pub const CacheType = enum(u8) {
 pub const MapFlags = packed struct {
     // protection_key: u8 = 0,
     cache: CacheType = .write_back,
+    /// tries to map at the exact address,
+    /// or returns `Error.InvalidAddress` if that is not possible
     fixed: bool = false,
     /// map as readable
     ///
@@ -835,18 +838,21 @@ pub fn vmemMap(
     vmem: u32,
     frame: u32,
     frame_offset: usize,
-    vaddr: usize,
+    vaddr_hint: usize,
     length: usize,
     flags: MapFlags,
 ) Error!usize {
     return try syscall(.vmem_map, .{
-        vmem, frame, frame_offset, vaddr, length, flags.encode(),
+        vmem, frame, frame_offset, vaddr_hint, length, flags.encode(),
     }, .{});
 }
 
-pub fn vmemUnmap(vmem: u32, vaddr: usize, length: usize) Error!void {
+pub fn vmemUnmap(
+    vmem: u32,
+    vaddr: usize,
+) Error!void {
     _ = try syscall(.vmem_unmap, .{
-        vmem, vaddr, length,
+        vmem, vaddr,
     }, .{});
 }
 

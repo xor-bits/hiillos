@@ -106,8 +106,9 @@ const irq_bitmap_len = 0x100 / 8;
 var irq_bitmap: [irq_bitmap_len]std.atomic.Value(u8) = b: {
     var bitmap: [irq_bitmap_len]std.atomic.Value(u8) = .{std.atomic.Value(u8).init(0xFF)} ** irq_bitmap_len;
 
-    for (0..apic.IRQ_AVAIL_COUNT + 1) |i|
+    for (0..apic.irqs.avail_count) |i| {
         freeIrq(&bitmap, @truncate(i)) catch unreachable;
+    }
 
     break :b bitmap;
 };

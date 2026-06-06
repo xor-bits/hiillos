@@ -220,7 +220,7 @@ fn handle_syscall(
 
             trap.syscall_id = abi.sys.encode(0);
             const res = frame.pageFault(
-                @truncate(offset_byte / 0x1000),
+                @truncate(offset_byte / frame.chunk_size.sizeBytes()),
                 mode == .write,
                 null,
                 trap,
@@ -266,14 +266,11 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(handle);
         },
         .vmem_map => {
-            const frame_first_page: u32 = @truncate(trap.arg2 / 0x1000);
+            const frame_offset: u32 = @truncate(trap.arg2);
             const vaddr = try addr.Virt.fromUser(trap.arg3);
             const flags = abi.sys.MapFlags.decode(@truncate(trap.arg5));
             const rights = flags.rights();
-
-            if (!std.mem.isAligned(vaddr.raw, 0x1000)) {
-                return Error.InvalidAddress;
-            }
+            const length = trap.arg4;
 
             const vmem: *caps.Vmem = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),
@@ -288,17 +285,11 @@ fn handle_syscall(
             );
             errdefer frame.deinit();
 
-            // map takes ownership of the frame
-            const pages: u32 = if (trap.arg4 == 0)
-                @intCast(@max(frame.chunks.len * frame.chunk_size.sizePages(), frame_first_page) - frame_first_page)
-            else
-                @truncate(std.math.divCeil(usize, trap.arg4, 0x1000) catch unreachable);
-
             const mapped_vaddr = try vmem.map(
                 frame,
-                frame_first_page,
+                frame_offset,
                 vaddr,
-                pages,
+                length,
                 flags,
             );
 
@@ -306,31 +297,19 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(@truncate(mapped_vaddr.raw));
         },
         .vmem_unmap => {
-            const pages: u32 = @truncate(std.math.divCeil(usize, trap.arg2, 0x1000) catch unreachable);
-            if (pages == 0) {
-                trap.syscall_id = abi.sys.encode(0);
-                return;
-            }
-            const vaddr = try addr.Virt.fromUser(trap.arg1);
-
-            if (!std.mem.isAligned(vaddr.raw, 0x1000)) {
-                return Error.InvalidAddress;
-            }
-
             const vmem: *caps.Vmem = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),
                 .vmem,
                 .{ .min_rights = .{ .unmap = true } },
             );
             defer vmem.deinit();
+            const vaddr = try addr.Virt.fromUser(trap.arg1);
 
             trap.syscall_id = abi.sys.encode(0);
             vmem.unmap(
                 trap,
                 thread,
                 vaddr,
-                pages,
-                false,
             ) catch |err| switch (err) {
                 Error.Retry => return,
                 else => return err,
@@ -428,8 +407,8 @@ fn handle_syscall(
             log.info("vmem: {*} cr3=0x{x}", .{ vmem, vmem.hal_vmem.pml4.raw });
             for (vmem.mappings.items) |mapping| {
                 log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
-                    mapping.getVaddr().raw,
-                    mapping.getVaddr().raw + mapping.pages * 0x1000,
+                    mapping.start().raw,
+                    mapping.end().raw,
                     mapping.frame,
                 });
             }

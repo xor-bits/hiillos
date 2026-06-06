@@ -25,16 +25,17 @@ pub const Mapping = struct {
 
     /// IS refcounted, this `Mapping` is deleted if `frame` is deleted
     frame: *caps.Frame,
-    /// page offset within the Frame object
-    frame_first_page: u32,
-    /// number of bytes (rounded up to pages) mapped
-    pages: u32,
+    /// chunk offset within the Frame object
+    frame_first_chunk: u32,
+    /// number of bytes (rounded up to chunks) mapped
+    chunks: u32,
     target: packed struct {
         /// mapping flags
         flags: abi.sys.MapFlags,
         /// virtual address destination of the mapping
         /// `Vmem.mappings` is sorted by this
         page: u36,
+        unmapping: bool = false,
     },
 
     pub fn init(
@@ -42,22 +43,23 @@ pub const Mapping = struct {
         frame: *caps.Frame,
         /// vmem is NOT owned
         vmem: *caps.Vmem,
-        frame_first_page: u32,
+        frame_first_chunk: u32,
         vaddr: addr.Virt,
-        pages: u32,
+        chunks: u32,
         flags: abi.sys.MapFlags,
     ) !*@This() {
-        std.debug.assert(pages != 0);
+        std.debug.assert(chunks != 0);
+        std.debug.assert(vaddr.isAligned(frame.chunk_size.sizeBytes()));
 
         const mapping = try caps.slab_allocator.allocator().create(@This());
         mapping.* = .{
             .frame = frame,
             .vmem = vmem,
-            .frame_first_page = frame_first_page,
-            .pages = pages,
+            .frame_first_chunk = frame_first_chunk,
+            .chunks = chunks,
             .target = .{
                 .flags = flags,
-                .page = @truncate(vaddr.raw >> 12),
+                .page = vaddr.parts.page.index,
             },
         };
 
@@ -108,13 +110,13 @@ pub const Mapping = struct {
     }
 
     pub fn end(self: *const @This()) addr.Virt {
-        return self.getVaddr().add(self.pages * 0x1000);
+        return self.getVaddr().add(self.chunks * self.frame.chunk_size.sizeBytes());
     }
 
     /// this is a `any(self AND other)`
-    pub fn overlaps(self: *const @This(), vaddr: addr.Virt, bytes: u32) bool {
+    pub fn overlaps(self: *const @This(), vaddr: addr.Virt, bytes: usize) bool {
         const a_beg: usize = self.getVaddr().raw;
-        const a_end: usize = self.getVaddr().raw + self.pages * 0x1000;
+        const a_end: usize = self.getVaddr().raw + self.chunks * self.frame.chunk_size.sizeBytes();
         const b_beg: usize = vaddr.raw;
         const b_end: usize = vaddr.raw + bytes;
 
@@ -126,17 +128,6 @@ pub const Mapping = struct {
     }
 
     pub fn isEmpty(self: *const @This()) bool {
-        return self.pages == 0;
-    }
-
-    pub fn chunkSize(self: *const @This()) abi.ChunkSize {
-        const physical_alignment = self.frame.chunk_size;
-        const virtual_alignment = abi.ChunkSize
-            .maxAlignAddr(self.target.page).?;
-        return physical_alignment.min(virtual_alignment);
-    }
-
-    pub fn pageSize(self: *const @This()) abi.ChunkSize {
-        return self.chunkSize().hardwarePageSize();
+        return self.chunks == 0;
     }
 };

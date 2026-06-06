@@ -173,7 +173,7 @@ pub fn init() !void {
         0,
         .{},
     );
-    util.volat(&arg_map).* = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
+    arg_map = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
 
     const env_map_len = try env_map_frame.getSize();
     const env_map_addr = try vmem.map(
@@ -183,5 +183,5 @@ pub fn init() !void {
         0,
         .{},
     );
-    util.volat(&env_map).* = @as([*]const u8, @ptrFromInt(env_map_addr))[0..env_map_len];
+    env_map = @as([*]const u8, @ptrFromInt(env_map_addr))[0..env_map_len];
 }

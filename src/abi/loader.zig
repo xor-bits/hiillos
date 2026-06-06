@@ -44,7 +44,7 @@ pub fn prepareSpawn(vmem: caps.Vmem, thread: caps.Thread, entry: u64) !void {
     );
     // FIXME: protect the stack guard region as
     // no read, no write, no exec and prevent mapping
-    try vmem.unmap(stack_ptr, 0x1000);
+    // try vmem.unmap(stack_ptr, 0x1000);
 
     try thread.setPrio(0);
     try thread.writeRegs(&.{

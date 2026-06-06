@@ -107,17 +107,21 @@ var port_bitmap: [port_bitmap_len]std.atomic.Value(u8) = b: {
     // https://wiki.osdev.org/I/O_Ports
 
     // the PIT
-    for (0x0040..0x0048) |port|
+    for (0x0040..0x0048) |port| {
         freePort(&bitmap, @truncate(port)) catch unreachable;
+    }
     // PS/2 controller
-    for (0x0060..0x0065) |port|
+    for (0x0060..0x0065) |port| {
         freePort(&bitmap, @truncate(port)) catch unreachable;
+    }
     // CMOS and RTC registers
-    for (0x0070..0x0072) |port|
+    for (0x0070..0x0072) |port| {
         freePort(&bitmap, @truncate(port)) catch unreachable;
+    }
     // second serial port
-    for (0x02F8..0x0300) |port|
+    for (0x02F8..0x0300) |port| {
         freePort(&bitmap, @truncate(port)) catch unreachable;
+    }
 
     break :b bitmap;
 };

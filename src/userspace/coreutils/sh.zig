@@ -47,7 +47,7 @@ pub fn main(ctx: Ctx) !void {
         0,
         .{},
     );
-    defer vmem.unmap(script_file_addr, script_file_len) catch unreachable;
+    defer vmem.unmap(script_file_addr) catch unreachable;
 
     const script = @as([*]const u8, @ptrFromInt(script_file_addr))[0..script_file_len];
     try runScript(ctx, path, script);

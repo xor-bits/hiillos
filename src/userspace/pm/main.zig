@@ -327,7 +327,7 @@ fn execElf(
         0,
         .{},
     );
-    defer vmem.unmap(arg_map_addr, arg_map_len) catch unreachable;
+    defer vmem.unmap(arg_map_addr) catch unreachable;
     const arg_map: []const u8 = @as([*]const u8, @ptrFromInt(arg_map_addr))[0..arg_map_len];
     const cmd: []const u8 = std.mem.sliceTo(arg_map, 0);
 
@@ -355,7 +355,7 @@ fn execElf(
         0,
         .{},
     );
-    defer vmem.unmap(elf_bytes, elf_size) catch unreachable;
+    defer vmem.unmap(elf_bytes) catch unreachable;
 
     var elf = try abi.loader.Elf.init(@as(
         [*]const u8,

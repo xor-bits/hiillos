@@ -219,6 +219,8 @@ pub const Vmem = extern struct {
         sys.handleClose(this.cap);
     }
 
+    /// maps a `Frame` into virtual memory
+    ///
     /// if length is zero, the rest of the frame is mapped
     pub fn map(
         this: @This(),
@@ -238,11 +240,22 @@ pub const Vmem = extern struct {
         );
     }
 
-    pub fn unmap(this: @This(), vaddr: usize, length: usize) sys.Error!void {
-        return try sys.vmemUnmap(this.cap, vaddr, length);
+    /// unmaps a whole `Frame` mapped at this `vaddr`
+    pub fn unmap(
+        this: @This(),
+        vaddr: usize,
+    ) sys.Error!void {
+        return try sys.vmemUnmap(
+            this.cap,
+            vaddr,
+        );
     }
 
-    pub fn read(this: @This(), _vaddr: usize, _dst: []u8) sys.Error!void {
+    pub fn read(
+        this: @This(),
+        _vaddr: usize,
+        _dst: []u8,
+    ) sys.Error!void {
         var vaddr = _vaddr;
         var dst = _dst;
 
@@ -260,7 +273,11 @@ pub const Vmem = extern struct {
                     dst = dst[progress..];
 
                     sys.dummyWrite(dst);
-                    try sys.vmemDummyAccess(this.cap, vaddr, .read);
+                    try sys.vmemDummyAccess(
+                        this.cap,
+                        vaddr,
+                        .read,
+                    );
                     continue;
                 },
                 else => return err,
@@ -270,7 +287,11 @@ pub const Vmem = extern struct {
         }
     }
 
-    pub fn write(this: @This(), _vaddr: usize, _src: []const u8) sys.Error!void {
+    pub fn write(
+        this: @This(),
+        _vaddr: usize,
+        _src: []const u8,
+    ) sys.Error!void {
         var vaddr = _vaddr;
         var src = _src;
 

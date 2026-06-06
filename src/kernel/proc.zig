@@ -162,7 +162,7 @@ pub fn ready(thread: *caps.Thread) void {
         // log.info("giving thread to {} ({})", .{ waiter.id, waiter.lapic_id });
         apic.interProcessorInterrupt(
             waiter.lapic_id,
-            apic.IRQ_IPI_PREEMPT,
+            apic.irqs.ipi_tlb_preempt,
         );
         break;
     }

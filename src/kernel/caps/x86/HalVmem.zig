@@ -11,7 +11,6 @@ const pmem = @import("../../pmem.zig");
 const Error = abi.sys.Error;
 const conf = abi.conf;
 const log = std.log.scoped(.x86halvmem);
-const volat = abi.util.volat;
 
 const HalVmem = @This();
 
@@ -94,30 +93,56 @@ pub const PcidLru = struct {
 
 pub fn init_global() !void {
     const cr3 = arch.x86_64.Cr3.read();
-    const level4: *volatile PageTableLevel4 = @ptrFromInt(addr.physPageToVirt(cr3.pml4_phys_base));
+    const level4: *volatile PageTable = @ptrFromInt(addr.physPageToVirt(cr3.pml4_phys_base));
 
     for (256..512) |i| {
-        deepClone(level4.entries[i], &kernel_table.entries[i], 4);
+        try deepClone(level4.entries[i], &kernel_table.entries[i], 4);
     }
+
+    readonly_zero_huge_page_table = try allocTable();
+    readonly_zero_giant_page_table = try allocTable();
+
+    const fake_huge_page_table = readonly_zero_huge_page_table
+        .toHhdm().toPtr(*volatile PageTable);
+    const fake_giant_page_table = readonly_zero_giant_page_table
+        .toHhdm().toPtr(*volatile PageTable);
+    const fake_table_flags: abi.sys.MapFlags = .{
+        .user = true,
+        .read = true,
+        .write = false,
+        .exec = true,
+    };
+    @memset(&fake_huge_page_table.entries, Entry.fromParts(
+        true,
+        false,
+        caps.readonly_zero_page,
+        fake_table_flags,
+    ));
+    @memset(&fake_giant_page_table.entries, Entry.fromParts(
+        true,
+        false,
+        readonly_zero_huge_page_table,
+        fake_table_flags,
+    ));
 }
 
 /// create a deep copy of the higher half mappings
 /// NOTE: does not copy any target pages
-fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
-    if (from.present == 0) return;
+fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) !void {
+    if (!from.present) return;
 
     var tmp: Entry = undefined;
 
-    if (level != 1 and from.huge_page_or_pat == 0) {
+    if (level != 1 and !from.huge_page_or_pat) {
         // a table, not a 4kib frame, 2mib frame, 1gib frame nor a 512gib frame
 
-        const to_addr = allocTable();
+        const to_addr = try allocTable();
         const from_addr = from.getAddr(false);
         const to_table = to_addr.toHhdm().toPtr(*volatile [512]Entry);
         const from_table = from_addr.toHhdm().toPtr(*const volatile [512]Entry);
 
         for (0..512) |i| {
-            deepClone(volat(&from_table[i]).*, &to_table[i], level - 1);
+            try deepClone(from_table[i], &to_table[i], level - 1);
         }
 
         tmp = Entry.fromParts(
@@ -135,7 +160,7 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
             from.getAddr(true),
             from.getFlags(true),
         );
-        tmp.global = 1;
+        tmp.global = true;
     } else {
         // some higher size page
 
@@ -145,7 +170,7 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
             from.getAddr(true),
             from.getFlags(false),
         );
-        tmp.global = 1;
+        tmp.global = true;
     }
 
     to.* = tmp;
@@ -154,11 +179,11 @@ fn deepClone(from: Entry, to: *volatile Entry, comptime level: u8) void {
 pub fn init() !@This() {
     const active_pcids = try caps.slab_allocator.allocator().alloc(PcidEntry, arch.cpuCount());
     const self: @This() = .{
-        .pml4 = allocTable(),
+        .pml4 = try allocTable(),
         .active_pcids = active_pcids,
     };
 
-    const lvl4 = self.pml4.toHhdm().toPtr(*volatile PageTableLevel4);
+    const lvl4 = self.pml4.toHhdm().toPtr(*volatile PageTable);
     abi.util.fillVolatile(Entry, lvl4.entries[0..256], .{});
     abi.util.copyForwardsVolatile(Entry, lvl4.entries[256..], kernel_table.entries[256..]);
 
@@ -213,307 +238,600 @@ pub fn printMappings(self: *@This()) !void {
 
 pub fn mappings(self: *@This(), include_kernel: bool) MappingIterator {
     return .{
-        .vmem = self.pml4.toHhdm().toPtr(*volatile PageTableLevel4),
+        .vmem = self,
         .include_kernel = include_kernel,
     };
 }
 
-pub fn entryFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-    return self.pml4.toHhdm().toPtr(*volatile PageTableLevel4)
-        .entryFrame(vaddr);
+pub const GetResult = struct {
+    start_vaddr: addr.Virt,
+    start_paddr: addr.Phys,
+    size: abi.ChunkSize,
+    flags: abi.sys.MapFlags,
+};
+
+pub fn get(
+    self: *volatile @This(),
+    /// virtual address anywhere within a page
+    vaddr: addr.Virt,
+) ?GetResult {
+    const levels = vaddr.parts.page.levels;
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+    var start_vaddr: addr.Virt = .{ .raw = 0 };
+
+    const pml3 = pml4.get(.level4, levels.level4) orelse
+        return null;
+    start_vaddr.parts.page.levels.level4 = levels.level4;
+    switch (pml3) {
+        .frame => unreachable,
+        .next => {},
+    }
+
+    const pml2 = pml3.next.get(.level3, levels.level3) orelse
+        return null;
+    start_vaddr.parts.page.levels.level3 = levels.level3;
+    switch (pml2) {
+        .frame => |frame| return .{
+            .start_vaddr = start_vaddr,
+            .start_paddr = frame.paddr,
+            .size = .@"1GiB",
+            .flags = frame.flags,
+        },
+        .next => {},
+    }
+
+    const pml1 = pml2.next.get(.level2, levels.level2) orelse
+        return null;
+    start_vaddr.parts.page.levels.level2 = levels.level2;
+    switch (pml1) {
+        .frame => |frame| return .{
+            .start_vaddr = start_vaddr,
+            .start_paddr = frame.paddr,
+            .size = .@"2MiB",
+            .flags = frame.flags,
+        },
+        .next => {},
+    }
+
+    const page = pml1.next.get(.level1, levels.level1) orelse
+        return null;
+    start_vaddr.parts.page.levels.level1 = levels.level1;
+    switch (page) {
+        .frame => |frame| return .{
+            .start_vaddr = start_vaddr,
+            .start_paddr = frame.paddr,
+            .size = .@"4KiB",
+            .flags = frame.flags,
+        },
+        .next => unreachable,
+    }
 }
 
-pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-    return self.pml4.toHhdm().toPtr(*volatile PageTableLevel4)
-        .mapFrame(paddr, vaddr, flags);
+pub fn insert(
+    self: *volatile @This(),
+    vaddr: addr.Virt,
+    /// has to be aligned to `page_size`,
+    /// null means readonly zero pages
+    paddr: ?addr.Phys,
+    page_size: abi.ChunkSize,
+    flags: abi.sys.MapFlags,
+) Error!void {
+    if (conf.LOG_HAL_VMEM) {
+        log.debug("insert HalVmem mapping 0x{x} {t}", .{ vaddr.raw, page_size });
+    }
+
+    const levels = vaddr.parts.page.levels;
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+
+    const pml3 = try pml4.getOrCreateTable(
+        .level4,
+        levels.level4,
+    );
+
+    if (page_size == .@"1GiB") {
+        pml3.insert(
+            .level3,
+            levels.level3,
+            paddr,
+            flags,
+        );
+        return;
+    }
+
+    const pml2 = try pml3.getOrCreateTable(
+        .level3,
+        levels.level3,
+    );
+
+    if (page_size == .@"2MiB") {
+        pml2.insert(
+            .level2,
+            levels.level2,
+            paddr,
+            flags,
+        );
+        return;
+    }
+
+    const pml1 = try pml2.getOrCreateTable(
+        .level2,
+        levels.level2,
+    );
+
+    std.debug.assert(page_size == .@"4KiB");
+    pml1.insert(
+        .level1,
+        levels.level1,
+        paddr,
+        flags,
+    );
 }
 
-pub fn unmapFrame(self: *@This(), vaddr: addr.Virt) Error!void {
-    return self.pml4.toHhdm().toPtr(*volatile PageTableLevel4)
-        .unmapFrame(vaddr);
+/// disables a mapping but does not deallocate it yet,
+/// flushes local TLB but does not do remote TLB flushes
+pub fn disable(
+    self: *volatile @This(),
+    page_size: abi.ChunkSize,
+    vaddr: addr.Virt,
+) void {
+    if (conf.LOG_HAL_VMEM) {
+        log.debug("disable HalVmem mapping 0x{x} {t}", .{ vaddr.raw, page_size });
+    }
+
+    const levels = vaddr.parts.page.levels;
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+
+    const pml3 = pml4.get(.level4, levels.level4) orelse
+        return;
+    std.debug.assert(pml3 != .frame);
+
+    const pml2 = pml3.next.get(.level3, levels.level3) orelse
+        return;
+    if (page_size == .@"1GiB") {
+        pml3.next.entries[levels.level3].present = false;
+        flushOne(.level3, vaddr, pml2);
+        return;
+    }
+    std.debug.assert(pml2 != .frame);
+
+    const pml1 = pml2.next.get(.level2, levels.level2) orelse
+        return;
+    if (page_size == .@"2MiB") {
+        pml2.next.entries[levels.level2].present = false;
+        flushOne(.level2, vaddr, pml1);
+        return;
+    }
+    std.debug.assert(pml1 != .frame);
+
+    const frame = pml1.next.get(.level1, levels.level1) orelse
+        return;
+    std.debug.assert(page_size == .@"4KiB");
+    std.debug.assert(frame == .frame);
+    pml1.next.entries[levels.level1].present = false;
+    flushOne(.level1, vaddr, frame);
 }
 
-pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-    return self.pml4.toHhdm().toPtr(*volatile PageTableLevel4)
-        .canUnmapFrame(vaddr);
+/// flushes local TLB but does not do remote TLB flushes
+pub fn flushLocalTlb(
+    self: *volatile @This(),
+    page_size: abi.ChunkSize,
+    vaddr: addr.Virt,
+) void {
+    if (conf.LOG_HAL_VMEM) {
+        log.debug("flushLocalTlb HalVmem 0x{x} {t}", .{ vaddr.raw, page_size });
+    }
+
+    const levels = vaddr.parts.page.levels;
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+
+    const pml3 = pml4.get(.level4, levels.level4) orelse
+        return;
+    std.debug.assert(pml3 != .frame);
+
+    const pml2 = pml3.next.get(.level3, levels.level3) orelse
+        return;
+    if (page_size == .@"1GiB") {
+        flushOne(.level3, vaddr, pml2);
+        return;
+    }
+    std.debug.assert(pml2 != .frame);
+
+    const pml1 = pml2.next.get(.level2, levels.level2) orelse
+        return;
+    if (page_size == .@"2MiB") {
+        flushOne(.level2, vaddr, pml1);
+        return;
+    }
+    std.debug.assert(pml1 != .frame);
+
+    const frame = pml1.next.get(.level1, levels.level1) orelse
+        return;
+    std.debug.assert(page_size == .@"4KiB");
+    std.debug.assert(frame == .frame);
+    flushOne(.level1, vaddr, frame);
 }
 
-// FIXME: flush TLB + IPI other CPUs to prevent race conditions
-/// a `Thread` points to this
-pub const PageTableLevel4 = struct {
-    entries: [512]Entry align(0x1000) = std.mem.zeroes([512]Entry),
+fn flushOne(
+    comptime level: Level,
+    vaddr_unaligned: addr.Virt,
+    result: PageTable.PageTableGetResult,
+) void {
+    const chunk_size = level.pageSize();
+    const vaddr_aligned = vaddr_unaligned.alignBackward(chunk_size.sizeBytes());
+    if (level != .level1 and result == .next) {
+        // readonly zero pages mapped as a 1GiB/2MiB/4KiB page
+        for (0..chunk_size.sizePages()) |i| {
+            arch.x86_64.flushTlbAddr(vaddr_aligned.add(0x1000 * i).raw);
+        }
+        // flush everything instead
+        // arch.x86_64.flushTlb();
+    } else {
+        // a normal giant page
+        arch.x86_64.flushTlbAddr(vaddr_aligned.raw);
+    }
+}
 
-    pub fn entryGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.entryGiantFrame(vaddr);
+/// deallocates a disabled mapping and empty tables
+/// the mapping is assumed to have been disabled first
+pub fn remove(
+    self: *volatile @This(),
+    page_size: abi.ChunkSize,
+    vaddr: addr.Virt,
+) void {
+    if (conf.LOG_HAL_VMEM) {
+        log.debug("remove HalVmem mapping 0x{x} {t}", .{ vaddr.raw, page_size });
     }
 
-    pub fn entryHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.entryHugeFrame(vaddr);
+    const levels = vaddr.parts.page.levels;
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+
+    const pml3 = pml4.get(.level4, levels.level4) orelse
+        return;
+    std.debug.assert(pml3 != .frame);
+    // FIXME: deallocating tables safely is really complicated while
+    // avoiding allocations during page faults or unmaps
+    // defer pml4.deleteTableIfEmpty(levels.level4);
+
+    const pml2 = pml3.next.get(.level3, levels.level3) orelse
+        return;
+    if (page_size == .@"1GiB") {
+        // if it points to a real allocated page => deallocation is managed externally
+        // if it points to the readonly giant table => it is never deallocated
+        pml3.next.entries[levels.level3] = .{};
+        return;
+    }
+    // defer pml3.next.deleteTableIfEmpty(levels.level3);
+    std.debug.assert(pml2 != .frame);
+
+    const pml1 = pml2.next.get(.level2, levels.level2) orelse
+        return;
+    // defer pml2.next.deleteTableIfEmpty(levels.level2);
+    if (page_size == .@"2MiB") {
+        // if it points to a real allocated page => deallocation is managed externally
+        // if it points to the readonly huge table => it is never deallocated
+        pml2.next.entries[levels.level2] = .{};
+        return;
+    }
+    std.debug.assert(pml1 != .frame);
+
+    const frame = pml1.next.get(.level1, levels.level1) orelse
+        return;
+    // defer pml1.next.deleteTableIfEmpty(levels.level1);
+    std.debug.assert(page_size == .@"4KiB");
+    std.debug.assert(frame == .frame);
+    // if it points to a real allocated page => deallocation is managed externally
+    // if it points to the readonly page => it is never deallocated
+    pml1.next.entries[levels.level1] = .{};
+}
+
+pub const Level = enum {
+    level4,
+    level3,
+    level2,
+    level1,
+
+    const Self = @This();
+
+    pub fn readIndex(
+        self: Self,
+        vaddr: addr.Virt,
+    ) u9 {
+        switch (self) {
+            inline else => |field_name| return @field(
+                vaddr,
+                @tagName(field_name),
+            ),
+        }
     }
 
-    pub fn entryFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.entryFrame(vaddr);
+    pub fn deeper(
+        self: Self,
+    ) ?Self {
+        if (self == .level1) return null;
+        return @enumFromInt(@intFromEnum(self) + 1);
     }
 
-    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapGiantFrame(paddr, vaddr, flags);
+    pub fn pageSize(
+        self: Self,
+    ) abi.ChunkSize {
+        return switch (self) {
+            .level4 => unreachable,
+            .level3 => .@"1GiB",
+            .level2 => .@"2MiB",
+            .level1 => .@"4KiB",
+        };
     }
 
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapHugeFrame(paddr, vaddr, flags);
-    }
-
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        try next.mapFrame(paddr, vaddr, flags);
-    }
-
-    pub fn canMapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canMapGiantFrame(vaddr);
-    }
-
-    pub fn canMapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canMapHugeFrame(vaddr);
-    }
-
-    pub fn canMapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canMapFrame(vaddr);
-    }
-
-    pub fn unmapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level4 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel3);
-        if (next.unmapGiantFrame(vaddr))
-            deallocLevel(current, i);
-    }
-
-    pub fn unmapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level4 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel3);
-        if (try next.unmapHugeFrame(vaddr))
-            deallocLevel(current, i);
-    }
-
-    pub fn unmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level4 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel3);
-        if (try next.unmapFrame(vaddr))
-            deallocLevel(current, i);
-    }
-
-    pub fn canUnmapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canUnmapGiantFrame(paddr, vaddr);
-    }
-
-    pub fn canUnmapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canUnmapHugeFrame(paddr, vaddr);
-    }
-
-    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level4)).toHhdm().toPtr(*volatile PageTableLevel3);
-        return next.canUnmapFrame(vaddr);
+    pub fn readonlyPage(
+        self: Self,
+    ) addr.Phys {
+        return switch (self) {
+            .level4 => unreachable,
+            .level3 => readonly_zero_giant_page_table,
+            .level2 => readonly_zero_huge_page_table,
+            .level1 => caps.readonly_zero_page,
+        };
     }
 };
 
-/// a `PageTableLevel4` points to multiple of these
-pub const PageTableLevel3 = struct {
+pub const PageTable = struct {
     entries: [512]Entry align(0x1000) = std.mem.zeroes([512]Entry),
 
-    pub fn entryGiantFrame(self: *volatile @This(), vaddr: addr.Virt) *volatile Entry {
-        return &self.entries[vaddr.parts.page.levels.level3];
+    pub const PageTableGetResult = union(enum) {
+        frame: struct {
+            paddr: addr.Phys,
+            flags: abi.sys.MapFlags,
+        },
+        next: *volatile PageTable,
+    };
+
+    // const FreeToUse0 = packed struct(u10) {
+    //     _free_to_use1: u3,
+    //     _free_to_use0: u7,
+    // };
+
+    // /// returns the old count
+    // pub fn fetchIncUsedEntryCount(
+    //     self: *volatile @This(),
+    // ) u10 {
+    //     var entry = self.entries[0];
+    //     const count: u10 = @bitCast(FreeToUse0{
+    //         ._free_to_use1 = entry._free_to_use1,
+    //         ._free_to_use0 = entry._free_to_use0,
+    //     });
+    //     std.debug.assert(count != 512);
+    //     const new_bits: FreeToUse0 = @bitCast(count + 1);
+    //     entry._free_to_use1 = new_bits._free_to_use1;
+    //     entry._free_to_use0 = new_bits._free_to_use0;
+    //     // FIXME: dirty and accessed bits might be lost here
+    //     // but those are not yet used in hiillos
+    //     self.entries[0] = entry;
+    //     return count;
+    // }
+
+    // /// returns the old count
+    // pub fn fetchDecUsedEntryCount(
+    //     self: *volatile @This(),
+    // ) u10 {
+    //     var entry = self.entries[0];
+    //     const count: u10 = @bitCast(FreeToUse0{
+    //         ._free_to_use1 = entry._free_to_use1,
+    //         ._free_to_use0 = entry._free_to_use0,
+    //     });
+    //     std.debug.assert(count != 0);
+    //     const new_bits: FreeToUse0 = @bitCast(count - 1);
+    //     entry._free_to_use1 = new_bits._free_to_use1;
+    //     entry._free_to_use0 = new_bits._free_to_use0;
+    //     // FIXME: dirty and accessed bits might be lost here
+    //     // but those are not yet used in hiillos
+    //     self.entries[0] = entry;
+    //     return count;
+    // }
+
+    pub fn getOrCreateTable(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+    ) Error!*volatile PageTable {
+        std.debug.assert(level != .level1);
+
+        const result = self.get(level, i);
+        if (result != null) switch (result.?) {
+            .frame => unreachable,
+            .next => |t| return t,
+        };
+        return try self.insertTable(i);
     }
 
-    pub fn entryHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.entryHugeFrame(vaddr);
+    pub fn nextNextTableOrTryMap(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+        can_map: bool,
+        paddr: addr.Phys,
+        flags: abi.sys.MapFlags,
+    ) Error!?*volatile PageTable {
+        const get_result = self.get(level, i) orelse {
+            if (can_map) {
+                self.insert(
+                    level,
+                    i,
+                    paddr.alignBackward(level.pageSize().?.sizeBytes()),
+                    flags,
+                );
+                return null;
+            }
+
+            return try self.insertTable(i);
+        };
+
+        // assumed to be already checked to be unmapped
+        std.debug.assert(get_result != .frame);
+        return get_result.next;
     }
 
-    pub fn entryFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.entryFrame(vaddr);
+    pub fn get(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+    ) ?PageTableGetResult {
+        const entry = self.entries[i];
+
+        if (!entry.actually_present) {
+            return null;
+        } else if (level != .level1 and entry.huge_page_or_pat) {
+            // huge pages carry one of the PAT bits in the LSB
+            const page = entry.page_index & ~@as(u32, 1);
+            return .{ .frame = .{
+                .paddr = .{ .parts = .{ .page = page } },
+                .flags = entry.getFlags(false),
+            } };
+        } else if (level != .level1) {
+            const page = entry.page_index;
+            return .{ .next = @ptrFromInt(addr.physPageToVirt(page)) };
+        } else {
+            const page = entry.page_index;
+            return .{ .frame = .{
+                .paddr = .{ .parts = .{ .page = page } },
+                .flags = entry.getFlags(true),
+            } };
+        }
     }
 
-    pub fn mapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const entry = Entry.fromParts(true, false, paddr, flags);
-        volat(&self.entries[vaddr.parts.page.levels.level3]).* = entry;
+    pub fn insertTable(
+        self: *volatile @This(),
+        i: u9,
+    ) Error!*volatile PageTable {
+        if (conf.IS_DEBUG) {
+            const entry = self.entries[i];
+            std.debug.assert(!entry.actually_present);
+            std.debug.assert(!entry.present);
+        }
+
+        const table = try allocTable();
+        self.entries[i] = Entry.fromParts(
+            false,
+            false,
+            table,
+            .{ .write = true, .exec = true },
+        );
+        // _ = self.fetchIncUsedEntryCount();
+        return @ptrFromInt(table.toHhdm().raw);
     }
 
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        try next.mapHugeFrame(paddr, vaddr, flags);
+    pub fn deleteTableIfEmpty(
+        self: *volatile @This(),
+        i: u9,
+    ) void {
+        const entry = self.entries[i];
+        std.debug.assert(entry.actually_present);
+        std.debug.assert(!entry.huge_page_or_pat);
+
+        const next: *volatile @This() = @ptrFromInt(addr.physPageToVirt(entry.page_index));
+
+        for (next.entries) |sub_entry| {
+            if (sub_entry.actually_present) return;
+        }
+
+        // the entry was already marked not present,
+        // other CPUs were notified and they acknowledged,
+        // and relevant TLB entries from all CPUs were flushed
+        freeTable(.{ .parts = .{
+            .page = entry.page_index,
+        } });
+        self.entries[i] = .{};
     }
 
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        try next.mapFrame(paddr, vaddr, flags);
+    pub fn insert(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+        paddr_opt: ?addr.Phys,
+        flags: abi.sys.MapFlags,
+    ) void {
+        const paddr_readonly = level.readonlyPage();
+        const page_size_bytes = level.pageSize().sizeBytes();
+        const entry = self.entries[i];
+        if (paddr_opt) |paddr| {
+            if (conf.IS_DEBUG) {
+                std.debug.assert(!entry.actually_present or
+                    entry.page_index == paddr_readonly.parts.page);
+            }
+
+            std.debug.assert(paddr.isAligned(page_size_bytes));
+            self.entries[i] = Entry.fromParts(
+                true,
+                level == .level1,
+                paddr,
+                flags,
+            );
+        } else {
+            if (conf.IS_DEBUG) {
+                std.debug.assert(!entry.actually_present);
+            }
+
+            // the mapped *thing* might be a shared table
+            self.entries[i] = Entry.fromParts(
+                false,
+                level == .level1,
+                paddr_readonly,
+                flags,
+            );
+        }
+        // _ = self.fetchIncUsedEntryCount();
     }
 
-    pub fn canMapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const entry = volat(&self.entries[vaddr.parts.page.levels.level3]).*;
-        if (entry.present == 1) return Error.MappingOverlap;
+    pub fn disableRecurse(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+    ) void {
+        const result = self.get(level, i) orelse
+            return;
+        switch (result) {
+            .next => |next| {
+                const next_level = (comptime level.deeper()) orelse
+                    comptime unreachable;
+                for (0..512) |j| {
+                    next.disableRecurse(next_level, @intCast(j));
+                }
+            },
+            .frame => self.disable(i),
+        }
     }
 
-    pub fn canMapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.canMapHugeFrame(vaddr);
+    pub fn disable(
+        self: *volatile @This(),
+        i: u9,
+    ) void {
+        self.entries[i].present = false;
     }
 
-    pub fn canMapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.canMapFrame(vaddr);
-    }
-
-    pub fn unmapGiantFrame(self: *volatile @This(), vaddr: addr.Virt) bool {
-        volat(&self.entries[vaddr.parts.page.levels.level3]).* = .{};
-        return isEmpty(&self.entries);
-    }
-
-    pub fn unmapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!bool {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level3 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel2);
-        if (next.unmapHugeFrame(vaddr))
-            deallocLevel(current, i);
-        return isEmpty(&self.entries);
-    }
-
-    pub fn unmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!bool {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level3 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel2);
-        if (try next.unmapFrame(vaddr))
-            deallocLevel(current, i);
-        return isEmpty(&self.entries);
-    }
-
-    pub fn canUnmapGiantFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
-        const entry = volat(&self.entries[vaddr.parts.page.levels.level3]).*;
-        if (entry.present != 1) return Error.NotMapped;
-        if (entry.huge_page_or_pat != 1) return Error.NotMapped;
-        if (entry.page_index & 0xFFFF_FFFE != paddr.parts.page) return Error.NotMapped;
-    }
-
-    pub fn canUnmapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.canUnmapHugeFrame(paddr, vaddr);
-    }
-
-    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level3)).toHhdm().toPtr(*volatile PageTableLevel2);
-        return next.canUnmapFrame(vaddr);
-    }
-};
-
-/// a `PageTableLevel3` points to multiple of these
-pub const PageTableLevel2 = struct {
-    entries: [512]Entry align(0x1000) = std.mem.zeroes([512]Entry),
-
-    pub fn entryHugeFrame(self: *volatile @This(), vaddr: addr.Virt) *volatile Entry {
-        return &self.entries[vaddr.parts.page.levels.level2];
-    }
-
-    pub fn entryFrame(self: *volatile @This(), vaddr: addr.Virt) Error!*volatile Entry {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        return next.entryFrame(vaddr);
-    }
-
-    pub fn mapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const entry = Entry.fromParts(true, false, paddr, flags);
-        volat(&self.entries[vaddr.parts.page.levels.level2]).* = entry;
-    }
-
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        next.mapFrame(paddr, vaddr, flags);
-    }
-
-    pub fn canMapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const entry = volat(&self.entries[vaddr.parts.page.levels.level2]).*;
-        if (entry.present == 1) return Error.MappingOverlap;
-    }
-
-    pub fn canMapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        return next.canMapFrame(vaddr);
-    }
-
-    pub fn unmapHugeFrame(self: *volatile @This(), vaddr: addr.Virt) bool {
-        volat(&self.entries[vaddr.parts.page.levels.level2]).* = .{};
-        return isEmpty(&self.entries);
-    }
-
-    pub fn unmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!bool {
-        const current, const i = .{ &self.entries, vaddr.parts.page.levels.level2 };
-        const next = (try nextLevel(true, current, i)).toHhdm().toPtr(*volatile PageTableLevel1);
-        if (next.unmapFrame(vaddr))
-            deallocLevel(current, i);
-        return isEmpty(&self.entries);
-    }
-
-    pub fn canUnmapHugeFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt) Error!void {
-        const entry: Entry = volat(&self.entries[vaddr.parts.page.levels.level2]).*;
-        if (entry.present != 1) return Error.NotMapped;
-        if (entry.huge_page_or_pat != 1) return Error.NotMapped;
-        if (entry.page_index & 0xFFFF_FFFE != paddr.parts.page) return Error.NotMapped;
-    }
-
-    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const next = (try nextLevel(true, &self.entries, vaddr.parts.page.levels.level2)).toHhdm().toPtr(*volatile PageTableLevel1);
-        return next.canUnmapFrame(vaddr);
-    }
-};
-
-/// a `PageTableLevel2` points to multiple of these
-pub const PageTableLevel1 = struct {
-    entries: [512]Entry align(0x1000) = std.mem.zeroes([512]Entry),
-
-    pub fn entryFrame(self: *volatile @This(), vaddr: addr.Virt) *volatile Entry {
-        return &self.entries[vaddr.parts.page.levels.level1];
-    }
-
-    pub fn mapFrame(self: *volatile @This(), paddr: addr.Phys, vaddr: addr.Virt, flags: abi.sys.MapFlags) void {
-        const entry = Entry.fromParts(false, true, paddr, flags);
-        volat(&self.entries[vaddr.parts.page.levels.level1]).* = entry;
-    }
-
-    pub fn canMapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const entry: Entry = volat(&self.entries[vaddr.parts.page.levels.level1]).*;
-        if (entry.present == 1) return Error.MappingOverlap;
-    }
-
-    pub fn unmapFrame(self: *volatile @This(), vaddr: addr.Virt) bool {
-        volat(&self.entries[vaddr.parts.page.levels.level1]).* = Entry{};
-        return isEmpty(&self.entries);
-    }
-
-    pub fn canUnmapFrame(self: *volatile @This(), vaddr: addr.Virt) Error!void {
-        const entry: Entry = volat(&self.entries[vaddr.parts.page.levels.level1]).*;
-        if (entry.present != 1) return Error.NotMapped;
+    pub fn remove(
+        self: *volatile @This(),
+        i: u9,
+    ) void {
+        self.entries[i] = .{};
     }
 };
 
 pub const Entry = packed struct {
-    // TODO: can be bools instead, they are the same as u1
-    present: u1 = 0,
-    writable: u1 = 0,
-    user_accessible: u1 = 0,
-    write_through: u1 = 0,
-    cache_disable: u1 = 0,
-    accessed: u1 = 0,
-    dirty: u1 = 0,
-    huge_page_or_pat: u1 = 0,
-    global: u1 = 0,
+    present: bool = false,
+    writable: bool = false,
+    user_accessible: bool = false,
+    write_through: bool = false,
+    cache_disable: bool = false,
+    accessed: bool = false,
+    dirty: bool = false,
+    huge_page_or_pat: bool = false,
+    global: bool = false,
 
+    /// hardware mapping is marked as not present,
+    /// but the entry is kept until no other CPU
+    /// might access it or have a stale TLB entry
+    actually_present: bool = false,
     // more custom bits
-    _free_to_use1: u3 = 0,
+    _free_to_use1: u2 = 0,
 
     page_index: u32 = 0,
     reserved: u8 = 0,
@@ -522,7 +840,7 @@ pub const Entry = packed struct {
     _free_to_use0: u7 = 0,
 
     protection_key: u4 = 0,
-    no_execute: u1 = 0,
+    no_execute: bool = false,
 
     pub fn getCacheMode(
         self: @This(),
@@ -530,11 +848,11 @@ pub const Entry = packed struct {
     ) abi.sys.CacheType {
         var idx: u3 = 0;
         if (is_last_level)
-            idx |= @as(u3, self.huge_page_or_pat) << 2
+            idx |= @as(u3, @intFromBool(self.huge_page_or_pat)) << 2
         else
             idx |= @as(u3, @truncate(self.page_index & 0b1)) << 2;
-        idx |= @as(u3, self.cache_disable) << 1;
-        idx |= @as(u3, self.write_through) << 0;
+        idx |= @as(u3, @intFromBool(self.cache_disable)) << 1;
+        idx |= @as(u3, @intFromBool(self.write_through)) << 0;
         return std.meta.intToEnum(abi.sys.CacheType, idx) catch unreachable;
     }
 
@@ -544,9 +862,9 @@ pub const Entry = packed struct {
     ) abi.sys.MapFlags {
         return .{
             .cache = self.getCacheMode(is_last_level),
-            .write = self.writable != 0,
-            .exec = self.no_execute == 0,
-            .user = self.user_accessible != 0,
+            .write = self.writable,
+            .exec = !self.no_execute,
+            .user = self.user_accessible,
         };
     }
 
@@ -556,7 +874,7 @@ pub const Entry = packed struct {
     ) addr.Phys {
         const page = if (is_last_level)
             self.page_index
-        else if (self.huge_page_or_pat != 0)
+        else if (self.huge_page_or_pat)
             self.page_index & ~@as(u32, 1) // huge pages carry one of the PAT bits in the LSB
         else
             self.page_index;
@@ -573,90 +891,59 @@ pub const Entry = packed struct {
         std.debug.assert(frame.parts.reserved1 == 0);
 
         var page_index = frame.parts.page;
-        var pwt: u1 = 0;
-        var pcd: u1 = 0;
-        var huge_page_or_pat: u1 = 0;
+        var pwt = false;
+        var pcd = false;
+        var huge_page_or_pat = false;
         const pat_index = @as(u3, @truncate(@intFromEnum(flags.cache)));
         if (is_last_level) {
-            if (pat_index & 0b001 != 0) pwt = 1;
-            if (pat_index & 0b010 != 0) pcd = 1;
-            if (pat_index & 0b100 != 0) huge_page_or_pat = 1;
+            if (pat_index & 0b001 != 0) pwt = true;
+            if (pat_index & 0b010 != 0) pcd = true;
+            if (pat_index & 0b100 != 0) huge_page_or_pat = true;
         } else if (is_huge) {
-            if (pat_index & 0b001 != 0) pwt = 1;
-            if (pat_index & 0b010 != 0) pcd = 1;
+            if (pat_index & 0b001 != 0) pwt = true;
+            if (pat_index & 0b010 != 0) pcd = true;
             if (pat_index & 0b100 != 0) page_index |= 1;
-            huge_page_or_pat = 1;
+            huge_page_or_pat = true;
         } else {
             // huge on last level is illegal
             // and intermediary tables dont have cache modes (prob)
         }
 
-        return Entry{
-            .present = 1,
-            .writable = @intFromBool(flags.write),
-            .user_accessible = @intFromBool(flags.user),
+        return .{
+            .present = true,
+            .actually_present = true,
+            .writable = flags.write,
+            .user_accessible = flags.user,
             .write_through = pwt,
             .cache_disable = pcd,
             .huge_page_or_pat = huge_page_or_pat,
-            .global = 0,
+            .global = false,
             .page_index = page_index,
             .protection_key = 0,
-            .no_execute = @intFromBool(!flags.exec),
+            .no_execute = !flags.exec,
         };
     }
 };
 
 //
 
-var kernel_table: PageTableLevel4 = .{};
+var kernel_table: PageTable = .{};
+/// the actual readonly zero page is only 4KiB, this is a table
+/// that repeats that same 4KiB page 512 times creating a fake huge page
+var readonly_zero_huge_page_table: addr.Phys = undefined;
+/// the actual readonly zero page is only 4KiB, this is a table
+/// that repeats that same 4KiB page 512*512 times creating a fake giant page
+var readonly_zero_giant_page_table: addr.Phys = undefined;
 
-fn allocPage() addr.Phys {
-    return pmem.allocChunk(.@"4KiB") orelse std.debug.panic("OOM", .{});
+fn allocTable() Error!addr.Phys {
+    return pmem.allocChunk(.@"4KiB") orelse return Error.OutOfMemory;
+    // const entries: []volatile Entry = table.toHhdm().toPtr([*]volatile Entry)[0..512];
+    // abi.util.fillVolatile(Entry, entries, .{});
+    // return table;
 }
 
-fn allocTable() addr.Phys {
-    const table = allocPage();
-    const entries: []volatile Entry = table.toHhdm().toPtr([*]volatile Entry)[0..512];
-    abi.util.fillVolatile(Entry, entries, .{});
-    return table;
-}
-
-fn nextLevel(comptime create: bool, current: *volatile [512]Entry, i: u9) Error!addr.Phys {
-    return nextLevelFromEntry(create, &current[i]);
-}
-
-fn deallocLevel(current: *volatile [512]Entry, i: u9) void {
-    const entry: Entry = volat(&current[i]).*;
-    volat(&current[i]).* = .{};
-    pmem.deallocChunk(.{ .parts = .{ .page = entry.page_index } }, .@"4KiB");
-}
-
-fn nextLevelFromEntry(comptime create: bool, entry: *volatile Entry) Error!addr.Phys {
-    const entry_r = entry.*;
-    if (entry_r.present == 0 and create) {
-        const table = allocTable();
-        entry.* = Entry.fromParts(
-            false,
-            false,
-            table,
-            .{ .write = true, .exec = true },
-        );
-        return table;
-    } else if (entry_r.present == 0) {
-        return error.EntryNotPresent;
-    } else if (entry_r.huge_page_or_pat == 1) {
-        return error.EntryIsHuge;
-    } else {
-        return .{ .parts = .{ .page = entry_r.page_index } };
-    }
-}
-
-fn isEmpty(entries: *volatile [512]Entry) bool {
-    for (entries) |*entry| {
-        if (volat(entry).*.present == 1)
-            return false;
-    }
-    return true;
+fn freeTable(paddr: addr.Phys) void {
+    pmem.deallocChunk(paddr, .@"4KiB");
 }
 
 //
@@ -667,7 +954,7 @@ pub const MappingIterator = struct {
     l3: u16 = 0,
     l2: u16 = 0,
     l1: u16 = 0,
-    vmem: *volatile PageTableLevel4,
+    vmem: *HalVmem,
     state: enum {
         l4,
         l3,
@@ -708,13 +995,13 @@ pub const MappingIterator = struct {
         exec: bool,
         user: bool,
 
-        fn fromEntry(from: addr.Virt, e: Entry, comptime is_last_level: bool) @This() {
+        fn fromEntry(from: addr.Virt, e: GetResult) @This() {
             return .{
                 .base = from,
-                .target = e.getAddr(is_last_level),
-                .write = e.writable != 0,
-                .exec = e.no_execute == 0,
-                .user = e.user_accessible != 0,
+                .target = e.start_paddr,
+                .write = e.flags.write,
+                .exec = e.flags.exec,
+                .user = e.flags.user,
             };
         }
 
@@ -759,14 +1046,11 @@ pub const MappingIterator = struct {
                 const colossial: addr.Virt = .{ .parts = .{ .page = .{ .levels = .{
                     .level4 = @truncate(self.l4),
                 } } } };
-                const entry: Entry = volat(&self.vmem.entries[self.l4]).*;
+                const entry = self.vmem.get(colossial);
 
-                if (entry.present == 0) {
+                if (entry == null) {
                     self.l4 += 1;
                     return missing(&self.maybe_base, colossial);
-                } else if (entry.huge_page_or_pat != 0) {
-                    self.l4 += 1;
-                    return present(&self.maybe_base, colossial, entry, false);
                 } else {
                     self.state = .l3;
                     return null;
@@ -784,14 +1068,14 @@ pub const MappingIterator = struct {
                     .level4 = @truncate(self.l4),
                     .level3 = @truncate(self.l3),
                 } } } };
-                const entry: Entry = (try self.vmem.entryGiantFrame(giant)).*;
+                const entry = self.vmem.get(giant);
 
-                if (entry.present == 0) {
+                if (entry == null) {
                     self.l3 += 1;
                     return missing(&self.maybe_base, giant);
-                } else if (entry.huge_page_or_pat != 0) {
+                } else if (entry.?.size == .@"1GiB") {
                     self.l3 += 1;
-                    return present(&self.maybe_base, giant, entry, false);
+                    return present(&self.maybe_base, giant, entry.?);
                 } else {
                     self.state = .l2;
                     return null;
@@ -810,14 +1094,14 @@ pub const MappingIterator = struct {
                     .level3 = @truncate(self.l3),
                     .level2 = @truncate(self.l2),
                 } } } };
-                const entry: Entry = (try self.vmem.entryHugeFrame(huge)).*;
+                const entry = self.vmem.get(huge);
 
-                if (entry.present == 0) {
+                if (entry == null) {
                     self.l2 += 1;
                     return missing(&self.maybe_base, huge);
-                } else if (entry.huge_page_or_pat != 0) {
+                } else if (entry.?.size == .@"2MiB") {
                     self.l2 += 1;
-                    return present(&self.maybe_base, huge, entry, false);
+                    return present(&self.maybe_base, huge, entry.?);
                 } else {
                     self.state = .l1;
                     return null;
@@ -837,14 +1121,14 @@ pub const MappingIterator = struct {
                     .level2 = @truncate(self.l2),
                     .level1 = @truncate(self.l1),
                 } } } };
-                const entry: Entry = (try self.vmem.entryFrame(page)).*;
+                const entry = self.vmem.get(page);
 
-                if (entry.present == 0) {
+                if (entry == null) {
                     self.l1 += 1;
                     return missing(&self.maybe_base, page);
                 } else {
                     self.l1 += 1;
-                    return present(&self.maybe_base, page, entry, true);
+                    return present(&self.maybe_base, page, entry.?);
                 }
             },
         }
@@ -867,8 +1151,8 @@ pub const MappingIterator = struct {
         };
     }
 
-    fn present(maybe_base: *?Current, vaddr: addr.Virt, entry: Entry, comptime is_last_level: bool) ?Mapping {
-        const cur = Current.fromEntry(vaddr, entry, is_last_level);
+    fn present(maybe_base: *?Current, vaddr: addr.Virt, entry: GetResult) ?Mapping {
+        const cur = Current.fromEntry(vaddr, entry);
         const base: Current = maybe_base.* orelse {
             maybe_base.* = cur;
             return null;

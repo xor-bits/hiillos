@@ -78,6 +78,10 @@ pub const Thread = struct {
     /// requires holding the correct process' lock to use instead of this thread's lock
     process_threads_node: abi.util.QueueNode(@This()) = .{},
 
+    /// a thread is only able to initiate one TLB shootdown at
+    /// a time, so this is where it will be allocated from
+    tlb_shootdown: caps.TlbShootdown = undefined,
+
     pub const Queue = @import("thread/Queue.zig");
     pub const UserHandle = abi.caps.Thread;
 

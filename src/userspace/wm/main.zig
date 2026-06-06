@@ -76,7 +76,7 @@ pub fn main() !void {
         fb_info.pitch * fb_info.height,
         .{ .write = true },
     );
-    defer vmem.unmap(fb_backbuf_addr, fb_info.pitch * fb_info.height) catch unreachable;
+    defer vmem.unmap(fb_backbuf_addr) catch unreachable;
 
     const fb = abi.util.Image([*]volatile u8){
         .width = @intCast(fb_info.width),
@@ -471,7 +471,6 @@ const Framebuffer = struct {
         const vmem = caps.Vmem.self;
         vmem.unmap(
             @intFromPtr(self.fb.pixel_array),
-            self.shmem.bytes,
         ) catch unreachable;
     }
 

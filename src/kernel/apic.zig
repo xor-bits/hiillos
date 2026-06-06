@@ -17,16 +17,37 @@ const Error = abi.sys.Error;
 
 //
 
-pub const IRQ_TIMER: u8 = 250;
-pub const IRQ_IPI_EOI: u8 = 251;
-pub const IRQ_IPI_PREEMPT: u8 = 252;
-pub const IRQ_IPI_TLB_SHOOTDOWN: u8 = 253;
-pub const IRQ_IPI_PANIC: u8 = 254;
-pub const IRQ_SPURIOUS: u8 = 255;
+pub const irqs = b: {
+    var next: u8 = 255;
 
-pub const IRQ_AVAIL_LOW: u8 = 42;
-pub const IRQ_AVAIL_HIGH: u8 = 249;
-pub const IRQ_AVAIL_COUNT = IRQ_AVAIL_HIGH - IRQ_AVAIL_LOW + 1;
+    const _spurious = staticAllocIrq(&next);
+    const _timer = staticAllocIrq(&next);
+    const _ipi_panic = staticAllocIrq(&next);
+    const _ipi_tlb_shootdown = staticAllocIrq(&next);
+    // const _ipi_tlb_shootdown_finish = staticAllocIrq(&next);
+    const _ipi_tlb_preempt = staticAllocIrq(&next);
+    const _ipi_tlb_eoi = staticAllocIrq(&next);
+
+    // TODO: use an enum
+    break :b struct {
+        pub const spurious = _spurious;
+        pub const timer = _timer;
+        pub const ipi_panic = _ipi_panic;
+        pub const ipi_tlb_shootdown = _ipi_tlb_shootdown;
+        // pub const ipi_tlb_shootdown_finish = _ipi_tlb_shootdown_finish;
+        pub const ipi_tlb_preempt = _ipi_tlb_preempt;
+        pub const ipi_tlb_eoi = _ipi_tlb_eoi;
+
+        pub const avail_high: u8 = next;
+        pub const avail_low: u8 = 42;
+        pub const avail_count: u8 = next - avail_low + 1;
+    };
+};
+
+inline fn staticAllocIrq(v: *u8) u8 {
+    v.* -= 1;
+    return v.*;
+}
 
 pub const APIC_SW_ENABLE: u32 = 1 << 8;
 pub const APIC_DISABLE: u32 = 1 << 16;
@@ -60,12 +81,12 @@ pub const Locals = struct {
     /// local apic regs of the cpu
     regs: ApicRegs = .{ .none = {} },
 
-    interrupt_handlers: [IRQ_AVAIL_COUNT]Handler =
-        [1]Handler{.{}} ** IRQ_AVAIL_COUNT,
+    interrupt_handlers: [irqs.avail_count]Handler =
+        [1]Handler{.{}} ** irqs.avail_count,
 
     pub fn notify(self: *@This(), vector: u8) void {
         // log.debug("notify({})", .{vector});
-        const irq_cap = self.interrupt_handlers[vector - IRQ_AVAIL_LOW].load() orelse {
+        const irq_cap = self.interrupt_handlers[vector - irqs.avail_low].load() orelse {
             log.warn("userspace interrupt {} without a handler", .{vector});
             return;
         };
@@ -235,12 +256,12 @@ fn enableAny(
     regs.task_priority.write(0);
 
     // enable
-    regs.spurious_interrupt_vector.write(APIC_SW_ENABLE | @as(u32, IRQ_SPURIOUS));
+    regs.spurious_interrupt_vector.write(APIC_SW_ENABLE | @as(u32, irqs.spurious));
 
     // enable timer interrupts
     const period = measureApicTimerSpeed(locals, regs) * conf.TIMESLICE_LIMIT_MS;
     regs.divide_configuration.write(APIC_TIMER_DIV);
-    regs.lvt_timer.write(IRQ_TIMER | APIC_TIMER_MODE_PERIODIC);
+    regs.lvt_timer.write(irqs.timer | APIC_TIMER_MODE_PERIODIC);
     regs.initial_count.write(period);
     regs.lvt_thermal_sensor.write(0);
     regs.lvt_error.write(0);
@@ -379,7 +400,7 @@ pub fn registerExternalInterrupt(irq: *caps.X86Irq) Error!struct {
     val.mask = .enable;
     val.destination_mode = .physical;
     val.delivery_mode = .fixed;
-    val.vector = i + IRQ_AVAIL_LOW;
+    val.vector = i + irqs.avail_low;
     val._reserved0 = 0;
     val._reserved1 = 0;
     val.destination_apic_id = lapic_id;
@@ -392,7 +413,7 @@ pub fn registerExternalInterrupt(irq: *caps.X86Irq) Error!struct {
     // log.info("success vec={} loc={*}", .{ i, locals });
 
     return .{
-        .vector = i + IRQ_AVAIL_LOW,
+        .vector = i + irqs.avail_low,
         .locals = locals,
     };
 }

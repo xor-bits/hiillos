@@ -41,7 +41,10 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 
     // kill other CPUs too
     for (0..255) |i| {
-        apic.interProcessorInterrupt(@truncate(i), apic.IRQ_IPI_PANIC);
+        apic.interProcessorInterrupt(
+            @truncate(i),
+            apic.irqs.ipi_panic,
+        );
     }
 
     // fill with red

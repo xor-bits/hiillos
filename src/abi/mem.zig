@@ -32,18 +32,16 @@ const ServerPageAllocator = struct {
             0,
             0,
             0,
-            .{
-                .fixed = false,
-                .write = true,
-            },
+            .{ .write = true },
         ) catch return null;
 
-        if (abi.conf.IS_DEBUG)
+        if (abi.conf.IS_DEBUG) {
             abi.util.fillVolatile(
                 u8,
                 @as([*]u8, @ptrFromInt(addr))[0..size],
                 0xFA,
             );
+        }
 
         return @ptrFromInt(addr);
     }
@@ -60,15 +58,12 @@ const ServerPageAllocator = struct {
     fn free(_: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
         const vmem = abi.caps.Vmem.self;
 
-        const size = std.mem.alignForward(usize, buf.len, 0x1000);
-
-        if (abi.conf.IS_DEBUG)
+        if (abi.conf.IS_DEBUG) {
+            const size = std.mem.alignForward(usize, buf.len, 0x1000);
             abi.util.fillVolatile(u8, buf.ptr[0..size], 0xFA);
+        }
 
-        vmem.unmap(
-            @intFromPtr(buf.ptr),
-            size,
-        ) catch return;
+        vmem.unmap(@intFromPtr(buf.ptr)) catch return;
     }
 };
 

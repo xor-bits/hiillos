@@ -225,9 +225,7 @@ pub const AccessiblePath = struct {
 
     pub fn deinit(self: @This()) void {
         const vmem = self.vmem orelse return;
-
-        vmem.unmap(@intFromPtr(self.p.ptr), self.p.len) catch
-            unreachable;
+        vmem.unmap(@intFromPtr(self.p.ptr)) catch unreachable;
     }
 };
 
@@ -298,11 +296,7 @@ pub const Dir = struct {
 
         pub fn deinit(self: @This()) void {
             const vmem = caps.Vmem.self;
-
-            vmem.unmap(
-                @intFromPtr(self.entries.ptr),
-                self.entries.len,
-            ) catch unreachable;
+            vmem.unmap(@intFromPtr(self.entries.ptr)) catch unreachable;
         }
 
         pub fn reset(self: *@This()) void {

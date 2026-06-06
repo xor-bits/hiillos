@@ -25,9 +25,11 @@ pub fn exec(a: args.Args) !void {
     init_vmem.switchTo();
 
     log.info("creating root proc", .{});
+    init_vmem.base.clone();
     const init_proc = try caps.Process.init(init_vmem);
 
     log.info("creating root thread", .{});
+    init_proc.base.clone();
     const init_thread = try caps.Thread.init(init_proc);
     init_thread.priority = 0;
     init_thread.trap.rip = abi.ROOT_EXE;
@@ -107,11 +109,12 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
     try root_frame.initialWrite(i, a.initfs_path);
 
     log.info("mapping root", .{});
+    root_frame.base.clone();
     _ = try vmem.map(
         root_frame,
         0,
         .{ .raw = abi.ROOT_EXE },
-        @intCast(root_frame.chunks.len),
+        0,
         .{
             .fixed = true,
             .write = true,

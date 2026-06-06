@@ -16,7 +16,7 @@ const Error = abi.sys.Error;
 
 //
 
-const PageState = enum {
+pub const PageState = enum {
     /// initial state
     ///  - read simply changes the state to `readonly_zero`
     ///    and returns the readonly zero page
@@ -56,29 +56,37 @@ pub const Frame = struct {
         size_bytes: usize,
         flags: abi.sys.FrameCreateFlags,
     ) !*@This() {
+        const alloc = caps.slab_allocator.allocator();
+
         if (size_bytes == 0)
             return Error.InvalidArgument;
+
+        const chunk_size = flags.page_size_hint.hardwarePageSize();
 
         const size_chunks = std.math.divCeil(
             usize,
             size_bytes,
-            flags.page_size_hint.sizeBytes(),
+            chunk_size.sizeBytes(),
         ) catch unreachable;
         if (size_chunks > std.math.maxInt(u32)) return error.OutOfMemory;
 
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        const chunks = try caps.slab_allocator.allocator().alloc(u32, size_chunks);
+        const obj: *@This() = try alloc.create(@This());
+        errdefer alloc.destroy(obj);
+        const chunks = try alloc.alloc(u32, size_chunks);
         @memset(chunks, 0);
 
         obj.* = .{
             .is_physical = false,
             .chunks = chunks,
-            .chunk_size = flags.page_size_hint,
+            .chunk_size = chunk_size,
             .size_bytes = size_bytes,
             .mappings = .{},
         };
 
-        caps.incCount(.frame, .{ .size_bytes = size_bytes });
+        caps.incCount(.frame, .{
+            .size_bytes = size_bytes,
+            .chunk_size = chunk_size,
+        });
         return obj;
     }
 
@@ -97,22 +105,22 @@ pub const Frame = struct {
 
         const aligned_paddr: usize = std.mem.alignBackward(usize, paddr.raw, 0x1000);
         const aligned_size: usize = std.mem.alignForward(usize, size_bytes, 0x1000);
-        // FIXME: biggest possible chunk size that does not make the size overflow to reduce Frame memory usage
-        // const chunk_size = abi.ChunkSize.maxAlignSize(@as(usize, 1) << @truncate(@ctz(aligned_size))) orelse .@"1GiB";
+
+        if (aligned_paddr == 0)
+            return Error.InvalidAddress;
+
         var chunk_size: abi.ChunkSize = .@"4KiB";
-        while (chunk_size.next()) |next| {
+        for ([_]abi.ChunkSize{ .@"2MiB", .@"1GiB" }) |next| {
             const next_size = next.sizeBytes();
             if (!std.mem.isAligned(aligned_paddr, next_size)) break;
             if (!std.mem.isAligned(aligned_size, next_size)) break;
             chunk_size = next;
         }
 
-        if (aligned_paddr == 0)
-            return Error.InvalidAddress;
-
-        const frame = try Frame.init(aligned_size, .{
-            .page_size_hint = chunk_size,
-        });
+        const frame = try Frame.init(
+            aligned_size,
+            .{ .page_size_hint = chunk_size },
+        );
         const first_page: u32 = @intCast(@divExact(aligned_paddr, 0x1000));
         for (frame.chunks, 0..) |*page, i| {
             page.* = first_page + @as(u32, @intCast(i)) * chunk_size.sizePages();
@@ -281,18 +289,17 @@ pub const Frame = struct {
 
         const page = self.chunks[idx];
 
-        const readonly_zero_page_now = caps.readonly_zero_page.load(.monotonic);
-        std.debug.assert(readonly_zero_page_now != 0);
+        std.debug.assert(caps.readonly_zero_page.parts.page != 0);
 
         const is_uninit = page == 0;
-        const is_not_init = page == readonly_zero_page_now or is_uninit;
+        const is_not_init = page == caps.readonly_zero_page.parts.page or is_uninit;
 
         // trying to write, but it is not allocated yet
         // (either not initialized or intitialized to read-only)
         if (is_not_init and is_write) return Error.Retry;
 
         // trying to read or exec while it is not allocated yet
-        if (is_not_init) return readonly_zero_page_now;
+        if (is_not_init) return caps.readonly_zero_page.parts.page;
 
         // it is allocated
         return page;
@@ -300,9 +307,39 @@ pub const Frame = struct {
 
     pub const PageFaultResult = struct {
         page: addr.Phys,
-        size: abi.ChunkSize,
-        can_write: bool,
+        page_state: PageState,
     };
+
+    // pub const Operation = enum {
+    //     commit,
+    //     decommit,
+    // };
+
+    // pub fn opRange(
+    //     self: *@This(),
+    //     from: u32,
+    //     to: u32,
+    //     trap: *arch.TrapRegs,
+    //     thread: *caps.Thread,
+    // ) void {
+    //     self.lock.lock();
+    //     defer self.lock.unlock();
+
+    //     if (self.is_transient) {
+    //         @branchHint(.cold);
+    //         const cleanup = self.transientQueueSleep(trap, thread);
+    //         return .{ .is_transient = .{
+    //             .cleanup = cleanup,
+    //         } };
+    //     }
+    //     self.is_transient = true;
+
+    //     self.mappings.items;
+
+    //     self.chunks;
+
+    //     self.is_transient;
+    // }
 
     /// returning Error.Retry means switching away from the thread from a page fault handler
     /// or using userspace logic to initialize the used page and retrying
@@ -363,15 +400,15 @@ pub const Frame = struct {
             .remap => |info| {
                 info.cleanup.run();
 
-                defer {
-                    for (info.updates) |vmem| vmem.deinit();
-                    caps.slab_allocator.allocator().free(info.updates);
-                }
+                // the `caps.TlbShootdown` holds a ref to this `caps.Frame`, keeping it alive
+                // the `caps.Frame` holds a ref to this thread in the transient sleep queue,
+                // keeping it alive too, so the tlb shootdown itself cannot become a
+                // dangling pointer
+                self.base.clone();
+                thread.tlb_shootdown = .initRemap(info.updates, self, idx);
+                const shootdown = &thread.tlb_shootdown;
 
-                // this CPU owns a single manual tlb_shootdown_refcnt reference
-                self.tlb_shootdown_refcnt.inc();
-
-                var ipi_bitmap: u256 = 0;
+                const ipi_bitmap: u256 = ~@as(u256, 0);
                 var prev: ?*caps.Vmem = null;
                 for (info.updates) |vmem_with_old_mappings| {
                     // filter out duplicates
@@ -381,31 +418,25 @@ pub const Frame = struct {
                     try vmem_with_old_mappings.refresh(
                         self,
                         idx,
-                        &ipi_bitmap,
                         dont_lock_if,
                     );
                 }
 
-                ipi_bitmap &= ~(@as(u256, 1) << @as(u8, @intCast(arch.cpuLocal().id)));
-                // const ipi_count = @popCount(ipi_bitmap);
-
-                if (self.deinitTlbShootdown()) {
-                    @branchHint(.likely);
-                    return Error.Retry;
-                }
-                // log.debug("tlb_shootdown_refcnt={}", .{self.tlb_shootdown_refcnt.load()});
+                const cant_be_non_null = shootdown.deinit(dont_lock_if);
+                std.debug.assert(cant_be_non_null == null);
 
                 const id_self = arch.cpuId();
                 for (main.all_cpu_locals, 0..) |*_locals, i| {
                     if (i == id_self) continue; // no need to send a self IPI
                     const locals = _locals.load(.acquire) orelse continue;
+                    if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) == 0) continue;
 
-                    if (ipi_bitmap & (@as(u256, 1) << @as(u8, @intCast(i))) != 0) {
-                        apic.interProcessorInterrupt(
-                            locals.lapic_id,
-                            apic.IRQ_IPI_TLB_SHOOTDOWN,
-                        );
-                    }
+                    shootdown.refcnt.inc();
+                    locals.tlb_shootdown_queue.push(shootdown);
+                    apic.interProcessorInterrupt(
+                        locals.lapic_id,
+                        apic.irqs.ipi_tlb_shootdown,
+                    );
                 }
 
                 // log.debug("retry cause: IPI ACK wait", .{});
@@ -414,32 +445,6 @@ pub const Frame = struct {
         }
 
         // TODO: better page table HAL where remap and unmap ops do the TLB shootdown
-    }
-
-    // /// start TLB shootdown caused by `initiator` thread
-    // pub fn initiatorTlbShootdown(self: *@This(), initiator: *caps.Thread) void {}
-    // pub fn otherTlbShootdown(self: *@This()) void {}
-
-    /// returns true if the whole TLB shootdown process was complete
-    pub fn deinitTlbShootdown(self: *@This()) bool {
-        if (!self.tlb_shootdown_refcnt.dec()) return false;
-
-        // all tlb shootdown objects executed,
-        // make the frame as ready to use again
-
-        // FIXME: all TLB logic needs to be moved into HalVmem and be refactored
-        self.lock.lock();
-        defer self.lock.unlock();
-        self.is_transient = false;
-
-        while (self.transient_sleep_queue.popFirstLocked(
-            &self.lock,
-            .running,
-        )) |sleeper| {
-            proc.ready(sleeper);
-        }
-
-        return true;
     }
 
     const UpdatePageResult = union(enum) {
@@ -477,9 +482,7 @@ pub const Frame = struct {
 
         const page = &self.chunks[idx];
 
-        const readonly_page: addr.Phys = .{ .parts = .{
-            .page = caps.readonly_zero_page.load(.monotonic),
-        } };
+        const readonly_page: addr.Phys = caps.readonly_zero_page;
         const current_page: addr.Phys = .{ .parts = .{
             .page = page.*,
         } };
@@ -500,75 +503,88 @@ pub const Frame = struct {
 
             return .{ .reused = .{
                 .page = .{ .parts = .{ .page = page.* } },
-                .size = self.chunk_size,
-                .can_write = true,
+                .page_state = .init,
             } };
         }
 
-        if (page_state == .init) {
-            // already usable
-            return .{ .reused = .{
-                .page = current_page,
-                .size = self.chunk_size,
-                .can_write = page_state != .readonly_zero,
-            } };
+        switch (page_state) {
+            .init => {
+                // already usable
+                return .{ .reused = .{
+                    .page = current_page,
+                    .page_state = .init,
+                } };
+            },
+            .uninit => if (!is_write) {
+                // easily usable - read zeroes
+                page.* = readonly_page.parts.page;
+                return .{ .reused = .{
+                    .page = readonly_page,
+                    .page_state = .readonly_zero,
+                } };
+            } else {
+                // easily usable - write
+                const alloc = pmem.allocChunk(self.chunk_size) orelse
+                    return error.OutOfMemory;
+                page.* = alloc.parts.page;
+                return .{ .reused = .{
+                    .page = alloc,
+                    .page_state = .init,
+                } };
+            },
+            .readonly_zero => if (!is_write) {
+                // already usable - read only
+                return .{ .reused = .{
+                    .page = current_page,
+                    .page_state = .readonly_zero,
+                } };
+            } else {
+                // worst case - remap as write
+                @branchHint(.cold);
+                std.debug.assert(is_write);
+
+                const alloc = pmem.allocChunk(self.chunk_size) orelse
+                    return error.OutOfMemory;
+                errdefer pmem.deallocChunk(alloc, self.chunk_size);
+                const old = try self.collectOldMappingsLocked(idx);
+
+                page.* = alloc.parts.page;
+                self.is_transient = true;
+                const cleanup = self.transientQueueSleep(trap, thread);
+
+                return .{ .remap = .{
+                    .updates = old,
+                    .cleanup = cleanup,
+                } };
+            },
         }
 
-        if (page_state == .readonly_zero and !is_write) {
-            // already usable - read only
-            return .{ .reused = .{
-                .page = current_page,
-                .size = .@"4KiB",
-                .can_write = false,
-            } };
-        }
-
-        if (page_state == .uninit and is_write) {
-            // easily usable - write
-            const alloc = pmem.allocChunk(self.chunk_size) orelse
-                return error.OutOfMemory;
-            page.* = alloc.parts.page;
-            return .{ .reused = .{
-                .page = alloc,
-                .size = self.chunk_size,
-                .can_write = true,
-            } };
-        } else {
-            // easily usable - read
-            page.* = readonly_page.parts.page;
-            return .{ .reused = .{
-                .page = readonly_page,
-                .size = .@"4KiB",
-                .can_write = false,
-            } };
-        }
-
-        if (page_state == .readonly_zero) {
-            // worst case - remap as write
-            @branchHint(.cold);
-            std.debug.assert(is_write);
-
-            const alloc = pmem.allocChunk(self.chunk_size) orelse
-                return error.OutOfMemory;
-            errdefer pmem.deallocChunk(alloc, self.chunk_size);
-            const old = try self.collectOldMappingsLocked();
-
-            page.* = alloc.parts.page;
-            self.is_transient = true;
-            const cleanup = self.transientQueueSleep(trap, thread);
-
-            return .{ .remap = .{
-                .updates = old,
-                .cleanup = cleanup,
-            } };
-        }
+        comptime unreachable;
     }
 
-    fn collectOldMappingsLocked(self: *@This()) ![]*caps.Vmem {
-        const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, self.mappings.items.len);
+    fn collectOldMappingsLocked(
+        self: *@This(),
+        idx: u32,
+    ) ![]*caps.Vmem {
+        var count: usize = 0;
+        for (self.mappings.items) |mapping| {
+            if (idx < mapping.frame_first_chunk) continue;
+            if (idx >= mapping.frame_first_chunk + mapping.chunks) continue;
+            std.debug.assert(mapping.frame == self);
 
-        for (self.mappings.items, old) |a, *b| {
-            b.* = a.vmem.clone();
+            count += 1;
+        }
+
+        const old = try caps.slab_allocator.allocator().alloc(*caps.Vmem, count);
+        var i: usize = 0;
+        for (self.mappings.items) |mapping| {
+            if (idx < mapping.frame_first_chunk) continue;
+            if (idx >= mapping.frame_first_chunk + mapping.chunks) continue;
+            std.debug.assert(mapping.frame == self);
+
+            mapping.vmem.base.clone();
+            old[i] = mapping.vmem;
+            i += 1;
         }
 
         std.sort.pdq(*caps.Vmem, old, {}, struct {
@@ -607,80 +623,240 @@ pub const Frame = struct {
 pub const TlbShootdown = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
-    completion: Completion,
-    target: Target,
+    operation: union(enum) {
+        unmap: struct {
+            /// a ref of `caps.Vmem` is held and this mapping is marked as unmapping
+            /// to prevent it from being deallocated and this becoming a dangling pointer
+            mapping: *caps.Mapping,
+            /// a thread that called `unmap` and is waiting for the op to complete
+            thread: *caps.Thread,
+        },
+        remap: struct {
+            /// refs of `caps.Vmem`s are owned
+            mappings: []*caps.Vmem,
+            /// `caps.Frame` ref is owned, a page fault caused this frame to get
+            /// modified and it is currently in a transient state and will be unlocked
+            frame: *caps.Frame,
+            idx: u32,
+        },
+    },
 
     pub const Completion = union(enum) {
+        /// a page fault caused the frame to get modified, unlock the frame
         transient: *caps.Frame,
+        /// a thread called `unmap` and is waiting for the op to complete
         unmap: *caps.Thread,
     };
 
     // TODO: PCID
     pub const Target = union(enum) {
-        // individual: addr.Virt,
-        range: struct {
-            start: addr.Virt,
-            n_4kib_pages: u32,
-        },
-        // whole: void,
+        whole,
+        range: *caps.Mapping,
     };
 
-    pub fn init(
-        completion: Completion,
-        target: Target,
-    ) !*@This() {
-        const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
-        obj.* = .{ .completion = completion, .target = target };
-
-        switch (obj.completion) {
-            .transient => |frame| frame.tlb_shootdown_refcnt.inc(),
-            .unmap => |_| {},
+    pub fn initUnmap(
+        mapping: *caps.Mapping,
+        thread: *caps.Thread,
+    ) @This() {
+        if (conf.LOG_TLB_SHOOTDOWNS) {
+            log.debug("tlb shootdown from unmap 0x{x} count={} size={t}", .{
+                mapping.start().raw, mapping.chunks, mapping.frame.chunk_size,
+            });
         }
-
-        caps.incCount(.tlb_shootdown, .{ .completion = completion, .target = target });
-        return obj;
+        caps.incCount(.tlb_shootdown, .{
+            .mapping = mapping,
+            .thread = thread,
+        });
+        return .{ .operation = .{ .unmap = .{
+            .mapping = mapping,
+            .thread = thread,
+        } } };
     }
 
-    pub fn deinit(self: *@This()) ?*caps.Thread {
+    pub fn initRemap(
+        mappings: []*caps.Vmem,
+        frame: *caps.Frame,
+        idx: u32,
+    ) @This() {
+        if (conf.LOG_TLB_SHOOTDOWNS) {
+            log.debug("tlb shootdown from remap {*} idx={}", .{
+                frame, idx,
+            });
+        }
+        caps.incCount(.tlb_shootdown, .{
+            .mappings = mappings,
+            .frame = frame,
+            .idx = idx,
+        });
+        return .{ .operation = .{ .remap = .{
+            .mappings = mappings,
+            .frame = frame,
+            .idx = idx,
+        } } };
+    }
+
+    fn remapFlush(
+        self: *const @This(),
+        dont_lock_if: ?*caps.Vmem,
+    ) void {
+        std.debug.assert(self.operation == .remap);
+        const remap = self.operation.remap;
+
+        const chunk_size = remap.frame.chunk_size;
+        var prev: ?*caps.Vmem = null;
+        for (remap.mappings) |vmem| {
+            // filter out duplicates
+            if (prev == vmem) continue;
+            prev = vmem;
+
+            if (dont_lock_if != vmem) vmem.lock.lock();
+            defer if (dont_lock_if != vmem) vmem.lock.unlock();
+
+            for (vmem.mappings.items) |mapping| {
+                if (mapping.frame != remap.frame) continue;
+
+                std.debug.assert(remap.idx >= mapping.frame_first_chunk);
+                std.debug.assert(remap.idx < mapping.frame_first_chunk + mapping.chunks);
+
+                vmem.hal_vmem.flushLocalTlb(
+                    chunk_size,
+                    mapping.getVaddr(),
+                );
+            }
+        }
+    }
+
+    fn remapFinish(
+        self: *const @This(),
+        dont_lock_if: ?*caps.Vmem,
+    ) ?*caps.Thread {
+        std.debug.assert(self.operation == .remap);
+        const remap = self.operation.remap;
+
+        const chunk_size = remap.frame.chunk_size;
+        var prev: ?*caps.Vmem = null;
+        for (remap.mappings) |vmem| {
+            // filter out duplicates
+            if (prev == vmem) continue;
+            prev = vmem;
+
+            if (dont_lock_if != vmem) vmem.lock.lock();
+            defer if (dont_lock_if != vmem) vmem.lock.unlock();
+
+            for (vmem.mappings.items) |mapping| {
+                if (mapping.frame != remap.frame) continue;
+
+                std.debug.assert(remap.idx >= mapping.frame_first_chunk);
+                std.debug.assert(remap.idx < mapping.frame_first_chunk + mapping.chunks);
+
+                vmem.hal_vmem.remove(
+                    chunk_size,
+                    mapping.getVaddr(),
+                );
+            }
+        }
+
+        defer {
+            for (remap.mappings) |vmem| vmem.deinit();
+            remap.frame.deinit();
+            caps.slab_allocator.allocator().free(remap.mappings);
+        }
+
+        remap.frame.lock.lock();
+        defer remap.frame.lock.unlock();
+        remap.frame.is_transient = false;
+
+        while (remap.frame.transient_sleep_queue.popFirstLocked(
+            &remap.frame.lock,
+            .running,
+        )) |sleeper| {
+            proc.ready(sleeper);
+        }
+
+        return null;
+    }
+
+    fn unmapFlush(
+        self: *const @This(),
+        dont_lock_if: ?*caps.Vmem,
+    ) void {
+        std.debug.assert(self.operation == .unmap);
+        const unmap = self.operation.unmap;
+
+        const vaddr_mapping = unmap.mapping.start();
+        const chunk_size = unmap.mapping.frame.chunk_size;
+        const chunk_bytes = chunk_size.sizeBytes();
+        const vmem = unmap.mapping.vmem;
+
+        // NOTE: locking is not needed because it is illegal to remove
+        // or modify the mappings before the last tlb flush has ran (?)
+
+        _ = dont_lock_if;
+        // vmem.lock.lock();
+        // defer vmem.lock.unlock();
+
+        for (0..unmap.mapping.chunks) |chunk_idx| {
+            // already checked to be in bounds
+            const vaddr_chunk = vaddr_mapping.add(chunk_idx * chunk_bytes);
+            vmem.hal_vmem.flushLocalTlb(chunk_size, vaddr_chunk);
+        }
+    }
+
+    fn unmapFinish(
+        self: *const @This(),
+        dont_lock_if: ?*caps.Vmem,
+    ) *caps.Thread {
+        std.debug.assert(self.operation == .unmap);
+        const unmap = self.operation.unmap;
+
+        const vmem = unmap.mapping.vmem;
+        const vaddr_mapping = unmap.mapping.start();
+        const chunk_size = unmap.mapping.frame.chunk_size;
+        const chunk_bytes = chunk_size.sizeBytes();
+
+        defer vmem.deinit();
+        if (dont_lock_if != vmem) vmem.lock.lock();
+        defer if (dont_lock_if != vmem) vmem.lock.unlock();
+
+        for (0..unmap.mapping.chunks) |chunk_idx| {
+            // already checked to be in bounds
+            const vaddr_chunk = vaddr_mapping.add(chunk_idx * chunk_bytes);
+            vmem.hal_vmem.remove(chunk_size, vaddr_chunk);
+        }
+
+        const idx = unmap.mapping.vmem.find(unmap.mapping.start()).?;
+        const removed_mapping = vmem.mappings.orderedRemove(idx);
+        std.debug.assert(removed_mapping == unmap.mapping);
+        std.debug.assert(removed_mapping.target.unmapping);
+
+        return unmap.thread;
+    }
+
+    pub fn deinit(
+        self: *@This(),
+        dont_lock_if: ?*caps.Vmem,
+    ) ?*caps.Thread {
         // log.debug("TLB (partial) flush", .{});
-        switch (self.target) {
-            // .individual => |vaddr| arch.x86_64.flushTlbAddr(vaddr.raw),
-            .range => |vaddr_range| {
-                // FIXME: this iterates over bytes instead of over pages
-                for (0..vaddr_range.n_4kib_pages) |i| {
-                    arch.x86_64.flushTlbAddr(vaddr_range.start.raw + i * 0x1000);
-                }
-            },
-            // .whole => arch.x86_64.flushTlb(),
+        switch (self.operation) {
+            .remap => self.remapFlush(dont_lock_if),
+            .unmap => self.unmapFlush(dont_lock_if),
         }
 
         if (!self.refcnt.dec()) return null;
         caps.decCount(.tlb_shootdown);
+        defer self.* = undefined;
 
-        defer caps.slab_allocator.allocator().destroy(self);
-
-        switch (self.completion) {
-            .transient => |frame| {
-                defer frame.deinit();
-
-                _ = frame.deinitTlbShootdown();
-
-                return null;
-            },
-            .unmap => |thread| return thread,
-        }
-    }
-
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+        return switch (self.operation) {
+            .remap => self.remapFinish(dont_lock_if),
+            .unmap => self.unmapFinish(dont_lock_if),
+        };
     }
 
     pub fn flushAll() void {
         const locals = arch.cpuLocal();
         while (locals.tlb_shootdown_queue.tryPop()) |shootdown| {
             // log.debug("one TLB shootdown complete for {*}", .{shootdown});
-            if (shootdown.deinit()) |thread| {
+            if (shootdown.deinit(null)) |thread| {
                 // log.debug("TLB shootdowns complete for {*}", .{thread});
                 proc.ready(thread);
             }

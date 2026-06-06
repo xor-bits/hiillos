@@ -49,9 +49,7 @@ pub fn init() !void {
     try caps_x86.init();
 
     // initialize the dedupe lazyinit readonly zero page
-    const page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
-    std.crypto.secureZero(u64, page.toHhdm().toPtr([*]volatile u64)[0..512]);
-    readonly_zero_page.store(page.parts.page, .release);
+    readonly_zero_page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
 
     inline for ([_]type{
         CapabilitySlot,     Process,
@@ -69,21 +67,24 @@ pub fn init() !void {
 pub fn incCount(ty: abi.ObjectType, init_args: anytype) void {
     if (conf.LOG_OBJ_CALLS)
         log.info("{t}.init {any}", .{ ty, init_args });
-    if (!conf.LOG_OBJ_STATS) return;
+    if (conf.LOG_OBJ_STATS == .none) return;
     _ = obj_counts.getPtr(ty).fetchAdd(1, .monotonic);
 
-    if (!conf.LOG_OBJ_STATS_PERIODIC) printCounts();
+    if (conf.LOG_OBJ_STATS == .each_init) {
+        printCounts();
+    }
 }
 
 pub fn decCount(ty: abi.ObjectType) void {
     if (conf.LOG_OBJ_CALLS)
         log.info("{t}.deinit", .{ty});
-    if (!conf.LOG_OBJ_STATS) return;
+    if (conf.LOG_OBJ_STATS == .none) return;
     const old_count = obj_counts.getPtr(ty).fetchSub(1, .monotonic);
     std.debug.assert(old_count != 0);
 }
 
 pub fn printCounts() void {
+    if (conf.LOG_OBJ_STATS == .none) return;
     log.debug("objects:", .{});
     var it = obj_counts.iterator();
     while (it.next()) |e| {
@@ -240,9 +241,7 @@ pub const CapabilitySlot = struct {
 // }
 
 pub var slab_allocator = abi.mem.SlabAllocator.init(pmem.page_allocator);
-/// written once by the BSP with .release before any other CPU runs
-/// only read after that with .monotonic
-pub var readonly_zero_page: std.atomic.Value(u32) = .init(0);
+pub var readonly_zero_page: addr.Phys = undefined;
 
 fn debugType(comptime T: type) void {
     std.log.debug("{s}: size={} align={}", .{ @typeName(T), @sizeOf(T), @alignOf(T) });

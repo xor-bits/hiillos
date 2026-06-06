@@ -252,6 +252,7 @@ fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
     // NOTE: the max recursion is controlled by `ChunkSize`
     const parent_chunk_size = size.next() orelse {
         log.warn("out of memory", .{});
+        @import("caps.zig").printCounts();
         return null;
     };
     const parent_chunk = allocChunkInner(parent_chunk_size) orelse return null;

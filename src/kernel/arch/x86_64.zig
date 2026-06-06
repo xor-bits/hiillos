@@ -1080,6 +1080,10 @@ pub const Idt = extern struct {
                     logs.Addr2Line{ .addr = trap.rip },
                 });
 
+                if (cpuLocal().current_thread) |thread| {
+                    thread.proc.vmem.dump();
+                }
+
                 log.warn(
                     \\general protection fault (0x{x})
                     \\ - user: true
@@ -1288,19 +1292,26 @@ pub const Idt = extern struct {
             }).asInt();
         }
 
-        entries[apic.IRQ_SPURIOUS] = Entry.generate(struct {
+        entries[apic.irqs.spurious] = Entry.generate(struct {
             fn handler(_: *const InterruptStackFrame) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC spurious interrupt", .{});
 
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_TIMER] = Entry.generateTrap(struct {
+        entries[apic.irqs.timer] = Entry.generateTrap(struct {
+            const periodic_print_cooldown_init: usize = 1000 / conf.TIMESLICE_LIMIT_MS;
+            var periodic_print_cooldown = periodic_print_cooldown_init;
+
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC timer interrupt", .{});
 
-                if (conf.LOG_OBJ_STATS_PERIODIC and cpuLocal().id == 0) {
-                    caps.printCounts();
+                if (conf.LOG_OBJ_STATS == .periodic and cpuLocal().id == 0) {
+                    if (periodic_print_cooldown == 0) {
+                        caps.printCounts();
+                        periodic_print_cooldown = periodic_print_cooldown_init;
+                    }
+                    periodic_print_cooldown -= 1;
                 }
 
                 if (trap.code_segment_selector == GdtDescriptor.user_code_selector) {
@@ -1312,14 +1323,14 @@ pub const Idt = extern struct {
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_IPI_EOI] = Entry.generateTrap(struct {
+        entries[apic.irqs.ipi_tlb_eoi] = Entry.generateTrap(struct {
             fn handler(_: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI EOI interrupt", .{});
 
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_IPI_PREEMPT] = Entry.generateTrap(struct {
+        entries[apic.irqs.ipi_tlb_preempt] = Entry.generateTrap(struct {
             fn handler(trap: *TrapRegs) void {
                 if (conf.LOG_INTERRUPTS) log.debug("APIC IPI interrupt", .{});
 
@@ -1332,7 +1343,7 @@ pub const Idt = extern struct {
                 apic.eoi();
             }
         }).asInt();
-        entries[apic.IRQ_IPI_PANIC] = Entry.generate(struct {
+        entries[apic.irqs.ipi_panic] = Entry.generate(struct {
             fn handler(_: *const InterruptStackFrame) void {
                 if (conf.LOG_INTERRUPTS) log.debug("kernel panic interrupt", .{});
 
@@ -1340,7 +1351,7 @@ pub const Idt = extern struct {
                 hcf();
             }
         }).asInt();
-        entries[apic.IRQ_IPI_TLB_SHOOTDOWN] = Entry.generate(struct {
+        entries[apic.irqs.ipi_tlb_shootdown] = Entry.generate(struct {
             fn handler(_: *const InterruptStackFrame) void {
                 if (conf.LOG_INTERRUPTS) log.debug("TLB shootdown interrupt", .{});
 
@@ -1349,14 +1360,14 @@ pub const Idt = extern struct {
             }
         }).asInt();
 
-        inline for (0..apic.IRQ_AVAIL_COUNT) |i| {
-            entries[i + apic.IRQ_AVAIL_LOW] = Entry.generate(struct {
+        inline for (0..apic.irqs.avail_count) |i| {
+            entries[i + apic.irqs.avail_low] = Entry.generate(struct {
                 pub fn handler(_: *const InterruptStackFrame) void {
                     if (conf.LOG_INTERRUPTS) log.debug("user-space {} interrupt", .{i});
 
                     // log.info("extra interrupt i=0x{x}", .{i + IRQ_AVAIL_LOW});
 
-                    cpuLocal().lapic.notify(i + apic.IRQ_AVAIL_LOW);
+                    cpuLocal().lapic.notify(i + apic.irqs.avail_low);
                     apic.eoi();
                 }
             }).asInt();

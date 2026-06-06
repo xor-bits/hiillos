@@ -29,7 +29,7 @@ fn vmmVectorAlloc(_top: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) 
     vmmVectorGrow(top, std.math.divCeil(
         usize,
         len,
-        0x10000,
+        0x200000,
     ) catch return null) catch return null;
     return ptr;
 }
@@ -45,7 +45,7 @@ fn vmmVectorRemap(_top: *anyopaque, memory: []u8, _: std.mem.Alignment, new_len:
         vmmVectorGrow(top, std.math.divCeil(
             usize,
             new_len - current_len,
-            0x10000,
+            0x200000,
         ) catch return null) catch return null;
     }
 
@@ -56,18 +56,18 @@ fn vmmVectorFree(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {}
 
 fn vmmVectorGrow(top: *usize, n_pages: usize) !void {
     for (0..n_pages) |_| {
-        const frame = try caps.Frame.create(0x10000, .{
-            .page_size_hint = .@"64KiB",
+        const frame = try caps.Frame.create(0x200000, .{
+            .page_size_hint = .@"2MiB",
         });
         defer frame.close();
         _ = try caps.ROOT_SELF_VMEM.map(
             frame,
             0,
             top.*,
-            0x10000,
+            0,
             .{ .fixed = true, .write = true },
         );
-        top.* += 0x10000;
+        top.* += 0x200000;
     }
 }
 
@@ -273,10 +273,7 @@ fn openDirHandlerInner(path: []const u8) Error!struct { caps.Frame, usize } {
         @as(*volatile u8, &frame_names[size - 1]).* = 0; // null terminator, should already be there but just making sure
     }
 
-    caps.ROOT_SELF_VMEM.unmap(
-        tmp_addr,
-        size,
-    ) catch unreachable;
+    caps.ROOT_SELF_VMEM.unmap(tmp_addr) catch unreachable;
 
     return .{ frame, entries };
 }

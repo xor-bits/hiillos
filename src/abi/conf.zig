@@ -12,14 +12,17 @@ pub const LOG_GENERIC: bool = LOG_EVERYTHING or false;
 pub const LOG_USER: bool = LOG_EVERYTHING or false;
 
 pub const LOG_SYSCALL_STATS: bool = LOG_STATS or false;
-pub const LOG_OBJ_STATS: bool = LOG_STATS or false;
-/// instead of printing obj counts every time an object is created,
-/// print them on each timer interrupt
-pub const LOG_OBJ_STATS_PERIODIC: bool = LOG_STATS or false;
+pub const LOG_OBJ_STATS: enum {
+    each_init,
+    periodic,
+    none,
+} = .none;
+pub const LOG_PAGE_FAULT_STATS: bool = LOG_STATS or false;
 pub const LOG_SYSCALLS: bool = LOG_GENERIC or false;
 pub const LOG_OBJ_CALLS: bool = LOG_GENERIC or false;
 pub const LOG_CAP_CHANGES: bool = LOG_GENERIC or false;
 pub const LOG_VMEM: bool = LOG_GENERIC or false;
+pub const LOG_HAL_VMEM: bool = LOG_GENERIC or false;
 pub const LOG_CTX_SWITCHES: bool = LOG_GENERIC or false;
 pub const LOG_WAITING: bool = LOG_GENERIC or false;
 pub const LOG_APIC: bool = LOG_GENERIC or false;
@@ -29,6 +32,7 @@ pub const LOG_ENTRYPOINT_CODE: bool = LOG_GENERIC or false;
 pub const LOG_PAGE_FAULTS: bool = LOG_GENERIC or false;
 pub const LOG_FUTEX: bool = LOG_GENERIC or false;
 pub const LOG_SCHEDULER: bool = LOG_GENERIC or false;
+pub const LOG_TLB_SHOOTDOWNS: bool = LOG_GENERIC or false;
 pub const LOG_SERVERS: bool = LOG_USER or false;
 pub const LOG_KEYS: bool = LOG_USER or false;
 

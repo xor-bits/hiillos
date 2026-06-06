@@ -29,7 +29,7 @@ pub fn openImage(
         file_size,
         .{},
     );
-    defer vmem.unmap(addr, file_size) catch unreachable;
+    defer vmem.unmap(addr) catch unreachable;
 
     return try loadImage(allocator, @as([*]const u8, @ptrFromInt(addr))[0..file_size]);
 }
@@ -612,7 +612,7 @@ pub const Framebuffer = struct {
 
     pub fn unmap(self: @This(), vmem: caps.Vmem, fb: []volatile u8) void {
         _ = self;
-        vmem.unmap(@intFromPtr(fb.ptr), fb.len) catch unreachable;
+        vmem.unmap(@intFromPtr(fb.ptr)) catch unreachable;
     }
 };
 

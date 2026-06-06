@@ -187,7 +187,7 @@ fn runQemu(
         // "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+pmu,+perfctr_core,+tsc,+invtsc",
         "qemu64,+rdrand,+rdseed,+rdtscp,+rdpid,+pcid,+tsc,+invtsc",
         "-m",
-        "1g", // 3m is the absolute minimum right now
+        "2g", // 3m is the absolute minimum right now
         "-no-reboot",
         "-serial",
         "stdio", // "none",

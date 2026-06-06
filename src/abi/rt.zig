@@ -109,6 +109,8 @@ fn signalHandlerWrapper(regs: *SignalRegs) callconv(.c) void {
     const signal = sys.selfGetSignal() catch unreachable;
     regs.return_addr = signal.ip;
 
+    caps.Vmem.self.dump() catch {};
+
     std.debug.panic("Segmentation fault at addres: 0x{x} caused by {}", .{
         signal.target_addr,
         signal.caused_by,

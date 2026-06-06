@@ -96,10 +96,8 @@ pub fn Ring(comptime T: type) type {
         pub fn deinit(self: Self) void {
             defer self.self_vmem.close();
             defer self.frame.close();
-
             self.self_vmem.unmap(
                 @intFromPtr(self.mapped_data.ptr),
-                self.mapped_data.len,
             ) catch unreachable;
         }
 

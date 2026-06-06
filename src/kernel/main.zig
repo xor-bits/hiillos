@@ -53,7 +53,6 @@ pub const CpuLocalStorage = struct {
 
     pcid_lru: ?caps.PcidLru = null,
 
-    // FIXME: unified cpu job queue with Zig async
     tlb_shootdown_queue: StaticQueue(*caps.TlbShootdown) = .{},
 
     // TODO: arena allocator that forgets everything when the CPU enters the syscall handler
@@ -168,11 +167,6 @@ pub fn main() noreturn {
     }
     all_cpu_locals[arch.cpuId()].store(arch.cpuLocal(), .release);
 
-    // boot up a few processors
-    if (!conf.SKIP_SMP) {
-        arch.smpInit();
-    }
-
     // set up arch specific things: GDT, TSS, IDT, syscalls, ...
     log.info("initializing CPU", .{});
     arch.initCpu(null) catch |err| {
@@ -195,6 +189,11 @@ pub fn main() noreturn {
     caps.init() catch |err| {
         std.debug.panic("failed to initialize caps: {}", .{err});
     };
+
+    // boot up a few processors
+    if (!conf.SKIP_SMP) {
+        arch.smpInit();
+    }
 
     if (builtin.is_test) {
         log.info("running tests", .{});

@@ -245,16 +245,22 @@ pub const ChunkSize = enum(u5) {
         a: Self,
         b: Self,
     ) Self {
-        if (@intFromEnum(a) < @intFromEnum(b)) return a;
-        return b;
+        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn max(
+        a: Self,
+        b: Self,
+    ) Self {
+        return @enumFromInt(@max(@intFromEnum(a), @intFromEnum(b)));
     }
 
     pub fn maxFit(
         addr: usize,
         size: usize,
     ) ?Self {
-        const size_limit = Self.minAlignSize(size).?;
-        const addr_limit = Self.maxAlignAddr(addr).?;
+        const size_limit = Self.minAlignSize(size) orelse return null;
+        const addr_limit = Self.maxAlignAddr(addr) orelse return null;
         return size_limit.min(addr_limit);
     }
 
@@ -302,6 +308,13 @@ pub const ChunkSize = enum(u5) {
         if (self.sizeBytes() >= Self.@"1GiB".sizeBytes()) return Self.@"1GiB".sizeBytes();
         if (self.sizeBytes() >= Self.@"2MiB".sizeBytes()) return Self.@"2MiB".sizeBytes();
         return Self.@"4KiB".sizeBytes();
+    }
+
+    pub fn cmp(
+        a: Self,
+        b: Self,
+    ) std.math.Order {
+        return std.math.order(@intFromEnum(a), @intFromEnum(b));
     }
 };
 

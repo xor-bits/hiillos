@@ -900,7 +900,7 @@ const DirNode = struct {
             real_dir_frame_size,
             .{},
         );
-        defer vmem.unmap(addr, real_dir_frame_size) catch unreachable;
+        defer vmem.unmap(addr) catch unreachable;
 
         if (real_dir.entries >= 0x1_0000_0000) {
             log.err("filesystem returned too many directory entries", .{});
