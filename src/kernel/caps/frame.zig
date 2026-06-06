@@ -16,6 +16,24 @@ const Error = abi.sys.Error;
 
 //
 
+const PageState = enum {
+    /// initial state
+    ///  - read simply changes the state to `readonly_zero`
+    ///    and returns the readonly zero page
+    ///  - write simply changes the state to `init`
+    ///    and returns the allocated page
+    uninit,
+    /// state when first read from but not written to
+    ///  - read simply returns the readonly zero page
+    ///  - write requires a complex remap, switches to the
+    ///    `init` state and returns the allocated page once
+    ///    the remap is complete
+    readonly_zero,
+    /// fully initialized state
+    ///  - both read and write simply returns the allocated page
+    init,
+};
+
 pub const Frame = struct {
     // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
@@ -281,6 +299,12 @@ pub const Frame = struct {
         return page;
     }
 
+    pub const PageFaultResult = struct {
+        page: addr.Phys,
+        size: abi.ChunkSize,
+        can_write: bool,
+    };
+
     /// returning Error.Retry means switching away from the thread from a page fault handler
     /// or using userspace logic to initialize the used page and retrying
     pub fn pageFault(
@@ -290,7 +314,7 @@ pub const Frame = struct {
         dont_lock_if: ?*caps.Vmem,
         trap: *arch.TrapRegs,
         thread: *caps.Thread,
-    ) Error!addr.Phys {
+    ) Error!PageFaultResult {
         //     1.  lock `Frame`
         //     2.  copy all mappings that reference the old page to a temporary list
         //     3.  set `is_transient` flag
@@ -332,13 +356,9 @@ pub const Frame = struct {
         );
 
         switch (result) {
-            .reused => |page| {
-                @branchHint(.likely);
-                return addr.Phys.fromParts(.{ .page = page });
-            },
-            .is_transient => |cleanup| {
-                cleanup.run();
-                // log.debug("retry cause: is_transient", .{});
+            .reused => |v| return v,
+            .is_transient => |info| {
+                info.cleanup.run();
                 return Error.Retry;
             },
             .remap => |info| {
@@ -425,14 +445,14 @@ pub const Frame = struct {
 
     const UpdatePageResult = union(enum) {
         /// the page was already set as it should have been and is safe to use immediately
-        reused: u32,
+        reused: PageFaultResult,
         /// the page might be moving right now, so this thread has to go sleep
-        is_transient: caps.Thread.Queue.Cleanup,
+        is_transient: struct {
+            cleanup: caps.Thread.Queue.Cleanup,
+        },
         /// the old page needs to be copied (copy-on-write and lazy-alloc) and all active
         /// mappings need to be updated
         remap: struct {
-            new_page: u32,
-            old_page: u32,
             updates: []*caps.Vmem,
             cleanup: caps.Thread.Queue.Cleanup,
         },
@@ -449,62 +469,99 @@ pub const Frame = struct {
         defer self.lock.unlock();
 
         if (self.is_transient) {
+            @branchHint(.cold);
             const cleanup = self.transientQueueSleep(trap, thread);
-            return .{ .is_transient = cleanup };
+            return .{ .is_transient = .{
+                .cleanup = cleanup,
+            } };
         }
 
         const page = &self.chunks[idx];
 
-        const is_uninit = page.* == 0;
+        const readonly_page = addr.Phys.fromParts(.{
+            .page = caps.readonly_zero_page.load(.monotonic),
+        });
+        const current_page = addr.Phys.fromParts(.{
+            .page = page.*,
+        });
+
+        const page_state = if (current_page.isNull())
+            PageState.uninit
+        else if (current_page.raw == readonly_page.raw)
+            PageState.readonly_zero
+        else
+            PageState.init;
 
         if (conf.NO_LAZY_REMAP) {
-            if (is_uninit) {
-                const alloc = pmem.allocChunk(self.chunk_size) orelse return error.OutOfMemory;
+            if (page_state == .uninit) {
+                const alloc = pmem.allocChunk(self.chunk_size) orelse
+                    return error.OutOfMemory;
                 page.* = alloc.toParts().page;
             }
 
-            return .{ .reused = page.* };
+            return .{ .reused = .{
+                .page = addr.Phys.fromParts(.{ .page = page.* }),
+                .size = self.chunk_size,
+                .can_write = true,
+            } };
         }
 
-        if (is_uninit and is_write) {
-            // writing to a lazy allocated zeroed page
-            // => allocate a new exclusive page and set it be the mapping
+        if (page_state == .init) {
+            // already usable
+            return .{ .reused = .{
+                .page = current_page,
+                .size = self.chunk_size,
+                .can_write = page_state != .readonly_zero,
+            } };
+        }
 
-            // save all old mappings that need to be updated
-            // TODO: use a per-CPU arena allocator
+        if (page_state == .readonly_zero and !is_write) {
+            // already usable - read only
+            return .{ .reused = .{
+                .page = current_page,
+                .size = .@"4KiB",
+                .can_write = false,
+            } };
+        }
 
-            const alloc = pmem.allocChunk(self.chunk_size) orelse return error.OutOfMemory;
+        if (page_state == .uninit and is_write) {
+            // easily usable - write
+            const alloc = pmem.allocChunk(self.chunk_size) orelse
+                return error.OutOfMemory;
+            page.* = alloc.toParts().page;
+            return .{ .reused = .{
+                .page = alloc,
+                .size = self.chunk_size,
+                .can_write = true,
+            } };
+        } else {
+            // easily usable - read
+            page.* = readonly_page.toParts().page;
+            return .{ .reused = .{
+                .page = readonly_page,
+                .size = .@"4KiB",
+                .can_write = false,
+            } };
+        }
+
+        if (page_state == .readonly_zero) {
+            // worst case - remap as write
+            @branchHint(.cold);
+            std.debug.assert(is_write);
+
+            const alloc = pmem.allocChunk(self.chunk_size) orelse
+                return error.OutOfMemory;
             errdefer pmem.deallocChunk(alloc, self.chunk_size);
             const old = try self.collectOldMappingsLocked();
 
-            const new_page = alloc.toParts().page;
-            const old_page = page.*;
-
-            page.* = new_page;
+            page.* = alloc.toParts().page;
             self.is_transient = true;
             const cleanup = self.transientQueueSleep(trap, thread);
 
-            // log.info("remap old=0x{x} new=0x{x}", .{ old_page, new_page });
-
             return .{ .remap = .{
-                .new_page = new_page,
-                .old_page = old_page,
                 .updates = old,
                 .cleanup = cleanup,
             } };
-        } else if (is_uninit and !is_write) {
-            // not mapped and isnt write
-            // => use the shared readonly zero page
-
-            // log.info("reused zeropage=0x{x}", .{caps.readonly_zero_page.load(.monotonic)});
-            return .{ .reused = caps.readonly_zero_page.load(.monotonic) };
-        } else {
-            std.debug.assert(!is_uninit);
-
-            // already mapped AND write to a page that isnt readonly_zero_page or read from any page
-            // => use the existing page
-            // log.info("reused old=0x{x}", .{page.*});
-            return .{ .reused = page.* };
         }
     }
 

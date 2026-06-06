@@ -41,6 +41,10 @@ pub const Phys = struct {
     pub fn sub(self: Self, offset: usize) Self {
         return .{ .raw = self.raw - offset };
     }
+
+    pub fn isNull(self: Self) bool {
+        return self.raw == 0;
+    }
 };
 
 pub const Virt = struct {
@@ -102,5 +106,9 @@ pub const Virt = struct {
         const result = self.raw - offset;
         std.debug.assert(result < 0x8000_0000_0000 or 0xFFFF_8000_0000_0000 <= result);
         return .{ .raw = result };
+    }
+
+    pub fn isNull(self: Self) bool {
+        return self.raw == 0;
     }
 };

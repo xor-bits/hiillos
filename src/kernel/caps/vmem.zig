@@ -694,22 +694,22 @@ pub const Vmem = struct {
 
         // read, exec => was mapped but only now accessed using a read/exec
         // write      => was mapped but only now accessed using a write
-        var paddr = try mapping.frame.pageFault(
+        var physical_target = try mapping.frame.pageFault(
             chunk_idx,
             caused_by == .write,
             self,
             trap,
             thread,
         );
-        if (paddr.toParts().page != caps.readonly_zero_page.load(.monotonic)) {
-            paddr.raw += chunk_offs;
+        if (physical_target.size == mapping.frame.chunk_size) {
+            physical_target.page.raw += chunk_offs;
         }
 
         if (conf.LOG_PAGE_FAULTS)
             log.debug("vaddr=0x{x} cause={s} paddr=0x{x} prev={}", .{
                 vaddr.raw,
                 @tagName(caused_by),
-                paddr.raw,
+                physical_target.page.raw,
                 entry,
             });
 
@@ -721,11 +721,11 @@ pub const Vmem = struct {
             mapping.target.flags
         else
             mapping.target.flags.intersection(abi.sys.MapFlags.urx);
-        if (conf.LOG_PAGE_FAULTS and paddr.toParts().page == entry.page_index)
+        if (conf.LOG_PAGE_FAULTS and physical_target.page.toParts().page == entry.page_index)
             log.debug("remapping with more rights: {}", .{flags});
 
         // TODO: map with huge or giant pages when possible
-        try self.hal_vmem.mapFrame(paddr, vaddr, flags);
+        try self.hal_vmem.mapFrame(physical_target.page, vaddr, flags);
         arch.x86_64.flushTlbAddr(vaddr.raw);
     }
 
