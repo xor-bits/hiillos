@@ -193,8 +193,9 @@ fn bitmapLeftBuddy(idx: BitmapIndex) BitmapIndex {
 }
 
 fn bitmapAddrOfIndex(idx: BitmapIndex, size: abi.ChunkSize) addr.Phys {
-    return addr.Phys.fromInt((@as(u64, idx.bucket_id) * 64 + @as(u64, idx.bit_id)) *
-        size.sizeBytes());
+    const bucket_id: usize = idx.bucket_id;
+    const bit_id: usize = idx.bit_id;
+    return .{ .raw = (bucket_id * 64 + bit_id) * size.sizeBytes() };
 }
 
 fn bitmapSet(bitmap: []u64, idx: BitmapIndex) void {
@@ -259,7 +260,7 @@ fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
     const buddy_chunk = parent_chunk;
     const buddy_idx = bitmapIndex(buddy_chunk, size);
     const buddy_meta = buddy_chunk.toHhdm().toPtr(*ChunkMetadata);
-    const this_chunk = addr.Phys.fromInt(parent_chunk.raw + size.sizeBytes());
+    const this_chunk = parent_chunk.add(size.sizeBytes());
 
     bitmapSet(minimum_level.bitmap, buddy_idx);
     freelistPush(&minimum_level.freelist, &buddy_meta.freelist_node);
@@ -268,7 +269,7 @@ fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
 }
 
 pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
-    std.debug.assert(ptr.toParts().page != 0);
+    std.debug.assert(ptr.parts.page != 0);
 
     pmem_lock.lock();
     defer pmem_lock.unlock();
@@ -408,32 +409,32 @@ fn freeMemoryRange(
     base: usize,
     len: usize,
 ) void {
-    var aligned_base = std.mem.alignForward(usize, base, 0x1000);
-    const aligned_end = std.mem.alignBackward(usize, base + len, 0x1000);
-    var aligned_len = aligned_end - aligned_base;
+    var aligned_base = (addr.Phys{ .raw = base }).alignForward(0x1000);
+    const aligned_end = (addr.Phys{ .raw = base + len }).alignBackward(0x1000);
+    var aligned_len = aligned_base.distance(aligned_end);
 
     // log.debug("base:  0x{x}  len: 0x{x}", .{ base, len });
     // log.debug("abase: 0x{x} alen: 0x{x}", .{ aligned_base, aligned_len });
 
     usable_pages += @truncate(aligned_len >> 12);
 
-    while (abi.ChunkSize.maxFit(aligned_base, aligned_len)) |max_fit| {
+    while (abi.ChunkSize.maxFit(aligned_base.raw, aligned_len)) |max_fit| {
         std.debug.assert(aligned_len >= max_fit.sizeBytes());
-        std.debug.assert(std.mem.isAligned(aligned_base, max_fit.alignOf()));
+        std.debug.assert(aligned_base.isAligned(max_fit.alignOf()));
 
         // log.debug("free {t}", .{max_fit});
 
         const max_fit_size = max_fit.sizeBytes();
-        deallocChunkInner(
-            .allow_double_frees,
-            addr.Phys.fromInt(aligned_base),
-            max_fit,
-        );
+        deallocChunkInner(.allow_double_frees, aligned_base, max_fit);
 
-        aligned_base += max_fit_size;
+        aligned_base = aligned_base.add(max_fit_size);
         aligned_len -= max_fit_size;
 
         if (aligned_len == 0) break;
+        log.debug("continue 0x{x} 0x{x}", .{
+            aligned_base.raw,
+            aligned_len,
+        });
     }
 }
 
@@ -452,7 +453,7 @@ fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) 
 
         // log.debug("init alloc 0x{x} B from 0x{x}", .{ size, base });
 
-        return addr.Phys.fromInt(base).toHhdm().toPtr([*]u8);
+        return @ptrFromInt(addr.physAddrToVirt(base));
     }
 
     return null;
@@ -461,16 +462,14 @@ fn initAlloc(entries: []*boot.LimineMemmapEntry, size: usize, alignment: usize) 
 //
 
 pub fn alloc(size: usize) ?addr.Phys {
-    if (size == 0)
-        return addr.Phys.fromInt(0);
+    if (size == 0) return .{ .raw = 0 };
 
     const _size = abi.ChunkSize.maxAlignSize(size) orelse return null;
     return allocChunk(_size);
 }
 
 pub fn free(chunk: addr.Phys, size: usize) void {
-    if (size == 0)
-        return;
+    if (size == 0) return;
 
     const _size = abi.ChunkSize.maxAlignSize(size) orelse {
         log.err("trying to free a chunk that could not have been allocated", .{});

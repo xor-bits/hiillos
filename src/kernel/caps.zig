@@ -51,7 +51,7 @@ pub fn init() !void {
     // initialize the dedupe lazyinit readonly zero page
     const page = pmem.allocChunk(.@"4KiB") orelse return error.OutOfMemory;
     std.crypto.secureZero(u64, page.toHhdm().toPtr([*]volatile u64)[0..512]);
-    readonly_zero_page.store(page.toParts().page, .release);
+    readonly_zero_page.store(page.parts.page, .release);
 
     inline for ([_]type{
         CapabilitySlot,     Capability, Generic,         Process,
@@ -252,37 +252,40 @@ test "new VmemObject and FrameObject" {
 
     const vmem = try Vmem.init();
     const frame = try Frame.init(0x8000);
-    _ = try vmem.map(frame.clone(), 1, addr.Virt.fromInt(0x1000), 6, .{
-        .readable = true,
-        .writable = true,
-        .executable = true,
-    }, .{});
+    _ = try vmem.map(
+        frame.clone(),
+        1,
+        .{ .raw = 0x1000 },
+        6,
+        .{ .readable = true, .writable = true, .executable = true },
+        .{},
+    );
     try vmem.start();
     vmem.switchTo();
     vmem.pageFault(
         .write,
-        addr.Virt.fromInt(0x1000),
+        .{ .raw = 0x1000 },
     ) catch unreachable;
     vmem.pageFault(
         .write,
-        addr.Virt.fromInt(0x4000),
+        .{ .raw = 0x4000 },
     ) catch unreachable;
     var thread: Thread = undefined;
     var trap: arch.TrapRegs = undefined;
     _ = try vmem.unmap(
         &trap,
         &thread,
-        addr.Virt.fromInt(0x2000),
+        .{ .raw = 0x2000 },
         1,
         true,
     );
     std.debug.assert(error.NotMapped == vmem.pageFault(
         .write,
-        addr.Virt.fromInt(0x2000),
+        .{ .raw = 0x2000 },
     ));
     vmem.pageFault(
         .write,
-        addr.Virt.fromInt(0x5000),
+        .{ .raw = 0x5000 },
     ) catch unreachable;
     const a = try frame.pageFault(4, true, null);
     const b = try frame.pageFault(4, false, null);
@@ -301,14 +304,14 @@ test "consecutive maps" {
     _ = try vmem.map(
         frame0.clone(),
         0,
-        addr.Virt.fromInt(0x10000),
+        .{ .raw = 0x10000 },
         0x10,
         .{},
     );
     _ = try vmem.map(
         frame1.clone(),
         0,
-        addr.Virt.fromInt(0x20000),
+        .{ .raw = 0x20000 },
         0x10,
         .{},
     );

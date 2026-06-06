@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const addr = @import("addr.zig");
+
 //
 
 const limine_common_magic: [2]u64 = .{
@@ -281,5 +283,5 @@ pub const LimineRsdpRequest = extern struct {
 
 pub const LimineRsdpResponse = extern struct {
     revision: u64,
-    address: [*]u8,
+    address: addr.Phys,
 };

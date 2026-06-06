@@ -171,7 +171,7 @@ pub const Vmem = struct {
 
         if (pages == 0) return Error.InvalidArgument;
 
-        std.debug.assert(vaddr.toParts().offset == 0);
+        std.debug.assert(vaddr.parts.offset == 0);
         try assert_userspace(vaddr, pages);
 
         {
@@ -332,25 +332,17 @@ pub const Vmem = struct {
         slot_beg: addr.Virt,
         slot_end: addr.Virt,
     ) Error!?addr.Virt {
-        const slot_beg_aligned = std.mem.alignForward(
-            usize,
-            slot_beg.raw,
-            frame.chunk_size.sizeBytes(),
-        );
-        const slot_end_aligned = std.mem.alignBackward(
-            usize,
-            slot_end.raw,
-            frame.chunk_size.sizeBytes(),
-        );
+        const slot_beg_aligned = slot_beg.alignForward(frame.chunk_size.sizeBytes());
+        const slot_end_aligned = slot_end.alignBackward(frame.chunk_size.sizeBytes());
 
         // log.info("trying slot 0x{x}", .{slot.raw});
-        if (slot_end_aligned <= slot_beg_aligned) return null;
-        if (slot_end_aligned - slot_beg_aligned < pages * 0x1000) return null;
+        if (slot_end_aligned.raw <= slot_beg_aligned.raw) return null;
+        if (slot_end_aligned.raw - slot_beg_aligned.raw < pages * 0x1000) return null;
 
         return try self.mapFixed(
             frame,
             frame_first_page,
-            addr.Virt.fromInt(slot_beg_aligned),
+            slot_beg_aligned,
             pages,
             flags,
         );
@@ -358,13 +350,13 @@ pub const Vmem = struct {
 
     /// previous mapping, or a fake mapping that represents the address space boundry
     fn prevBoundry(mappings: []*caps.Mapping, idx: usize) addr.Virt {
-        if (idx == 0) return addr.Virt.fromInt(0x1000);
+        if (idx == 0) return .{ .raw = 0x1000 };
         return mappings[idx - 1].end();
     }
 
     /// next mapping, or a fake mapping that represents the address space boundry
     fn nextBoundry(mappings: []*caps.Mapping, idx: usize) addr.Virt {
-        if (idx + 1 == mappings.len) return addr.Virt.fromInt(0x8000_0000_0000);
+        if (idx + 1 == mappings.len) return .{ .raw = 0x8000_0000_0000 };
         return mappings[idx + 1].start();
     }
 
@@ -381,7 +373,7 @@ pub const Vmem = struct {
         defer std.debug.assert(self.check());
 
         const gpa = caps.slab_allocator.allocator();
-        const vaddr: addr.Virt = .fromInt(std.mem.alignBackward(usize, unaligned_vaddr.raw, 0x1000));
+        const vaddr = unaligned_vaddr.alignBackward(0x1000);
 
         if (conf.LOG_OBJ_CALLS)
             log.info("Vmem.unmap vaddr=0x{x} pages={}", .{ vaddr.raw, pages });
@@ -390,7 +382,7 @@ pub const Vmem = struct {
 
         if (pages == 0)
             return;
-        std.debug.assert(vaddr.toParts().offset == 0);
+        std.debug.assert(vaddr.parts.offset == 0);
         try @This().assert_userspace(vaddr, pages);
 
         // locking order: Vmem -> Frame
@@ -408,44 +400,45 @@ pub const Vmem = struct {
 
             // cut the mapping into 0, 1 or 2 mappings
 
-            const a_beg: usize = mapping.getVaddr().raw;
-            const a_end: usize = mapping.getVaddr().raw + @as(usize, mapping.pages) * 0x1000;
-            const b_beg: usize = vaddr.raw;
-            const b_end: usize = vaddr.raw + pages * 0x1000;
+            const a_beg = mapping.getVaddr();
+            const a_end = mapping.getVaddr().add(@as(usize, mapping.pages) * 0x1000);
+            const b_beg = vaddr;
+            const b_end = vaddr.add(@as(usize, pages) * 0x1000);
 
-            if (a_end <= b_beg or b_end <= a_beg) {
+            if (a_end.raw <= b_beg.raw or b_end.raw <= a_beg.raw) {
                 // case 0: no overlaps
 
                 // log.debug("unmap case 0", .{});
                 break;
-            } else if (b_beg <= a_beg and b_end <= a_end) {
+            } else if (b_beg.raw <= a_beg.raw and b_end.raw <= a_end.raw) {
                 // case 1:
                 // b: |---------|
                 // a:      |=====-----|
 
                 // log.debug("unmap case 1", .{});
-                const shift: u32 = @intCast((b_end - a_beg) / 0x1000);
-                mapping.setVaddr(addr.Virt.fromInt(b_end));
+
+                const shift: u32 = a_beg.distancePages(b_end);
+                mapping.setVaddr(b_end);
                 mapping.pages -= shift;
                 mapping.frame_first_page += shift;
-            } else if (a_beg >= b_beg and a_end <= a_end) {
+            } else if (a_beg.raw >= b_beg.raw and a_end.raw <= a_end.raw) {
                 // case 2:
                 // b: |---------------------|
                 // a:      |==========|
 
                 // log.debug("unmap case 2", .{});
                 mapping.pages = 0;
-            } else if (b_beg >= a_beg and b_end >= a_end) {
+            } else if (b_beg.raw >= a_beg.raw and b_end.raw >= a_end.raw) {
                 // case 3:
                 // b:            |---------|
                 // a:      |-----=====|
 
                 // log.debug("unmap case 3", .{});
-                const trunc: u32 = @intCast((a_end - b_beg) / 0x1000);
+                const trunc: u32 = b_beg.distancePages(a_end);
                 mapping.pages -= trunc;
             } else {
-                std.debug.assert(a_beg < b_beg);
-                std.debug.assert(a_end > b_end);
+                std.debug.assert(a_beg.raw < b_beg.raw);
+                std.debug.assert(a_end.raw > b_end.raw);
                 // case 4:
                 // b:      |----------|
                 // a: |----============-----|
@@ -457,11 +450,11 @@ pub const Vmem = struct {
 
                 const cloned = try mapping.clone();
 
-                const trunc: u32 = @intCast((a_end - b_beg) / 0x1000);
+                const trunc: u32 = b_beg.distancePages(a_end);
                 mapping.pages -= trunc;
 
-                const shift: u32 = @intCast((b_end - a_beg) / 0x1000);
-                cloned.setVaddr(addr.Virt.fromInt(b_end));
+                const shift: u32 = a_beg.distancePages(b_end);
+                cloned.setVaddr(b_end);
                 cloned.pages -= shift;
                 cloned.frame_first_page += shift;
 
@@ -472,7 +465,6 @@ pub const Vmem = struct {
 
                 std.debug.assert(cloned.pages != 0);
                 std.debug.assert(mapping.pages != 0);
-
                 break;
             }
 
@@ -489,7 +481,7 @@ pub const Vmem = struct {
 
         for (0..pages) |page_idx| {
             // already checked to be in bounds
-            const page_vaddr = addr.Virt.fromInt(vaddr.raw + page_idx * 0x1000);
+            const page_vaddr = vaddr.add(page_idx * 0x1000);
             self.hal_vmem.unmapFrame(page_vaddr) catch |err| {
                 log.warn("unmap err: {}, should be ok", .{err});
             };
@@ -558,7 +550,7 @@ pub const Vmem = struct {
             if (page_idx_end <= mapping.frame_first_page) continue;
             if (mapping.frame_first_page + mapping.pages <= page_idx_beg) continue;
 
-            const vaddr = addr.Virt.fromInt(mapping.getVaddr().raw + page_idx_beg * 0x1000);
+            const vaddr = mapping.getVaddr().add(page_idx_beg * 0x1000);
             try refreshPageAndTlbShootdown(
                 frame,
                 &self.hal_vmem,
@@ -623,11 +615,7 @@ pub const Vmem = struct {
         if (conf.LOG_PAGE_FAULTS)
             log.info("pf @0x{x}", .{vaddr_unaligned.raw});
 
-        const vaddr: addr.Virt = addr.Virt.fromInt(std.mem.alignBackward(
-            usize,
-            vaddr_unaligned.raw,
-            0x1000,
-        ));
+        const vaddr = vaddr_unaligned.alignBackward(0x1000);
 
         // locking order: Vmem -> Frame
         self.lock.lock();
@@ -721,7 +709,7 @@ pub const Vmem = struct {
             mapping.target.flags
         else
             mapping.target.flags.intersection(abi.sys.MapFlags.urx);
-        if (conf.LOG_PAGE_FAULTS and physical_target.page.toParts().page == entry.page_index)
+        if (conf.LOG_PAGE_FAULTS and physical_target.page.parts.page == entry.page_index)
             log.debug("remapping with more rights: {}", .{flags});
 
         // TODO: map with huge or giant pages when possible

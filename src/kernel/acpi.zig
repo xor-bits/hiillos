@@ -25,9 +25,9 @@ pub fn init() !void {
     };
 
     const rsdp: *const Rsdp = if (rsdp_resp.revision >= 3)
-        addr.Phys.fromInt(@intFromPtr(rsdp_resp.address)).toHhdm().toPtr(*const Rsdp)
+        @ptrFromInt(rsdp_resp.address.toHhdm().raw)
     else
-        @ptrCast(rsdp_resp.address);
+        @ptrFromInt(rsdp_resp.address.raw);
     // log.debug("RSDP={*}", .{rsdp});
     if (!isChecksumValid(Rsdp, rsdp)) {
         return error.InvalidRsdpChecksum;
@@ -51,9 +51,7 @@ pub fn bootInfoInstallMcfg(boot_info: *caps.Frame, thread: *caps.Thread) !void {
 
     var it = @as(*const Mcfg, @ptrCast(mcfg_table)).iterator();
     if (it.next()) |entry| {
-        const mcfg_paddr = addr.Phys.fromInt(entry.base_addr);
-
-        const mcfg_obj = try caps.Frame.initPhysical(mcfg_paddr, 0x10000000);
+        const mcfg_obj = try caps.Frame.initPhysical(entry.base_addr, 0x10000000);
         const mcfg_info_obj = try caps.Frame.init(@sizeOf(abi.FramebufferInfoFrame), .{});
 
         try mcfg_info_obj.initialWrite(0, std.mem.asBytes(&abi.McfgInfoFrame{
@@ -85,8 +83,7 @@ fn acpiv1(rsdp: *const Rsdp) !void {
     if (arch.cpuId() == 0)
         log.info("ACPI v1", .{});
 
-    // FIXME: this is unaligned most of the time, but zig doesnt like that
-    const rsdt: *const Rsdt = addr.Phys.fromInt(rsdp.rsdt_addr).toHhdm().toPtr(*const Rsdt);
+    const rsdt: *const Rsdt = @ptrFromInt(addr.physAddrToVirt(rsdp.rsdt_addr));
     if (arch.cpuId() == 0)
         log.debug("RSDT={*}", .{rsdt});
     if (!isChecksumValid(Rsdt, rsdt)) {
@@ -108,7 +105,7 @@ fn acpiv2(rsdp: *const Rsdp) !void {
         return error.InvalidRsdpChecksum;
     }
 
-    const xsdt: *const Xsdt = addr.Phys.fromInt(xsdp.xsdt_addr).toHhdm().toPtr(*const Xsdt);
+    const xsdt: *const Xsdt = @ptrFromInt(addr.physAddrToVirt(xsdp.xsdt_addr));
     if (arch.cpuId() == 0)
         log.debug("XSDT={*}", .{xsdt});
     if (!isChecksumValid(Xsdt, xsdt)) {
@@ -128,7 +125,7 @@ fn walkTables(comptime T: type, pointers: []align(1) const T) !void {
     if (arch.cpuId() == 0)
         log.info("SDT Headers:", .{});
     for (pointers) |sdt_ptr| {
-        const sdt: *const SdtHeader = addr.Phys.fromInt(sdt_ptr).toHhdm().toPtr(*const SdtHeader);
+        const sdt: *const SdtHeader = @ptrFromInt(addr.physAddrToVirt(sdt_ptr));
         if (!isChecksumValid(SdtHeader, sdt)) {
             log.warn("skipping invalid SDT: {s}", .{sdt.signature});
             continue;
@@ -377,7 +374,7 @@ pub const Mcfg = extern struct {
     };
 
     pub const Entry = extern struct {
-        base_addr: u64 align(1),
+        base_addr: addr.Phys align(1),
         pci_segment_group: u16 align(1),
         start_pci_bus: u8 align(1),
         end_pci_bus: u8 align(1),

@@ -34,7 +34,7 @@ pub const Mapping = struct {
         flags: abi.sys.MapFlags,
         /// virtual address destination of the mapping
         /// `Vmem.mappings` is sorted by this
-        page: u48,
+        page: u36,
     },
 
     pub fn init(
@@ -99,7 +99,9 @@ pub const Mapping = struct {
     }
 
     pub fn getVaddr(self: *const @This()) addr.Virt {
-        return addr.Virt.fromInt(@as(u64, self.target.page) << 12);
+        return .{ .parts = .{ .page = .{
+            .index = self.target.page,
+        } } };
     }
 
     pub fn start(self: *const @This()) addr.Virt {
@@ -107,7 +109,7 @@ pub const Mapping = struct {
     }
 
     pub fn end(self: *const @This()) addr.Virt {
-        return addr.Virt.fromInt(self.getVaddr().raw + self.pages * 0x1000);
+        return self.getVaddr().add(self.pages * 0x1000);
     }
 
     /// this is a `any(self AND other)`

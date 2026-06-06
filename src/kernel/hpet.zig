@@ -21,32 +21,33 @@ pub fn init(hpet: *const Hpet) !void {
 
     log.info("found HPET addr: 0x{x}", .{hpet.address});
 
-    hpet_frame = try caps.Frame.initPhysical(addr.Phys.fromInt(hpet.address), 0x1000);
+    hpet_frame = try caps.Frame.initPhysical(.{ .raw = hpet.address }, 0x1000);
 
-    const regs: *volatile HpetRegs = addr.Phys.fromParts(.{ .page = hpet_frame.?.chunks[0] })
-        .toHhdm().toPtr(*volatile HpetRegs);
+    const regs: *volatile HpetRegs = @ptrFromInt(addr.physPageToVirt(hpet_frame.?.chunks[0]));
 
-    const config = @as(*volatile Config, &regs.config);
+    const config = &regs.config;
+    comptime {
+        std.debug.assert(@typeInfo(@TypeOf(config)).pointer.is_volatile);
+    }
     var tmp = config.*;
     tmp.enable_config = 1;
     config.* = tmp;
 
     hpet_once.complete();
 
-    log.info("HPET speed: 1ms = {d} ticks", .{1_000_000_000_000 / @as(u64, @as(*volatile u32, &regs.caps_and_id.counter_period_femtoseconds).*)});
+    log.info("HPET speed: 1ms = {d} ticks", .{1_000_000_000_000 / @as(u64, regs.caps_and_id.counter_period_femtoseconds)});
 }
 
 // TODO: something useful could be done while waiting
 // + only one CPU has to measure the APIC timer speed afaik
 pub fn hpetSpinWait(micros: u32, just_before: anytype) void {
-    const regs: *volatile HpetRegs = addr.Phys.fromParts(.{ .page = hpet_frame.?.chunks[0] })
-        .toHhdm().toPtr(*volatile HpetRegs);
+    const regs: *volatile HpetRegs = @ptrFromInt(addr.physPageToVirt(hpet_frame.?.chunks[0]));
 
-    const ticks = (@as(u64, micros) * 1_000_000_000) / @as(*volatile u32, &regs.caps_and_id.counter_period_femtoseconds).*;
+    const ticks = (@as(u64, micros) * 1_000_000_000) / regs.caps_and_id.counter_period_femtoseconds;
 
     just_before.run();
-    const deadline = @as(*volatile u64, &regs.main_counter_value).* + ticks;
-    while (@as(*volatile u64, &regs.main_counter_value).* <= deadline) {
+    const deadline = regs.main_counter_value +% ticks;
+    while (regs.main_counter_value <= deadline) {
         std.atomic.spinLoopHint();
     }
 }

@@ -112,7 +112,7 @@ fn mapRoot(thread: *caps.Thread, vmem: *caps.Vmem, boot_info: *caps.Frame, a: ar
     _ = try vmem.map(
         root_frame,
         0,
-        addr.Virt.fromInt(abi.ROOT_EXE),
+        .{ .raw = abi.ROOT_EXE },
         @intCast(root_frame.chunks.len),
         .{
             .fixed = true,

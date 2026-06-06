@@ -150,7 +150,7 @@ pub fn init(madt: *const acpi.Madt) !void {
 
                 log.info("found I/O APIC addr: 0x{x}", .{entry.io_apic_addr});
                 try ioapics.append(gpa, .{
-                    .addr = addr.Phys.fromInt(entry.io_apic_addr).toHhdm().toPtr(*IoApicRegs),
+                    .addr = @ptrFromInt(addr.physAddrToVirt(entry.io_apic_addr)),
                     .io_apic_id = entry.io_apic_id,
                     .global_system_interrupt_base = entry.global_system_interrupt_base,
                 });
@@ -177,10 +177,14 @@ pub fn init(madt: *const acpi.Madt) !void {
     const cpu_features = arch.CpuFeatures.read();
     if (cpu_features.x2apic) {
         log.info("x2APIC mode", .{});
-        locals.lapic.regs = .{ .x2apic = @ptrFromInt(arch.x86_64.IA32_X2APIC) };
+        locals.lapic.regs = .{
+            .x2apic = @ptrFromInt(arch.x86_64.IA32_X2APIC),
+        };
     } else if (cpu_features.apic) {
         log.info("legacy xAPIC mode", .{});
-        locals.lapic.regs = .{ .xapic = addr.Phys.fromInt(lapic_addr).toHhdm().toPtr(*LocalXApicRegs) };
+        locals.lapic.regs = .{
+            .xapic = @ptrFromInt(addr.physAddrToVirt(lapic_addr)),
+        };
     } else {
         log.err("CPU doesn't support x2APIC nor xAPIC", .{});
         arch.hcf();

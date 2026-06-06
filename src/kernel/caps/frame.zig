@@ -115,8 +115,9 @@ pub const Frame = struct {
         const frame = try Frame.init(aligned_size, .{
             .page_size_hint = chunk_size,
         });
+        const first_page: u32 = @intCast(@divExact(aligned_paddr, 0x1000));
         for (frame.chunks, 0..) |*page, i| {
-            page.* = addr.Phys.fromInt(aligned_paddr + i * chunk_size.sizeBytes()).toParts().page;
+            page.* = first_page + @as(u32, @intCast(i)) * chunk_size.sizePages();
         }
 
         // just a memory barrier, is_physical is not supposed to be atomic
@@ -136,7 +137,7 @@ pub const Frame = struct {
                 if (page == 0) continue;
 
                 pmem.deallocChunk(
-                    addr.Phys.fromParts(.{ .page = page }),
+                    .{ .parts = .{ .page = page } },
                     self.chunk_size,
                 );
             }
@@ -183,7 +184,7 @@ pub const Frame = struct {
 
             const new_page = pmem.allocChunk(self.chunk_size) orelse
                 return Error.OutOfMemory;
-            page.* = new_page.toParts().page;
+            page.* = new_page.parts.page;
         }
     }
 
@@ -238,9 +239,10 @@ pub const Frame = struct {
                 //     if (page == caps.readonly_zero_page.load(.monotonic)) "rozp" else "",
                 // });
 
-                return addr.Phys.fromParts(.{ .page = page })
-                    .toHhdm()
-                    .toPtr([*]volatile u8)[self.offset_within_first orelse 0 .. self.frame.chunk_size.sizeBytes()];
+                const from = self.offset_within_first orelse 0;
+                const to = self.frame.chunk_size.sizeBytes();
+                const ptr: [*]volatile u8 = @ptrFromInt(addr.physPageToVirt(page));
+                return ptr[from..to];
             }
 
             pub fn deinit(self: *@This()) void {
@@ -478,12 +480,12 @@ pub const Frame = struct {
 
         const page = &self.chunks[idx];
 
-        const readonly_page = addr.Phys.fromParts(.{
+        const readonly_page: addr.Phys = .{ .parts = .{
             .page = caps.readonly_zero_page.load(.monotonic),
-        });
-        const current_page = addr.Phys.fromParts(.{
+        } };
+        const current_page: addr.Phys = .{ .parts = .{
             .page = page.*,
-        });
+        } };
 
         const page_state = if (current_page.isNull())
             PageState.uninit
@@ -496,11 +498,11 @@ pub const Frame = struct {
             if (page_state == .uninit) {
                 const alloc = pmem.allocChunk(self.chunk_size) orelse
                     return error.OutOfMemory;
-                page.* = alloc.toParts().page;
+                page.* = alloc.parts.page;
             }
 
             return .{ .reused = .{
-                .page = addr.Phys.fromParts(.{ .page = page.* }),
+                .page = .{ .parts = .{ .page = page.* } },
                 .size = self.chunk_size,
                 .can_write = true,
             } };
@@ -528,7 +530,7 @@ pub const Frame = struct {
             // easily usable - write
             const alloc = pmem.allocChunk(self.chunk_size) orelse
                 return error.OutOfMemory;
-            page.* = alloc.toParts().page;
+            page.* = alloc.parts.page;
             return .{ .reused = .{
                 .page = alloc,
                 .size = self.chunk_size,
@@ -536,7 +538,7 @@ pub const Frame = struct {
             } };
         } else {
             // easily usable - read
-            page.* = readonly_page.toParts().page;
+            page.* = readonly_page.parts.page;
             return .{ .reused = .{
                 .page = readonly_page,
                 .size = .@"4KiB",
@@ -554,7 +556,7 @@ pub const Frame = struct {
             errdefer pmem.deallocChunk(alloc, self.chunk_size);
             const old = try self.collectOldMappingsLocked();
 
-            page.* = alloc.toParts().page;
+            page.* = alloc.parts.page;
             self.is_transient = true;
             const cleanup = self.transientQueueSleep(trap, thread);
 
