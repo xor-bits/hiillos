@@ -129,4 +129,15 @@ pub const Mapping = struct {
     pub fn isEmpty(self: *const @This()) bool {
         return self.pages == 0;
     }
+
+    pub fn chunkSize(self: *const @This()) abi.ChunkSize {
+        const physical_alignment = self.frame.chunk_size;
+        const virtual_alignment = abi.ChunkSize
+            .maxAlignAddr(self.target.page).?;
+        return physical_alignment.min(virtual_alignment);
+    }
+
+    pub fn pageSize(self: *const @This()) abi.ChunkSize {
+        return self.chunkSize().hardwarePageSize();
+    }
 };
