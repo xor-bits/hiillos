@@ -135,8 +135,14 @@ pub fn build(b: *std.Build) !void {
     const rbtree = b.dependency("rbtree", .{}).module("rbtree");
     const root_bin = createRootBin(b, &opts, abi);
     const kernel_elf = try createKernelElf(b, &opts, abi, rbtree);
-    const initfs_tar_zst = try createInitfsTarZst(b, &opts, abi, gui, rbtree);
+    const initfs_virtual_dir = try createInitfsVirtualDir(b, &opts, abi, gui, rbtree);
+    const initfs_tar_zst = try createInitfsTarZst(b, &opts, initfs_virtual_dir);
     const hiillos_img = createImg(b, &opts, kernel_elf, initfs_tar_zst, root_bin);
+
+    const check_step = b.step("check", "ZLS build check");
+    check_step.dependOn(&initfs_virtual_dir.step);
+    kernel_elf.addStepDependencies(check_step);
+    root_bin.addStepDependencies(check_step);
 
     runQemuProfiler(b, &opts, kernel_elf, hiillos_img);
     runQemu(b, &opts, hiillos_img);
@@ -292,13 +298,13 @@ fn createImg(
     return hiillos_img;
 }
 
-fn createInitfsTarZst(
+fn createInitfsVirtualDir(
     b: *std.Build,
     opts: *const Opts,
     abi: *std.Build.Module,
     gui: *std.Build.Module,
     rbtree: *std.Build.Module,
-) !std.Build.LazyPath {
+) !*std.Build.Step.WriteFile {
 
     // create virtual initfs.tar.zst root
     const initfs = b.addNamedWriteFiles("create virtual initfs root");
@@ -306,6 +312,14 @@ fn createInitfsTarZst(
     try createInitfsTarZstProcesses(b, opts, abi, gui, rbtree, initfs);
     try createInitfsTarZstAssets(b, initfs);
 
+    return initfs;
+}
+
+fn createInitfsTarZst(
+    b: *std.Build,
+    opts: *const Opts,
+    initfs_virtual_dir: *std.Build.Step.WriteFile,
+) !std.Build.LazyPath {
     const initfs_tar_zst = b.addSystemCommand(&.{
         "tar",
         "c",
@@ -319,7 +333,7 @@ fn createInitfsTarZst(
     initfs_tar_zst.addArg("-f");
     const initfs_tar_zst_file = initfs_tar_zst.addOutputFileArg("initfs.tar.zst");
     initfs_tar_zst.addArg("-C");
-    initfs_tar_zst.addDirectoryArg(initfs.getDirectory());
+    initfs_tar_zst.addDirectoryArg(initfs_virtual_dir.getDirectory());
     initfs_tar_zst.addArg(".");
 
     const install_initfs_tar_zst = b.addInstallFile(initfs_tar_zst_file, "initfs.tar.zst");
