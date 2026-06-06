@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const root = @import("root");
 
 // pub const relocator = @import("relocator.zig");
-pub const btree = @import("btree.zig");
 pub const caps = @import("caps.zig");
 pub const conf = @import("conf.zig");
 pub const debug = @import("debug.zig");
@@ -688,7 +687,6 @@ pub const Mode = packed struct {
 };
 
 test {
-    _ = btree;
     _ = caps;
     _ = conf;
     _ = epoch;
