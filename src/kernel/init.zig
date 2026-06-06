@@ -41,25 +41,23 @@ pub fn exec(a: args.Args) !void {
     log.info("creating root x86_irq_allocator", .{});
     const x86_irq_allocator = try caps.X86IrqAllocator.init();
 
-    var id: u32 = undefined;
+    std.debug.assert(abi.caps.ROOT_SELF_VMEM.cap ==
+        try init_proc.pushCapabilityDefaultRights(init_vmem));
 
-    id = try init_proc.pushCapability(.init(init_vmem, null));
-    std.debug.assert(id == abi.caps.ROOT_SELF_VMEM.cap);
+    std.debug.assert(abi.caps.ROOT_SELF_THREAD.cap ==
+        try init_proc.pushCapabilityDefaultRights(init_thread));
 
-    id = try init_proc.pushCapability(.init(init_thread, null));
-    std.debug.assert(id == abi.caps.ROOT_SELF_THREAD.cap);
+    std.debug.assert(abi.caps.ROOT_SELF_PROC.cap ==
+        try init_proc.pushCapabilityDefaultRights(init_proc));
 
-    id = try init_proc.pushCapability(.init(init_proc, null));
-    std.debug.assert(id == abi.caps.ROOT_SELF_PROC.cap);
+    std.debug.assert(abi.caps.ROOT_BOOT_INFO.cap ==
+        try init_proc.pushCapabilityDefaultRights(boot_info));
 
-    id = try init_proc.pushCapability(.init(boot_info, null));
-    std.debug.assert(id == abi.caps.ROOT_BOOT_INFO.cap);
+    std.debug.assert(abi.caps.ROOT_X86_IOPORT_ALLOCATOR.cap ==
+        try init_proc.pushCapabilityDefaultRights(x86_ioport_allocator));
 
-    id = try init_proc.pushCapability(.init(x86_ioport_allocator, null));
-    std.debug.assert(id == abi.caps.ROOT_X86_IOPORT_ALLOCATOR.cap);
-
-    id = try init_proc.pushCapability(.init(x86_irq_allocator, null));
-    std.debug.assert(id == abi.caps.ROOT_X86_IRQ_ALLOCATOR.cap);
+    std.debug.assert(abi.caps.ROOT_X86_IRQ_ALLOCATOR.cap ==
+        try init_proc.pushCapabilityDefaultRights(x86_irq_allocator));
 
     // the handles (init_thread, init_vmem, boot_info) moved, but they are still valid
     try mapRoot(init_thread, init_vmem, boot_info, a);

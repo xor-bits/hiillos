@@ -184,6 +184,9 @@ pub const RefCnt = struct {
 
     pub fn inc(self: *@This()) void {
         // log.info("inc refcnt", .{});
+        if (!std.mem.isAligned(@intFromPtr(self), @alignOf(@This()))) {
+            std.log.err("invalid alignment: 0x{x}", .{@intFromPtr(self)});
+        }
         const old = self.refcnt.fetchAdd(1, .monotonic);
         if (old >= MAX) @panic("too many ref counts");
 

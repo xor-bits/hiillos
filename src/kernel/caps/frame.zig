@@ -35,8 +35,7 @@ const PageState = enum {
 };
 
 pub const Frame = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .frame },
 
     // flag that tells if this frame is being modified while the lock is not held
     // TODO: a small hashmap style functionality, where each bit locks 1/8 of all pages
@@ -57,8 +56,6 @@ pub const Frame = struct {
         size_bytes: usize,
         flags: abi.sys.FrameCreateFlags,
     ) !*@This() {
-        caps.incCount(.frame, .{ .size_bytes = size_bytes });
-
         if (size_bytes == 0)
             return Error.InvalidArgument;
 
@@ -81,6 +78,7 @@ pub const Frame = struct {
             .mappings = .{},
         };
 
+        caps.incCount(.frame, .{ .size_bytes = size_bytes });
         return obj;
     }
 
@@ -125,8 +123,7 @@ pub const Frame = struct {
         return frame;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.frame);
 
         std.debug.assert(self.lock.tryLock());
@@ -150,9 +147,9 @@ pub const Frame = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn forceInitialize(
@@ -608,7 +605,6 @@ pub const Frame = struct {
 
 /// kernel internal object
 pub const TlbShootdown = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
     refcnt: abi.epoch.RefCnt = .{},
 
     completion: Completion,
@@ -633,9 +629,6 @@ pub const TlbShootdown = struct {
         completion: Completion,
         target: Target,
     ) !*@This() {
-        caps.incCount(.tlb_shootdown, .{ .completion = completion, .target = target });
-        errdefer caps.decCount(.tlb_shootdown);
-
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .completion = completion, .target = target };
 
@@ -644,6 +637,7 @@ pub const TlbShootdown = struct {
             .unmap => |_| {},
         }
 
+        caps.incCount(.tlb_shootdown, .{ .completion = completion, .target = target });
         return obj;
     }
 

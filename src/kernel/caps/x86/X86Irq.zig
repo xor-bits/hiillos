@@ -10,8 +10,7 @@ const log = std.log.scoped(.x86irq);
 
 //
 
-// FIXME: prevent reordering so that the offset would be same on all objects
-refcnt: abi.epoch.RefCnt = .{},
+base: caps.Object = .{ .type = .x86_irq },
 
 notify: *caps.Notify,
 
@@ -25,8 +24,6 @@ pub const UserHandle = abi.caps.X86Irq;
 
 // only borrows the X86IrqAllocator
 pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {
-    caps.incCount(.x86_irq, .{ .irq = irq });
-
     try allocIrq(&irq_bitmap, irq);
     errdefer freeIrq(&irq_bitmap, irq) catch unreachable;
 
@@ -39,11 +36,11 @@ pub fn init(_: *X86IrqAllocator, irq: u8) Error!*@This() {
         .notify = notify,
     };
 
+    caps.incCount(.x86_irq, .{ .irq = irq });
     return obj;
 }
 
-pub fn deinit(self: *@This()) void {
-    if (!self.refcnt.dec()) return;
+pub fn deinitFull(self: *@This()) void {
     caps.decCount(.x86_irq);
 
     self.notify.deinit();
@@ -54,9 +51,9 @@ pub fn deinit(self: *@This()) void {
     caps.slab_allocator.allocator().destroy(self);
 }
 
-pub fn clone(self: *@This()) *@This() {
-    self.refcnt.inc();
-    return self;
+pub fn deinit(self: *@This()) void {
+    if (!self.base.refcnt.dec()) return;
+    self.deinitFull();
 }
 
 pub fn subscribe(self: *@This()) Error!*caps.Notify {
@@ -64,7 +61,8 @@ pub fn subscribe(self: *@This()) Error!*caps.Notify {
         log.info("X86Irq.subscribe", .{});
 
     if (self.handler == null) {
-        const result = try apic.registerExternalInterrupt(self.clone());
+        const result = try apic.registerExternalInterrupt(self);
+        self.base.clone();
         self.handler = .{ .vector = result.vector, .locals = result.locals };
 
         log.debug("X86Irq registered vec={} irq={}", .{
@@ -73,36 +71,34 @@ pub fn subscribe(self: *@This()) Error!*caps.Notify {
         });
     }
 
-    return self.notify.clone();
+    self.notify.base.clone();
+    return self.notify;
 }
 
 //
 
 pub const X86IrqAllocator = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .x86_irq_allocator },
 
     pub const UserHandle = abi.caps.X86IrqAllocator;
 
     pub fn init() !*@This() {
-        caps.incCount(.x86_irq_allocator, .{});
-
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
 
+        caps.incCount(.x86_irq_allocator, .{});
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.x86_irq_allocator);
 
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 };
 

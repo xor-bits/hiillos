@@ -19,8 +19,8 @@
           buildInputs = with pkgs; [
             pkg-config
             gnumake
-            zig
-            zls
+            zig_0_15
+            zls_0_15
             qemu_full
           ];
 

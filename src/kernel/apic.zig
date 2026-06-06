@@ -93,7 +93,7 @@ const Handler = struct {
         defer self.lock.unlock();
 
         const irq = self.irq orelse return null;
-        if (irq.refcnt.isUnique()) {
+        if (irq.base.refcnt.isUnique()) {
             @branchHint(.cold);
 
             // this handler is the only one holding the X86Irq cap
@@ -105,7 +105,7 @@ const Handler = struct {
             return null;
         }
 
-        irq.refcnt.inc();
+        irq.base.clone();
         return irq;
     }
 };
@@ -238,7 +238,7 @@ fn enableAny(
     regs.spurious_interrupt_vector.write(APIC_SW_ENABLE | @as(u32, IRQ_SPURIOUS));
 
     // enable timer interrupts
-    const period = measureApicTimerSpeed(locals, regs) * 500;
+    const period = measureApicTimerSpeed(locals, regs) * conf.TIMESLICE_LIMIT_MS;
     regs.divide_configuration.write(APIC_TIMER_DIV);
     regs.lvt_timer.write(IRQ_TIMER | APIC_TIMER_MODE_PERIODIC);
     regs.initial_count.write(period);
@@ -363,7 +363,8 @@ pub fn registerExternalInterrupt(irq: *caps.X86Irq) Error!struct {
 
     const ioapic, const low_index = findUsableRedirectEntry(irq.irq) orelse
         return Error.TooManyIrqs;
-    const lapic_id, const i, const locals = findUsableHandler(irq.clone()) orelse
+    irq.base.clone();
+    const lapic_id, const i, const locals = findUsableHandler(irq) orelse
         return Error.TooManyIrqs;
     const high_index = low_index + 1;
 

@@ -47,6 +47,7 @@ pub const DEBUG_UNHANDLED_FAULT: bool = false;
 /// FIFO vs. FILO physical memory free lists
 pub const CYCLE_PHYSICAL_MEMORY: bool = false;
 pub const SKIP_SMP: bool = false;
+pub const TIMESLICE_LIMIT_MS = 5; // 200Hz
 
 pub const IPC_BENCHMARK: bool = false;
 pub const IPC_BENCHMARK_PERFMON: bool = false;

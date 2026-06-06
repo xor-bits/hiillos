@@ -17,8 +17,7 @@ const Error = abi.sys.Error;
 //
 
 pub const Vmem = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .vmem },
 
     lock: lock.TrackingSpinMutex = .{},
     hal_vmem: caps.HalVmem,
@@ -29,18 +28,17 @@ pub const Vmem = struct {
     pub const UserHandle = abi.caps.Vmem;
 
     pub fn init() Error!*@This() {
-        caps.incCount(.vmem, .{});
-
         const hal_vmem: caps.HalVmem = try .init();
         errdefer hal_vmem.deinit();
 
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .hal_vmem = hal_vmem };
+
+        caps.incCount(.vmem, .{});
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.vmem);
 
         std.debug.assert(self.lock.tryLock());
@@ -54,9 +52,9 @@ pub const Vmem = struct {
         alloc.destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn DataIterator(comptime is_write: bool) type {
@@ -135,7 +133,8 @@ pub const Vmem = struct {
         // keep the previous vmem alive until after the switch, and then delete the reference
         // also clone the new vmem into local storage to keep it always alive
         const previous_vmem = current_vmem_ptr.*;
-        current_vmem_ptr.* = self.clone();
+        current_vmem_ptr.* = self;
+        self.base.clone();
         defer if (previous_vmem) |prev| prev.deinit();
 
         self.hal_vmem.switchTo();
@@ -149,7 +148,6 @@ pub const Vmem = struct {
         pages: u32,
         flags: abi.sys.MapFlags,
     ) Error!addr.Virt {
-        errdefer frame.deinit();
         std.debug.assert(self.check());
         defer std.debug.assert(self.check());
 
@@ -174,18 +172,14 @@ pub const Vmem = struct {
         std.debug.assert(vaddr.parts.offset == 0);
         try assert_userspace(vaddr, pages);
 
-        {
-            frame.lock.lock();
-            defer frame.lock.unlock();
-            if (pages + frame_first_page > frame.chunks.len * frame.chunk_size.sizePages())
-                return Error.OutOfBounds;
-        }
-
         // locking order: Vmem -> Frame
         self.lock.lock();
         defer self.lock.unlock();
         frame.lock.lock();
         defer frame.lock.unlock();
+
+        if (pages + frame_first_page > frame.chunks.len * frame.chunk_size.sizePages())
+            return Error.OutOfBounds;
 
         const mapped_vaddr: addr.Virt = if (flags.fixed) b: {
             break :b try self.mapFixed(
@@ -225,7 +219,7 @@ pub const Vmem = struct {
         const gpa = caps.slab_allocator.allocator();
 
         const mapping = try caps.Mapping.init(
-            frame.clone(),
+            frame,
             self,
             frame_first_page,
             fixed_vaddr,
@@ -582,8 +576,9 @@ pub const Vmem = struct {
 
         // log.debug("found a stale TLB entry", .{});
 
+        frame.base.clone();
         const shootdown = try caps.TlbShootdown.init(
-            .{ .transient = frame.clone() },
+            .{ .transient = frame },
             .{ .range = .{
                 .start = vaddr,
                 .n_4kib_pages = page_size / 0x1000,
@@ -735,21 +730,26 @@ pub const Vmem = struct {
 
         var ok = true;
 
-        var prev: usize = 0;
-        if (print) log.debug("checking vmem", .{});
-        for (self.mappings.items) |mapping| {
-            // make sure mappings are ordered
-            if (mapping.getVaddr().raw < prev) ok = false;
-            prev = mapping.getVaddr().raw + mapping.pages * 0x1000;
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
 
-            // make sure mappings are non-zero length
-            if (mapping.pages == 0) ok = false;
+            var prev: usize = 0;
+            if (print) log.debug("checking vmem", .{});
+            for (self.mappings.items) |mapping| {
+                // make sure mappings are ordered
+                if (mapping.getVaddr().raw < prev) ok = false;
+                prev = mapping.getVaddr().raw + mapping.pages * 0x1000;
 
-            if (print) log.debug("[ 0x{x:0>16} .. 0x{x:0>16} ] {s}", .{
-                mapping.getVaddr().raw,
-                mapping.getVaddr().raw + mapping.pages * 0x1000,
-                if (ok) "ok" else "err",
-            });
+                // make sure mappings are non-zero length
+                if (mapping.pages == 0) ok = false;
+
+                if (print) log.debug("[ 0x{x:0>16} .. 0x{x:0>16} ] {s}", .{
+                    mapping.getVaddr().raw,
+                    mapping.getVaddr().raw + mapping.pages * 0x1000,
+                    if (ok) "ok" else "err",
+                });
+            }
         }
 
         if (!print and !ok)

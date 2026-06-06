@@ -54,10 +54,13 @@ pub fn init() !void {
     readonly_zero_page.store(page.parts.page, .release);
 
     inline for ([_]type{
-        CapabilitySlot,     Capability, Generic,         Process,
-        Thread,             Frame,      Vmem,            Mapping,
-        Receiver,           Reply,      Sender,          Notify,
-        X86IoPortAllocator, X86IoPort,  X86IrqAllocator, X86Irq,
+        CapabilitySlot,     Process,
+        Thread,             Frame,
+        Vmem,               Mapping,
+        Receiver,           Reply,
+        Sender,             Notify,
+        X86IoPortAllocator, X86IoPort,
+        X86IrqAllocator,    X86Irq,
     }) |T| {
         debugType(T);
     }
@@ -76,7 +79,8 @@ pub fn decCount(ty: abi.ObjectType) void {
     if (conf.LOG_OBJ_CALLS)
         log.info("{t}.deinit", .{ty});
     if (!conf.LOG_OBJ_STATS) return;
-    _ = obj_counts.getPtr(ty).fetchSub(1, .monotonic);
+    const old_count = obj_counts.getPtr(ty).fetchSub(1, .monotonic);
+    std.debug.assert(old_count != 0);
 }
 
 pub fn printCounts() void {
@@ -92,90 +96,21 @@ var obj_counts: std.EnumArray(abi.ObjectType, std.atomic.Value(usize)) = .initFi
 
 //
 
-pub const CapabilitySlot = packed struct {
-    ptr: u56 = 0,
-    type: abi.ObjectType = .null,
-    rights: abi.sys.Rights = .{},
+pub const Object = struct {
+    refcnt: abi.epoch.RefCnt = .{},
+    type: abi.ObjectType,
 
-    pub fn init(cap: Capability) @This() {
-        var self = @This(){};
-        self.set(cap);
-        return self;
+    pub fn clone(
+        self: *Object,
+    ) void {
+        self.refcnt.inc();
     }
 
-    pub fn initFree(next_free: u32) @This() {
-        return @This(){ .ptr = next_free };
-    }
+    pub fn deinit(
+        self: *Object,
+    ) void {
+        if (!self.refcnt.dec()) return;
 
-    pub fn deinit(self: @This()) void {
-        if (self.getBorrow()) |cap| {
-            cap.deinit();
-        }
-    }
-
-    /// returns the next free list entry
-    pub fn nextFree(self: *const @This()) u32 {
-        std.debug.assert(self.type == .null);
-        return @intCast(self.ptr);
-    }
-
-    /// returns a Capability THAT IS NOT REF COUNTED
-    pub fn getBorrow(self: *const @This()) ?Capability {
-        if (self.type == .null) return null;
-
-        return Capability{
-            .ptr = @ptrFromInt(@as(u64, self.ptr) | 0xFF00_0000_0000_0000),
-            .type = self.type,
-            .rights = self.rights,
-        };
-    }
-
-    /// returns an owned ref counted Capability
-    pub fn get(self: *const @This()) ?Capability {
-        const cap = self.getBorrow() orelse return null;
-        cap.refcnt().inc();
-        return cap;
-    }
-
-    /// returns an owned ref counted Capability, leaving the slot empty
-    pub fn take(self: *@This()) ?Capability {
-        const cap = self.getBorrow() orelse return null;
-        self.set(.{});
-        return cap;
-    }
-
-    /// takes an owned ref counted Capability
-    pub fn set(self: *@This(), new: Capability) void {
-        std.debug.assert((@intFromPtr(new.ptr) >> 56) == 0xFF);
-        self.ptr = @truncate(@intFromPtr(new.ptr));
-        self.type = new.type;
-        self.rights = new.rights;
-    }
-
-    pub fn unwrap(self: @This()) ?Capability {
-        var s = self;
-        return s.take();
-    }
-};
-
-pub const Capability = struct {
-    ptr: *void = @ptrFromInt(0xFFFF_8000_0000_0000),
-    type: abi.ObjectType = .null,
-    rights: abi.sys.Rights = .{},
-
-    pub fn init(obj: anytype, rights: ?Rights) @This() {
-        const pointer = @typeInfo(@TypeOf(obj)).pointer;
-        comptime std.debug.assert(!pointer.is_const);
-        const UserHandle = pointer.child.UserHandle;
-
-        return .{
-            .ptr = @ptrCast(obj),
-            .type = UserHandle.object_type,
-            .rights = rights orelse UserHandle.default_rights,
-        };
-    }
-
-    pub fn deinit(self: @This()) void {
         switch (self.type) {
             .null,
             .hal_vmem,
@@ -183,7 +118,7 @@ pub const Capability = struct {
             => unreachable,
 
             inline else => |t| {
-                return self.as(t).deinit();
+                self.downcast(typeOf(t)).deinitFull();
             },
         }
     }
@@ -210,32 +145,99 @@ pub const Capability = struct {
         };
     }
 
-    pub fn as(self: @This(), comptime ty: abi.ObjectType) *typeOf(ty) {
-        std.debug.assert(ty == self.type);
-        return @ptrCast(@alignCast(self.ptr));
-    }
-
-    pub fn refcnt(self: @This()) *abi.epoch.RefCnt {
-        switch (self.type) {
-            .null,
-            .hal_vmem,
-            .tlb_shootdown,
-            => unreachable,
-
-            inline else => |t| {
-                // FIXME: prevent reordering so that the offset would be same on all objects
-                if (@offsetOf(typeOf(t), "refcnt") != 0)
-                    log.warn("slow kernel object refcnt access", .{});
-
-                return &self.as(t).refcnt;
-            },
-        }
+    pub fn downcast(
+        self: *@This(),
+        comptime T: type,
+    ) *T {
+        std.debug.assert(T.UserHandle.object_type == self.type);
+        return @alignCast(@fieldParentPtr("base", self));
     }
 };
 
-pub const Generic = struct {
-    refcnt: abi.epoch.RefCnt,
+pub const CapabilitySlot = struct {
+    object: ?*Object,
+    rights: abi.sys.Rights,
+
+    pub fn initUsed(
+        base: *Object,
+        rights: abi.sys.Rights,
+    ) @This() {
+        return .{
+            .object = base,
+            .rights = rights,
+        };
+    }
+
+    pub fn initFree(
+        next_free: u32,
+    ) @This() {
+        return .{
+            .object = null,
+            .rights = .decode(next_free),
+        };
+    }
+
+    pub fn deinit(self: @This()) void {
+        const obj = self.object orelse return;
+        obj.deinit();
+    }
+
+    /// returns the next free list entry
+    pub fn nextFree(self: *const @This()) u32 {
+        std.debug.assert(self.object == null);
+        return @intCast(self.rights.encode());
+    }
 };
+
+// This would have been useful for tracking handle lifetimes
+// without a runtime cost but
+// https://codeberg.org/ziglang/zig/issues/32045 is a thing.
+//
+// pub fn Handle(comptime T: type) type {
+//     return struct {
+//         ptr: *T,
+//         rights: abi.sys.Rights,
+//         comptime state: enum(u32) { owned, borrowed, deinit },
+
+//         pub fn deinit(
+//             self: *@This(),
+//         ) void {
+//             switch (self.state) {
+//                 .owned => {
+//                     if (comptime T == Object) {
+//                         self.ptr.deinit();
+//                     } else {
+//                         self.upcast().deinit();
+//                     }
+//                 },
+//                 .borrowed => {},
+//                 .deinit => unreachable,
+//             }
+//         }
+
+//         pub fn downcast(
+//             self: @This(),
+//             comptime U: type,
+//         ) void {
+//             comptime std.debug.assert(T == Object);
+//             const obj: *Object = self.ptr;
+//             return .{
+//                 .ref = obj.downcast(U),
+//                 .rights = self.rights,
+//                 .state = self.state,
+//             };
+//         }
+
+//         pub fn upcast(self: @This()) Handle(Object) {
+//             comptime std.debug.assert(T != Object);
+//             return .{
+//                 .ptr = &self.base,
+//                 .rights = self.rights,
+//                 .state = self.state,
+//             };
+//         }
+//     };
+// }
 
 pub var slab_allocator = abi.mem.SlabAllocator.init(pmem.page_allocator);
 /// written once by the BSP with .release before any other CPU runs
@@ -244,83 +246,4 @@ pub var readonly_zero_page: std.atomic.Value(u32) = .init(0);
 
 fn debugType(comptime T: type) void {
     std.log.debug("{s}: size={} align={}", .{ @typeName(T), @sizeOf(T), @alignOf(T) });
-}
-
-test "new VmemObject and FrameObject" {
-    // disable temporarily while tests dont support complex control flow
-    if (true) return;
-
-    const vmem = try Vmem.init();
-    const frame = try Frame.init(0x8000);
-    _ = try vmem.map(
-        frame.clone(),
-        1,
-        .{ .raw = 0x1000 },
-        6,
-        .{ .readable = true, .writable = true, .executable = true },
-        .{},
-    );
-    try vmem.start();
-    vmem.switchTo();
-    vmem.pageFault(
-        .write,
-        .{ .raw = 0x1000 },
-    ) catch unreachable;
-    vmem.pageFault(
-        .write,
-        .{ .raw = 0x4000 },
-    ) catch unreachable;
-    var thread: Thread = undefined;
-    var trap: arch.TrapRegs = undefined;
-    _ = try vmem.unmap(
-        &trap,
-        &thread,
-        .{ .raw = 0x2000 },
-        1,
-        true,
-    );
-    std.debug.assert(error.NotMapped == vmem.pageFault(
-        .write,
-        .{ .raw = 0x2000 },
-    ));
-    vmem.pageFault(
-        .write,
-        .{ .raw = 0x5000 },
-    ) catch unreachable;
-    const a = try frame.pageFault(4, true, null);
-    const b = try frame.pageFault(4, false, null);
-    std.debug.assert(a == b);
-    std.debug.assert(a != 0);
-    frame.deinit();
-    vmem.deinit();
-}
-
-test "consecutive maps" {
-    const vmem = try Vmem.init();
-
-    const frame0 = try Frame.init(0x10000, .{});
-    const frame1 = try Frame.init(0x10000, .{});
-
-    _ = try vmem.map(
-        frame0.clone(),
-        0,
-        .{ .raw = 0x10000 },
-        0x10,
-        .{},
-    );
-    _ = try vmem.map(
-        frame1.clone(),
-        0,
-        .{ .raw = 0x20000 },
-        0x10,
-        .{},
-    );
-
-    try std.testing.expect(vmem.mappings.items[0].frame == frame0);
-    try std.testing.expect(vmem.mappings.items[1].frame == frame1);
-
-    frame0.deinit();
-    frame1.deinit();
-
-    vmem.deinit();
 }

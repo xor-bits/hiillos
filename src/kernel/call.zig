@@ -139,7 +139,7 @@ fn handle_syscall(
             const frame = try caps.Frame.init(size_bytes, flags);
             errdefer frame.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(frame, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(frame);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .frame_get_size => {
@@ -253,14 +253,16 @@ fn handle_syscall(
             const vmem = try caps.Vmem.init();
             errdefer vmem.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(vmem, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(vmem);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .vmem_self => {
-            const vmem_self = thread.proc.vmem.clone();
-            errdefer vmem_self.deinit();
+            const vmem_self = thread.proc.vmem;
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(vmem_self, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(vmem_self);
+            // clone it late, because it is currently owned anyways
+            // this avoids the deinit path completely
+            vmem_self.base.clone();
             trap.syscall_id = abi.sys.encode(handle);
         },
         .vmem_map => {
@@ -284,7 +286,7 @@ fn handle_syscall(
                 .frame,
                 .{ .min_rights = rights },
             );
-            defer frame.deinit();
+            errdefer frame.deinit();
 
             // map takes ownership of the frame
             const pages: u32 = if (trap.arg4 == 0)
@@ -293,7 +295,7 @@ fn handle_syscall(
                 @truncate(std.math.divCeil(usize, trap.arg4, 0x1000) catch unreachable);
 
             const mapped_vaddr = try vmem.map(
-                frame.clone(),
+                frame,
                 frame_first_page,
                 vaddr,
                 pages,
@@ -441,17 +443,22 @@ fn handle_syscall(
                 .vmem,
                 .{},
             );
+            comptime var from_vmem_owned = true;
+            defer if (from_vmem_owned) from_vmem.deinit();
+
             const new_proc = try caps.Process.init(from_vmem);
+            from_vmem_owned = false;
             errdefer new_proc.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(new_proc, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(new_proc);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .proc_self => {
-            const proc_self = thread.proc.clone();
-            errdefer proc_self.deinit();
+            const proc_self = thread.proc;
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(proc_self, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(proc_self);
+            proc_self.base.clone();
+            proc_self.deinit();
             trap.syscall_id = abi.sys.encode(handle);
         },
         .proc_give_cap => {
@@ -462,14 +469,10 @@ fn handle_syscall(
             );
             defer target_proc.deinit();
 
-            const handle = try target_proc.pushCapability(.{});
-            const cap = try thread.proc.takeCapability(
+            const handle = try thread.proc.transferCapability(
+                target_proc,
                 @truncate(trap.arg1),
-                .{ .min_rights = .{ .transfer = true } },
             );
-            const null_cap = target_proc.replaceCapability(handle, cap) catch unreachable;
-            std.debug.assert(null_cap == null);
-
             trap.syscall_id = abi.sys.encode(handle);
         },
         .proc_wait => {
@@ -494,17 +497,23 @@ fn handle_syscall(
                 .process,
                 .{},
             );
-            const new_thread = try caps.Thread.init(from_proc);
-            errdefer new_thread.deinit();
+            comptime var from_proc_owned = true;
+            defer if (from_proc_owned) from_proc.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(new_thread, null));
+            const new_thread = try caps.Thread.init(from_proc);
+            comptime var new_thread_owned = true;
+            from_proc_owned = false;
+            errdefer if (new_thread_owned) new_thread.deinit();
+
+            const handle = try thread.proc.pushCapabilityDefaultRights(new_thread);
+            new_thread_owned = false;
             trap.syscall_id = abi.sys.encode(handle);
         },
         .thread_self => {
-            const thread_self = thread.clone();
-            errdefer thread_self.deinit();
+            const thread_self = thread;
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(thread_self, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(thread_self);
+            thread_self.base.clone();
             trap.syscall_id = abi.sys.encode(handle);
         },
         .thread_read_regs => {
@@ -621,14 +630,20 @@ fn handle_syscall(
 
         .channel_create => {
             const rx, const tx = try caps.Channel.init();
-            errdefer rx.deinit();
-            errdefer tx.deinit();
+            errdefer {
+                rx.deinit();
+                tx.deinit();
+            }
+            var handles: [2]u32 = undefined;
 
-            const rx_handle = try thread.proc.pushCapability(caps.Capability.init(rx, null));
-            const tx_handle = try thread.proc.pushCapability(caps.Capability.init(tx, null));
+            try thread.proc.pushCapabilitiesDefaultRights(
+                2,
+                .{ rx, tx },
+                &handles,
+            );
 
-            trap.arg0 = tx_handle;
-            trap.syscall_id = abi.sys.encode(rx_handle);
+            trap.arg0 = handles[1];
+            trap.syscall_id = abi.sys.encode(handles[0]);
         },
         .receiver_recv => {
             const recv: *caps.Receiver = try thread.proc.getCapabilityAs(
@@ -668,7 +683,7 @@ fn handle_syscall(
             const reply = try caps.Reply.init(thread);
             errdefer reply.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(reply, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(reply);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .reply_reply => {
@@ -697,7 +712,8 @@ fn handle_syscall(
             defer sender.deinit();
 
             const new_send = try sender.restamp(@truncate(trap.arg1));
-            const handle = try thread.proc.pushCapability(caps.Capability.init(new_send, null));
+            errdefer new_send.deinit();
+            const handle = try thread.proc.pushCapabilityDefaultRights(new_send);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .sender_send => {
@@ -728,7 +744,7 @@ fn handle_syscall(
             const notify = try caps.Notify.init();
             errdefer notify.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(notify, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(notify);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .notify_wait => {
@@ -774,7 +790,7 @@ fn handle_syscall(
             const ioport = try caps.X86IoPort.init(allocator, @truncate(trap.arg1));
             errdefer ioport.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(ioport, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(ioport);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .x86_ioport_inb => {
@@ -810,7 +826,7 @@ fn handle_syscall(
             const irq = try caps.X86Irq.init(allocator, @truncate(trap.arg1));
             errdefer irq.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(irq, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(irq);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .x86_irq_subscribe => {
@@ -824,7 +840,7 @@ fn handle_syscall(
             const notify = try irq.subscribe();
             errdefer notify.deinit();
 
-            const handle = try thread.proc.pushCapability(caps.Capability.init(notify, null));
+            const handle = try thread.proc.pushCapabilityDefaultRights(notify);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .x86_irq_ack => {
@@ -841,13 +857,12 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(@intFromEnum(cap.type));
         },
         .handle_rights => {
-            const cap = try thread.proc.getCapability(
+            const rights = try thread.proc.getCapabilityRights(
                 @truncate(trap.arg0),
                 .{},
             );
-            defer cap.deinit();
 
-            trap.arg0 = cap.rights.encode();
+            trap.arg0 = rights.encode();
             trap.syscall_id = abi.sys.encode(0);
         },
         .handle_restrict => {
@@ -857,42 +872,30 @@ fn handle_syscall(
             trap.syscall_id = abi.sys.encode(0);
         },
         .handle_duplicate => {
-            const cap = try thread.proc.getCapability(
+            const handle = try thread.proc.cloneCapability(
                 @truncate(trap.arg0),
-                .{},
             );
-            errdefer cap.deinit();
-
-            if (!cap.rights.clone)
-                return Error.PermissionDenied;
-
-            const handle = try thread.proc.pushCapability(cap);
             trap.syscall_id = abi.sys.encode(handle);
         },
         .handle_close => {
+            thread.proc.closeCapability(@truncate(trap.arg0));
             trap.syscall_id = abi.sys.encode(0);
-
-            const cap = thread.proc.takeCapability(
-                @truncate(trap.arg0),
-                .{},
-            ) catch return;
-            cap.deinit();
         },
         .handle_dbg_filter => {
             if (!conf.IS_DEBUG) return Error.InvalidSyscall;
 
-            const cap = try thread.proc.getCapability(
+            const obj = try thread.proc.getCapability(
                 @truncate(trap.arg0),
                 .{},
             );
-            defer cap.deinit();
+            defer obj.deinit();
 
-            switch (cap.type) {
+            switch (obj.type) {
                 inline .thread => |as| {
-                    const obj = cap.as(as);
-                    obj.lock.lock();
-                    obj.dbg_filter = trap.arg1 != 0;
-                    obj.lock.unlock();
+                    const cast_obj = obj.downcast(caps.Object.typeOf(as));
+                    cast_obj.lock.lock();
+                    cast_obj.dbg_filter = trap.arg1 != 0;
+                    cast_obj.lock.unlock();
                 },
                 else => {},
             }
@@ -914,19 +917,26 @@ fn handle_syscall(
             const is_cap: bool = trap.arg2 != 0;
 
             if (is_cap) {
-                const cap = try thread.proc.takeCapability(
+                const object, const rights = try thread.proc.takeCapability(
                     @truncate(val),
                     .{ .min_rights = .{ .transfer = true } },
                 );
 
                 thread.setExtraLockedExec(
                     idx,
-                    .{ .cap = caps.CapabilitySlot.init(cap) },
+                    .{
+                        .object = object,
+                        .rights = rights,
+                    },
                 );
             } else {
+                // `rights` store the extra slot u64 value when the object is null
                 thread.setExtraLockedExec(
                     idx,
-                    .{ .val = val },
+                    .{
+                        .object = null,
+                        .rights = .decode(val),
+                    },
                 );
             }
 
@@ -935,19 +945,22 @@ fn handle_syscall(
         .self_get_extra => {
             const idx: u7 = @truncate(trap.arg0);
 
+            const handle = try thread.proc.allocSlot();
             const data = thread.getExtraLockedExec(idx);
-            errdefer thread.setExtraLockedExec(idx, data);
 
-            switch (data) {
-                .cap => |cap| {
-                    const handle = try thread.proc.pushCapability(cap.unwrap().?);
-                    trap.arg0 = handle;
-                    trap.syscall_id = abi.sys.encode(1);
-                },
-                .val => |val| {
-                    trap.arg0 = val;
-                    trap.syscall_id = abi.sys.encode(0);
-                },
+            if (data.object) |object| {
+                thread.proc.insertCapability(
+                    handle,
+                    object,
+                    data.rights,
+                );
+                trap.arg0 = handle;
+                trap.syscall_id = abi.sys.encode(1);
+            } else {
+                thread.proc.freeSlot(handle);
+                // `rights` store the extra slot u64 value when the object is null
+                trap.arg0 = data.rights.encode();
+                trap.syscall_id = abi.sys.encode(0);
             }
         },
         .self_get_signal => {

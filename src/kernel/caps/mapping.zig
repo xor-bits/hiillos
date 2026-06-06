@@ -85,8 +85,7 @@ pub const Mapping = struct {
     pub fn clone(self: *const @This()) !*@This() {
         const mapping = try caps.slab_allocator.allocator().create(@This());
         mapping.* = self.*;
-        mapping.frame.refcnt.inc();
-
+        mapping.frame.base.clone();
         return mapping;
     }
 

@@ -15,12 +15,11 @@ const Error = abi.sys.Error;
 //
 
 pub const Process = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .process },
 
     vmem: *caps.Vmem,
     lock: lock.TrackingSpinMutex = .{},
-    caps: std.ArrayListUnmanaged(caps.CapabilitySlot) = .{},
+    caps: std.ArrayList(caps.CapabilitySlot) = .{},
     free: u32 = 0,
     status: abi.sys.ProcessStatus = .stopped,
     exit_code: usize = 0,
@@ -30,17 +29,14 @@ pub const Process = struct {
     pub const UserHandle = abi.caps.Process;
 
     pub fn init(from_vmem: *caps.Vmem) !*@This() {
-        errdefer from_vmem.deinit();
-
-        caps.incCount(.process, .{ .vmem = from_vmem });
-
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{ .vmem = from_vmem };
+
+        caps.incCount(.process, .{ .vmem = from_vmem });
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.process);
 
         std.debug.assert(self.lock.tryLock());
@@ -55,9 +51,9 @@ pub const Process = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     fn closeAllCaps(
@@ -136,6 +132,14 @@ pub const Process = struct {
         cleanup.run();
     }
 
+    pub fn allocSlot(
+        self: *@This(),
+    ) Error!u32 {
+        self.lock.lock();
+        defer self.lock.unlock();
+        return try self.allocSlotLocked();
+    }
+
     fn allocSlotLocked(
         self: *@This(),
     ) Error!u32 {
@@ -154,11 +158,20 @@ pub const Process = struct {
             if (handle_usize > std.math.maxInt(u32)) return Error.OutOfMemory;
             try self.caps.append(
                 caps.slab_allocator.allocator(),
-                caps.CapabilitySlot{},
+                .initFree(undefined),
             );
 
             return @intCast(handle_usize);
         }
+    }
+
+    pub fn freeSlot(
+        self: *@This(),
+        handle: u32,
+    ) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.freeSlotLocked(handle);
     }
 
     fn freeSlotLocked(
@@ -166,37 +179,101 @@ pub const Process = struct {
         handle: u32,
     ) void {
         std.debug.assert(self.lock.isLockedByMe());
-        self.caps.items[handle - 1] = caps.CapabilitySlot.initFree(self.free);
+        self.caps.items[handle - 1] = .initFree(self.free);
         self.free = handle;
+    }
+
+    pub fn pushCapabilitiesDefaultRights(
+        self: *@This(),
+        comptime n: usize,
+        objects: anytype,
+        handles: *[n]u32,
+    ) Error!void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        comptime var n_objects = 0;
+        inline for (objects) |_| {
+            n_objects += 1;
+        }
+        comptime std.debug.assert(n == n_objects);
+
+        @memset(handles, 0);
+        errdefer for (handles) |handle| {
+            if (handle == 0) continue;
+            self.freeSlotLocked(handle);
+        };
+
+        for (handles) |*handle| {
+            handle.* = try self.allocSlotLocked();
+        }
+
+        inline for (objects, handles) |obj, handle| {
+            const base: *caps.Object = &obj.base;
+            const rights = @typeInfo(@TypeOf(obj)).pointer.child.UserHandle.default_rights;
+            self.insertCapabilityLocked(handle, base, rights);
+        }
+    }
+
+    pub fn pushCapabilityDefaultRights(
+        self: *@This(),
+        obj: anytype,
+    ) Error!u32 {
+        const base: *caps.Object = &obj.base;
+        const rights = @typeInfo(@TypeOf(obj)).pointer.child.UserHandle.default_rights;
+        return self.pushCapability(base, rights);
     }
 
     pub fn pushCapability(
         self: *@This(),
-        cap: caps.Capability,
+        object: *caps.Object,
+        rights: abi.sys.Rights,
     ) Error!u32 {
         self.lock.lock();
         defer self.lock.unlock();
-        return self.pushCapabilityLocked(cap);
+        return self.pushCapabilityLocked(object, rights);
     }
 
     fn pushCapabilityLocked(
         self: *@This(),
-        cap: caps.Capability,
+        object: *caps.Object,
+        rights: abi.sys.Rights,
     ) Error!u32 {
         std.debug.assert(self.lock.isLockedByMe());
         // std.debug.assert(cap.type != .null);
 
         const handle: u32 = try self.allocSlotLocked();
+        self.insertCapabilityLocked(handle, object, rights);
+        return handle;
+    }
+
+    pub fn insertCapability(
+        self: *@This(),
+        handle: u32,
+        object: *caps.Object,
+        rights: abi.sys.Rights,
+    ) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.insertCapabilityLocked(handle, object, rights);
+    }
+
+    fn insertCapabilityLocked(
+        self: *@This(),
+        handle: u32,
+        object: *caps.Object,
+        rights: abi.sys.Rights,
+    ) void {
+        std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
         const slot = &self.caps.items[handle - 1];
 
-        if (conf.LOG_CAP_CHANGES)
-            log.debug("push {} to {}", .{ cap.type, handle });
+        if (conf.LOG_CAP_CHANGES) {
+            log.debug("push {} to {}", .{ object.type, handle });
+        }
 
-        std.debug.assert(slot.type == .null);
-        slot.* = caps.CapabilitySlot.init(cap);
-
-        return handle;
+        std.debug.assert(slot.object == null);
+        slot.* = .initUsed(object, rights);
     }
 
     const Opt = struct {
@@ -204,23 +281,49 @@ pub const Process = struct {
         match_ty: ?abi.ObjectType = null,
     };
 
+    fn checkSlotLocked(
+        self: *@This(),
+        handle: u32,
+        opt: Opt,
+    ) Error!*caps.CapabilitySlot {
+        std.debug.assert(self.lock.isLockedByMe());
+        std.debug.assert(handle != 0);
+
+        if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
+        const slot = &self.caps.items[handle - 1];
+
+        if (opt.min_rights) |min_rights|
+            if (!slot.rights.contains(min_rights))
+                return Error.PermissionDenied;
+
+        if (slot.object == null) return Error.BadHandle;
+
+        if (opt.match_ty) |match_ty|
+            if (slot.object.?.type != match_ty)
+                return Error.BadHandle;
+
+        return slot;
+    }
+
     pub fn getCapabilityAs(
         self: *@This(),
         handle: u32,
         comptime ty: abi.ObjectType,
         opt: Opt,
-    ) Error!*caps.Capability.typeOf(ty) {
-        return (try self.getCapability(handle, .{
-            .match_ty = ty,
+    ) Error!*caps.Object.typeOf(ty) {
+        const T = caps.Object.typeOf(ty);
+        const base_cap = try self.getCapability(handle, .{
+            .match_ty = T.UserHandle.object_type,
             .min_rights = opt.min_rights,
-        })).as(ty);
+        });
+        return base_cap.downcast(T);
     }
 
     pub fn getCapability(
         self: *@This(),
         handle: u32,
         opt: Opt,
-    ) Error!caps.Capability {
+    ) Error!*caps.Object {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -232,23 +335,40 @@ pub const Process = struct {
         self: *@This(),
         handle: u32,
         opt: Opt,
-    ) Error!caps.Capability {
+    ) Error!*caps.Object {
         std.debug.assert(self.lock.isLockedByMe());
-        std.debug.assert(handle != 0);
 
-        if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
-        const slot = &self.caps.items[handle - 1];
-
-        if (opt.min_rights) |min_rights|
-            if (!slot.rights.contains(min_rights))
-                return Error.PermissionDenied;
-
-        if (opt.match_ty) |match_ty|
-            if (slot.type != match_ty)
-                return Error.BadHandle;
-
-        return slot.get() orelse return Error.BadHandle;
+        const slot = try self.checkSlotLocked(handle, opt);
+        slot.object.?.clone();
+        return slot.object.?;
     }
+
+    pub fn getCapabilityRights(
+        self: *@This(),
+        handle: u32,
+        opt: Opt,
+    ) Error!abi.sys.Rights {
+        if (handle == 0) return Error.NullHandle;
+
+        self.lock.lock();
+        defer self.lock.unlock();
+        const slot = try self.checkSlotLocked(handle, opt);
+        return slot.rights;
+    }
+
+    // pub fn getObjectAndRights(
+    //     self: *@This(),
+    //     handle: u32,
+    //     opt: Opt,
+    // ) Error!struct { *caps.Object, abi.sys.Rights } {
+    //     if (handle == 0) return Error.NullHandle;
+
+    //     self.lock.lock();
+    //     defer self.lock.unlock();
+    //     const slot = try self.checkSlotLocked(handle, opt);
+    //     slot.object.?.clone();
+    //     return .{ slot.object.?, slot.rights };
+    // }
 
     pub fn restrictCapability(
         self: *@This(),
@@ -267,13 +387,7 @@ pub const Process = struct {
         handle: u32,
         mask: abi.sys.Rights,
     ) Error!void {
-        std.debug.assert(self.lock.isLockedByMe());
-        std.debug.assert(handle != 0);
-
-        if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
-        const slot = &self.caps.items[handle - 1];
-
-        _ = slot.getBorrow() orelse return Error.BadHandle;
+        const slot = try self.checkSlotLocked(handle, .{});
         slot.rights = slot.rights.intersect(mask);
     }
 
@@ -282,18 +396,20 @@ pub const Process = struct {
         handle: u32,
         comptime ty: abi.ObjectType,
         opt: Opt,
-    ) Error!*caps.Capability.typeOf(ty) {
-        return (try self.takeCapability(handle, .{
+    ) Error!*caps.Object.typeOf(ty) {
+        const T = caps.Object.typeOf(ty);
+        const base_cap, _ = try self.takeCapability(handle, .{
             .match_ty = ty,
             .min_rights = opt.min_rights,
-        })).as(ty);
+        });
+        return base_cap.downcast(T);
     }
 
     pub fn takeCapability(
         self: *@This(),
         handle: u32,
         opt: Opt,
-    ) Error!caps.Capability {
+    ) Error!struct { *caps.Object, abi.sys.Rights } {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
@@ -305,59 +421,123 @@ pub const Process = struct {
         self: *@This(),
         handle: u32,
         opt: Opt,
-    ) Error!caps.Capability {
-        std.debug.assert(self.lock.isLockedByMe());
-        std.debug.assert(handle != 0);
+    ) Error!struct { *caps.Object, abi.sys.Rights } {
+        const slot = try self.checkSlotLocked(handle, opt);
 
-        if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
-        const slot = &self.caps.items[handle - 1];
-
-        if (opt.min_rights) |min_rights|
-            if (!slot.rights.contains(min_rights))
-                return Error.PermissionDenied;
-
-        if (opt.match_ty) |match_ty|
-            if (slot.type != match_ty)
-                return Error.BadHandle;
-
-        const cap = slot.take() orelse return Error.BadHandle;
+        const object = slot.object.?;
+        const rights = slot.rights;
         self.freeSlotLocked(handle);
-        if (conf.LOG_CAP_CHANGES)
+        if (conf.LOG_CAP_CHANGES) {
             log.debug("take {} from {}", .{
-                cap.type, handle,
+                object.type, handle,
             });
-        return cap;
+        }
+        return .{ object, rights };
+    }
+
+    pub fn closeCapability(
+        self: *@This(),
+        handle: u32,
+    ) void {
+        const cap, _ = self.takeCapability(
+            handle,
+            .{},
+        ) catch return;
+        cap.deinit();
+    }
+
+    pub fn transferCapability(
+        from: *@This(),
+        to: *@This(),
+        handle: u32,
+    ) Error!u32 {
+        if (from == to) {
+            @branchHint(.cold);
+            from.lock.lock();
+            defer from.lock.unlock();
+            _ = try from.checkSlotLocked(handle, .{ .min_rights = .{
+                .transfer = true,
+            } });
+            return handle;
+        }
+
+        var a = from;
+        var b = to;
+        if (@intFromPtr(a) > @intFromPtr(b)) {
+            std.mem.swap(*caps.Process, &a, &b);
+        }
+
+        a.lock.lock();
+        defer a.lock.unlock();
+
+        b.lock.lock();
+        defer b.lock.unlock();
+
+        const slot_from = try from.checkSlotLocked(handle, .{ .min_rights = .{
+            .transfer = true,
+        } });
+        const object = slot_from.object.?;
+        const rights = slot_from.rights;
+        const handle_to = try to.allocSlotLocked();
+
+        from.freeSlotLocked(handle);
+        to.insertCapabilityLocked(handle_to, object, rights);
+
+        return handle_to;
+    }
+
+    pub fn cloneCapability(
+        self: *@This(),
+        handle: u32,
+    ) Error!u32 {
+        if (handle == 0) return Error.NullHandle;
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const slot_from = try self.checkSlotLocked(handle, .{ .min_rights = .{
+            .clone = true,
+        } });
+        const object = slot_from.object.?;
+        const rights = slot_from.rights;
+        const handle_to = try self.allocSlotLocked();
+
+        object.clone();
+        self.insertCapabilityLocked(handle_to, object, rights);
+
+        return handle_to;
     }
 
     pub fn replaceCapability(
         self: *@This(),
         handle: u32,
-        cap: caps.Capability,
-    ) Error!?caps.Capability {
+        with: caps.Handle(caps.Object),
+    ) Error!?caps.Handle(caps.Object) {
         if (handle == 0) return Error.NullHandle;
 
         self.lock.lock();
         defer self.lock.unlock();
-        return self.replaceCapabilityLocked(handle, cap);
+        return self.replaceCapabilityLocked(handle, with);
     }
 
     fn replaceCapabilityLocked(
         self: *@This(),
         handle: u32,
-        cap: caps.Capability,
-    ) Error!?caps.Capability {
+        with: caps.Handle(caps.Object),
+    ) Error!?caps.Handle(caps.Object) {
         std.debug.assert(self.lock.isLockedByMe());
         std.debug.assert(handle != 0);
 
         if (handle - 1 >= self.caps.items.len) return Error.BadHandle;
         const slot = &self.caps.items[handle - 1];
 
-        const old_cap = slot.take();
-        slot.set(cap);
-        if (conf.LOG_CAP_CHANGES)
+        const old_cap = slot.getBorrow();
+        slot.* = .initUsed(with.ptr, with.rights);
+        if (conf.LOG_CAP_CHANGES) {
             log.debug("replace {any} with {} in {}", .{
-                old_cap, cap.type, handle,
+                old_cap, with.type, handle,
             });
+        }
         return old_cap;
     }
 };

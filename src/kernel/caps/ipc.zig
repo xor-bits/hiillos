@@ -431,16 +431,14 @@ pub const Channel = struct {
 };
 
 pub const Receiver = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .receiver },
 
     // TODO: useless double indirection
     channel: *Channel,
 
     pub const UserHandle = abi.caps.Receiver;
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.receiver);
 
         if (self.channel.deinitRecv()) {
@@ -448,6 +446,11 @@ pub const Receiver = struct {
         }
 
         caps.slab_allocator.allocator().destroy(self);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     /// block until something sends
@@ -486,16 +489,14 @@ pub const Receiver = struct {
 };
 
 pub const Sender = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .sender },
 
     channel: *Channel,
     stamp: u32 = 0,
 
     pub const UserHandle = abi.caps.Sender;
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.sender);
 
         if (self.channel.deinitSend()) {
@@ -505,9 +506,9 @@ pub const Sender = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn restamp(
@@ -515,6 +516,9 @@ pub const Sender = struct {
         stamp: u32,
     ) Error!*@This() {
         const allocator = caps.slab_allocator.allocator();
+        const sender = try allocator.create(Sender);
+        errdefer allocator.destroy(sender);
+        sender.* = .{ .channel = self.channel, .stamp = stamp };
 
         {
             self.channel.lock.lock();
@@ -522,10 +526,6 @@ pub const Sender = struct {
             self.channel.send_count = std.math.add(usize, self.channel.send_count, 1) catch
                 return Error.OutOfBounds;
         }
-
-        const sender = try allocator.create(Sender);
-        errdefer allocator.destroy(sender);
-        sender.* = .{ .channel = self.channel, .stamp = stamp };
 
         return sender;
     }
@@ -557,17 +557,13 @@ pub const Sender = struct {
 };
 
 pub const Reply = struct {
-    // TODO: this shouldn't be cloneable
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .reply },
     sender: std.atomic.Value(?*caps.Thread),
 
     pub const UserHandle = abi.caps.Reply;
 
     /// only borrows `thread`
     pub fn init(thread: *caps.Thread) !*@This() {
-        caps.incCount(.reply, .{ .thread = thread });
-
         const sender = thread.takeReplyLockedExec() orelse {
             return Error.InvalidCapability;
         };
@@ -576,14 +572,19 @@ pub const Reply = struct {
         obj.* = .{ .sender = .init(null) };
         obj.sender.store(sender, .release);
 
+        caps.incCount(.reply, .{ .thread = thread });
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.reply);
 
         caps.slab_allocator.allocator().destroy(self);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn reply(
@@ -608,8 +609,7 @@ pub const Reply = struct {
 };
 
 pub const Notify = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .notify },
 
     queue_lock: lock.TrackingSpinMutex = .{},
     queue: caps.Thread.Queue = .{},
@@ -618,15 +618,14 @@ pub const Notify = struct {
     pub const UserHandle = abi.caps.Notify;
 
     pub fn init() !*@This() {
-        caps.incCount(.notify, .{});
-
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
+
+        caps.incCount(.notify, .{});
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.notify);
 
         std.debug.assert(self.queue_lock.isUnlocked());
@@ -635,9 +634,9 @@ pub const Notify = struct {
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     /// returns true if the current thread went to sleep

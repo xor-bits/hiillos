@@ -308,7 +308,7 @@ pub fn removeLockedThread(
     current_queue.inner.remove(&thread.scheduler_queue_node.inner);
     // there has to be at least 2 owners: whoever called this and the
     // queue that held the thread
-    std.debug.assert(!thread.refcnt.dec());
+    std.debug.assert(!thread.base.refcnt.dec());
 
     current_queue.popFinishLockedThread(
         current_queue_lock,

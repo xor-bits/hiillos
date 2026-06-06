@@ -11,8 +11,7 @@ const log = std.log.scoped(.x86ioport);
 
 //
 
-// FIXME: prevent reordering so that the offset would be same on all objects
-refcnt: abi.epoch.RefCnt = .{},
+base: caps.Object = .{ .type = .x86_ioport },
 
 port: u16,
 
@@ -20,24 +19,27 @@ pub const UserHandle = abi.caps.X86IoPort;
 
 // only borrows the `*X86IoPortAllocator`
 pub fn init(_: *X86IoPortAllocator, port: u16) Error!*@This() {
-    caps.incCount(.x86_ioport, .{ .port = port });
-
     try allocPort(&port_bitmap, port);
 
     const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
     obj.* = .{ .port = port };
 
+    caps.incCount(.x86_ioport, .{ .port = port });
     return obj;
 }
 
-pub fn deinit(self: *@This()) void {
-    if (!self.refcnt.dec()) return;
+pub fn deinitFull(self: *@This()) void {
     caps.decCount(.x86_ioport);
 
     freePort(&port_bitmap, self.port) catch
         unreachable;
 
     caps.slab_allocator.allocator().destroy(self);
+}
+
+pub fn deinit(self: *@This()) void {
+    if (!self.base.refcnt.dec()) return;
+    self.deinitFull();
 }
 
 pub fn clone(self: *@This()) *@This() {
@@ -68,25 +70,27 @@ pub fn outb(self: *@This(), byte: u8) void {
 //
 
 pub const X86IoPortAllocator = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt = .{},
+    base: caps.Object = .{ .type = .x86_ioport_allocator },
 
     pub const UserHandle = abi.caps.X86IoPortAllocator;
 
     pub fn init() !*@This() {
-        caps.incCount(.x86_ioport_allocator, .{});
-
         const obj: *@This() = try caps.slab_allocator.allocator().create(@This());
         obj.* = .{};
 
+        caps.incCount(.x86_ioport_allocator, .{});
         return obj;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.x86_ioport_allocator);
 
         caps.slab_allocator.allocator().destroy(self);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn clone(self: *@This()) *@This() {

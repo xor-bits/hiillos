@@ -16,8 +16,7 @@ const Error = abi.sys.Error;
 
 /// thread information
 pub const Thread = struct {
-    // FIXME: prevent reordering so that the offset would be same on all objects
-    refcnt: abi.epoch.RefCnt align(16) = .{},
+    base: caps.Object = .{ .type = .thread },
 
     proc: *caps.Process,
 
@@ -30,7 +29,10 @@ pub const Thread = struct {
     /// extra ipc registers
     /// controlled by Receiver and Sender
     // TODO: allocationless
-    extra_regs: std.MultiArrayList(CapOrVal) = .{},
+    extra_regs: [128]caps.CapabilitySlot = @splat(.{
+        .object = null,
+        .rights = .decode(0),
+    }),
     /// IPC reply target
     reply: ?*Thread = null,
     message: abi.sys.Message = .{},
@@ -79,39 +81,19 @@ pub const Thread = struct {
     pub const Queue = @import("thread/Queue.zig");
     pub const UserHandle = abi.caps.Thread;
 
-    pub const CapOrVal = union(enum) {
-        cap: caps.CapabilitySlot,
-        val: u64,
-
-        pub fn deinit(self: @This()) void {
-            switch (self) {
-                .cap => |cap| cap.deinit(),
-                else => {},
-            }
-        }
-    };
-
     pub fn init(from_proc: *caps.Process) !*@This() {
-        errdefer from_proc.deinit();
-
-        caps.incCount(.thread, .{ .process = from_proc });
-
         const thread: *@This() = try caps.slab_allocator.allocator().create(@This());
         thread.* = .{ .proc = from_proc };
-
-        errdefer caps.slab_allocator.allocator().destroy(thread);
-        try thread.extra_regs.resize(caps.slab_allocator.allocator(), 128);
-        for (0..128) |i| thread.extra_regs.set(i, .{ .val = 0 });
 
         from_proc.lock.lock();
         thread.proc.active_threads.pushBack(thread);
         from_proc.lock.unlock();
 
+        caps.incCount(.thread, .{ .process = from_proc });
         return thread;
     }
 
-    pub fn deinit(self: *@This()) void {
-        if (!self.refcnt.dec()) return;
+    pub fn deinitFull(self: *@This()) void {
         caps.decCount(.thread);
 
         self.exit(0);
@@ -127,15 +109,18 @@ pub const Thread = struct {
 
         self.proc.deinit();
 
-        for (0..128) |i| self.getExtraLockedExec(@truncate(i)).deinit();
-        self.extra_regs.deinit(caps.slab_allocator.allocator());
+        for (self.extra_regs) |extra| {
+            if (extra.object) |object| {
+                object.deinit();
+            }
+        }
 
         caps.slab_allocator.allocator().destroy(self);
     }
 
-    pub fn clone(self: *@This()) *@This() {
-        self.refcnt.inc();
-        return self;
+    pub fn deinit(self: *@This()) void {
+        if (!self.base.refcnt.dec()) return;
+        self.deinitFull();
     }
 
     pub fn switchTo(
@@ -163,7 +148,7 @@ pub const Thread = struct {
 
         if (conf.LOG_ENTRYPOINT_CODE) {
             // dump the entrypoint code
-            var it = self.proc.vmem.data(addr.Virt.fromInt(self.trap.rip), false);
+            var it = self.proc.vmem.data(.{ .raw = self.trap.rip }, false);
             defer it.deinit();
 
             log.info("{}", .{self.trap});
@@ -185,7 +170,8 @@ pub const Thread = struct {
                 return Error.NotStopped;
             self.status = .running;
         }
-        proc.start(self.clone());
+        self.base.clone();
+        proc.start(self);
     }
 
     pub fn stop(
@@ -322,19 +308,31 @@ pub const Thread = struct {
         cleanup.run();
     }
 
-    pub fn getExtraLockedExec(self: *@This(), idx: u7) CapOrVal {
+    pub fn getExtraLockedExec(
+        self: *@This(),
+        idx: u7,
+    ) caps.CapabilitySlot {
         self.exec_lock.assertIsLocked();
 
-        const val = self.extra_regs.get(idx);
-        self.extra_regs.set(idx, .{ .val = 0 });
+        const val = self.extra_regs[idx];
+        self.extra_regs[idx] = .{
+            .object = null,
+            .rights = .decode(0),
+        };
         return val;
     }
 
-    pub fn setExtraLockedExec(self: *@This(), idx: u7, data: CapOrVal) void {
+    pub fn setExtraLockedExec(
+        self: *@This(),
+        idx: u7,
+        slot: caps.CapabilitySlot,
+    ) void {
         self.exec_lock.assertIsLocked();
 
-        self.extra_regs.get(idx).deinit();
-        self.extra_regs.set(idx, data);
+        if (self.extra_regs[idx].object) |old_object| {
+            old_object.deinit();
+        }
+        self.extra_regs[idx] = slot;
     }
 
     /// prepareExtras has to be called for `dst` first

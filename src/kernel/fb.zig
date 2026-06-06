@@ -40,13 +40,13 @@ pub fn bootInfoInstallFramebuffer(boot_info: *caps.Frame, thread: *caps.Thread) 
     }));
 
     var id: u32 = undefined;
-    id = try thread.proc.pushCapability(.init(fb_obj, null));
+    id = try thread.proc.pushCapabilityDefaultRights(fb_obj);
     try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "framebuffer"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),
     );
 
-    id = try thread.proc.pushCapability(.init(fb_info_obj, null));
+    id = try thread.proc.pushCapabilityDefaultRights(fb_info_obj);
     try boot_info.initialWrite(
         @offsetOf(abi.BootInfo, "framebuffer_info"),
         std.mem.asBytes(&abi.caps.Frame{ .cap = id }),

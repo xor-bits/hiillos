@@ -147,7 +147,7 @@ pub const TrackingSpinMutex = extern struct {
     };
 
     pub fn state(
-        self: *Self,
+        self: *const Self,
     ) State {
         const lock_state = self.lock_state.load(.monotonic);
         if (lock_state == .unlocked) {
@@ -161,25 +161,25 @@ pub const TrackingSpinMutex = extern struct {
     }
 
     pub fn isUnlocked(
-        self: *Self,
+        self: *const Self,
     ) bool {
         return self.lock_state.load(.monotonic) == .unlocked;
     }
 
     pub fn isLocked(
-        self: *Self,
+        self: *const Self,
     ) bool {
         return !self.isUnlocked();
     }
 
     pub fn isLockedByMe(
-        self: *Self,
+        self: *const Self,
     ) bool {
         return self.state() == .locked_by_me;
     }
 
     pub fn isLockedByOther(
-        self: *Self,
+        self: *const Self,
     ) bool {
         return self.state() == .locked_by_other;
     }
