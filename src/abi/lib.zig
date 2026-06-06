@@ -222,18 +222,40 @@ pub const ChunkSize = enum(u5) {
 
     pub const Self = @This();
 
+    pub fn hardwarePageSize(
+        self: Self,
+    ) Self {
+        if (@intFromEnum(self) <= @intFromEnum(Self.@"1MiB")) {
+            return Self.@"4KiB";
+        } else if (@intFromEnum(self) <= @intFromEnum(Self.@"512MiB")) {
+            return Self.@"2MiB";
+        } else {
+            return Self.@"1GiB";
+        }
+    }
+
+    pub fn div(
+        a: Self,
+        b: Self,
+    ) u32 {
+        return 1 << (@intFromEnum(a) - @intFromEnum(b));
+    }
+
+    pub fn min(
+        a: Self,
+        b: Self,
+    ) Self {
+        if (@intFromEnum(a) < @intFromEnum(b)) return a;
+        return b;
+    }
+
     pub fn maxFit(
         addr: usize,
         size: usize,
     ) ?Self {
         const size_limit = Self.minAlignSize(size).?;
         const addr_limit = Self.maxAlignAddr(addr).?;
-
-        if (@intFromEnum(size_limit) < @intFromEnum(addr_limit)) {
-            return size_limit;
-        } else {
-            return addr_limit;
-        }
+        return size_limit.min(addr_limit);
     }
 
     /// the chunk size is the possible largest that is aligned to the `addr` (or null)
