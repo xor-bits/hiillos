@@ -427,7 +427,7 @@ fn handle_syscall(
             for (vmem.mappings.items) |mapping| {
                 log.info(" - [ 0x{x:0>16}..0x{x:0>16} ]: {*}", .{
                     mapping.getVaddr().raw,
-                    mapping.getVaddr().raw + mapping.chunks * 0x1000,
+                    mapping.getVaddr().raw + mapping.pages * 0x1000,
                     mapping.frame,
                 });
             }
