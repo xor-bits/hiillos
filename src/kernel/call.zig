@@ -269,6 +269,10 @@ fn handle_syscall(
             const flags = abi.sys.MapFlags.decode(@truncate(trap.arg5));
             const rights = flags.rights();
 
+            if (!std.mem.isAligned(vaddr.raw, 0x1000)) {
+                return Error.InvalidAddress;
+            }
+
             const vmem: *caps.Vmem = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),
                 .vmem,
@@ -306,6 +310,11 @@ fn handle_syscall(
                 return;
             }
             const vaddr = try addr.Virt.fromUser(trap.arg1);
+
+            if (!std.mem.isAligned(vaddr.raw, 0x1000)) {
+                return Error.InvalidAddress;
+            }
+
             const vmem: *caps.Vmem = try thread.proc.getCapabilityAs(
                 @truncate(trap.arg0),
                 .vmem,
