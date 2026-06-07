@@ -671,7 +671,9 @@ pub const Vmem = struct {
             trap,
             thread,
         );
-        paddr.raw += mapping_chunk_offs;
+        if (paddr.toParts().page != caps.readonly_zero_page.load(.monotonic)) {
+            paddr.raw += chunk_offs;
+        }
 
         if (conf.LOG_PAGE_FAULTS)
             log.debug("vaddr=0x{x} cause={s} paddr=0x{x} prev={}", .{
