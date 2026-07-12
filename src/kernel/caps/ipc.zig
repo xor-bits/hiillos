@@ -58,11 +58,6 @@ pub const Channel = struct {
     pub fn init() !struct { *Receiver, *Sender } {
         const allocator = caps.slab_allocator.allocator();
 
-        caps.incCount(.receiver, .{});
-        caps.incCount(.sender, .{});
-        errdefer caps.decCount(.receiver);
-        errdefer caps.decCount(.sender);
-
         const obj: *@This() = try allocator.create(@This());
         errdefer allocator.destroy(obj);
         obj.* = .{};
@@ -75,6 +70,8 @@ pub const Channel = struct {
         errdefer allocator.destroy(sender);
         sender.* = .{ .channel = obj };
 
+        caps.incCount(.receiver, .{});
+        caps.incCount(.sender, .{});
         return .{ receiver, sender };
     }
 
@@ -527,6 +524,7 @@ pub const Sender = struct {
                 return Error.OutOfBounds;
         }
 
+        caps.incCount(.sender, .{ .stamp = stamp });
         return sender;
     }
 
