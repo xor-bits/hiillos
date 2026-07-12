@@ -928,6 +928,7 @@ pub const Entry = packed struct {
 //
 
 var kernel_table: PageTable = .{};
+// TODO: make a real 2MiB zero page when there is enough memory
 /// the actual readonly zero page is only 4KiB, this is a table
 /// that repeats that same 4KiB page 512 times creating a fake huge page
 var readonly_zero_huge_page_table: addr.Phys = undefined;
@@ -935,15 +936,87 @@ var readonly_zero_huge_page_table: addr.Phys = undefined;
 /// that repeats that same 4KiB page 512*512 times creating a fake giant page
 var readonly_zero_giant_page_table: addr.Phys = undefined;
 
-fn allocTable() Error!addr.Phys {
-    return pmem.allocChunk(.@"4KiB") orelse return Error.OutOfMemory;
-    // const entries: []volatile Entry = table.toHhdm().toPtr([*]volatile Entry)[0..512];
-    // abi.util.fillVolatile(Entry, entries, .{});
-    // return table;
+var table_pool: std.SinglyLinkedList = .{};
+var table_pool_lock: lock.TrackingSpinMutex = .unlocked;
+
+pub const AllocationHeader = struct {
+    meta: [255]TableMetadata align(0x1000),
+};
+
+pub const TableMetadata = struct {
+    node: std.SinglyLinkedList.Node = .{},
+    present_entries: usize = 0,
+
+    comptime {
+        std.debug.assert(@sizeOf(TableMetadata) <= 16);
+    }
+
+    /// this allows a single 1MiB allocation to be split
+    /// into 255 4KiB tables and a single 4KiB meta array
+    const tables_per_alloc = 255;
+    const alloc_size: abi.ChunkSize = .@"1MiB";
+};
+
+fn metaFromTable(
+    paddr: addr.Phys,
+) *TableMetadata {
+    const alloc_size = TableMetadata.alloc_size.sizeBytes();
+
+    const table_addr = paddr.toHhdm();
+    const header_addr = table_addr.alignBackward(alloc_size);
+
+    const nth_table = @divExact(table_addr.raw - header_addr.raw - 0x1000, 0x1000);
+
+    const header = header_addr.toPtr(*AllocationHeader);
+    return &header.meta[nth_table];
 }
 
-fn freeTable(paddr: addr.Phys) void {
-    pmem.deallocChunk(paddr, .@"4KiB");
+fn tableFromMeta(
+    meta: *TableMetadata,
+) addr.Phys {
+    const alloc_size = TableMetadata.alloc_size.sizeBytes();
+
+    const meta_addr = addr.Virt.fromPtr(meta);
+    const header_addr = meta_addr.alignBackward(alloc_size);
+
+    const nth_table = @divExact(meta_addr.raw - header_addr.raw, @sizeOf(TableMetadata));
+
+    return header_addr.add(0x1000 + nth_table * 0x1000).hhdmToPhys();
+}
+
+pub fn allocTable() Error!addr.Phys {
+    table_pool_lock.lock();
+    defer table_pool_lock.unlock();
+
+    if (table_pool.first == null) {
+        const alloc = pmem.allocChunk(.@"1MiB") orelse return Error.OutOfMemory;
+        for (0..TableMetadata.tables_per_alloc) |i| {
+            const table = alloc.add((i + 1) * 0x1000);
+            freeTableLocked(table);
+        }
+    }
+
+    const node = table_pool.popFirst().?;
+
+    const meta: *TableMetadata = @fieldParentPtr("node", node);
+    meta.* = .{};
+    return tableFromMeta(meta);
+}
+
+pub fn freeTable(paddr: addr.Phys) void {
+    table_pool_lock.lock();
+    defer table_pool_lock.unlock();
+    freeTableLocked(paddr);
+}
+
+fn freeTableLocked(paddr: addr.Phys) void {
+    std.debug.assert(table_pool_lock.isLockedByMe());
+
+    const table = paddr.toHhdm().toPtr([*]u64);
+    std.crypto.secureZero(u64, table[0..512]);
+    const meta = metaFromTable(paddr);
+    meta.* = .{};
+    table_pool.prepend(&meta.node);
 }
 
 //

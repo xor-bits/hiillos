@@ -623,6 +623,11 @@ pub const Frame = struct {
 pub const TlbShootdown = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
+    // tlb_ranges: [32]TlbRange = undefined,
+    // tlb_ranges_len: u8 = 0,
+
+    // page_table_limbo: ,
+
     operation: union(enum) {
         unmap: struct {
             /// a ref of `caps.Vmem` is held and this mapping is marked as unmapping
@@ -640,6 +645,12 @@ pub const TlbShootdown = struct {
             idx: u32,
         },
     },
+
+    pub const TlbRange = struct {
+        start: addr.Virt,
+        count: u32,
+        chunk_size: abi.ChunkSize,
+    };
 
     pub const Completion = union(enum) {
         /// a page fault caused the frame to get modified, unlock the frame
