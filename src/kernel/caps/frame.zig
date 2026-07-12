@@ -405,8 +405,8 @@ pub const Frame = struct {
                 // keeping it alive too, so the tlb shootdown itself cannot become a
                 // dangling pointer
                 self.base.clone();
-                thread.tlb_shootdown = .initRemap(info.updates, self, idx);
                 const shootdown = &thread.tlb_shootdown;
+                shootdown.* = .initRemap(self);
 
                 const ipi_bitmap: u256 = ~@as(u256, 0);
                 var prev: ?*caps.Vmem = null;
@@ -418,12 +418,10 @@ pub const Frame = struct {
                     try vmem_with_old_mappings.refresh(
                         self,
                         idx,
+                        shootdown,
                         dont_lock_if,
                     );
                 }
-
-                const cant_be_non_null = shootdown.deinit(dont_lock_if);
-                std.debug.assert(cant_be_non_null == null);
 
                 const id_self = arch.cpuId();
                 for (main.all_cpu_locals, 0..) |*_locals, i| {
@@ -438,6 +436,9 @@ pub const Frame = struct {
                         apic.irqs.ipi_tlb_shootdown,
                     );
                 }
+
+                const cant_be_non_null = shootdown.deinit();
+                std.debug.assert(cant_be_non_null == null);
 
                 // log.debug("retry cause: IPI ACK wait", .{});
                 return Error.Retry;
@@ -623,29 +624,24 @@ pub const Frame = struct {
 pub const TlbShootdown = struct {
     refcnt: abi.epoch.RefCnt = .{},
 
-    // tlb_ranges: [32]TlbRange = undefined,
-    // tlb_ranges_len: u8 = 0,
+    // target: union(enum) {
+    //     individual: struct {
+    //         tlb_ranges: [32]TlbRange = undefined,
+    //         tlb_ranges_len: u8 = 0,
+    //     },
+    //     whole_pcid: struct {
+    //         tlb_ranges: [32]u12 = undefined,
+    //         tlb_ranges_len: u8 = 0,
+    //     },
+    //     everything,
+    // },
+    tlb_ranges: [32]TlbRange = undefined,
+    tlb_ranges_len: u8 = 0,
 
-    // page_table_limbo: ,
+    page_table_limbo: std.SinglyLinkedList = .{},
+    completion: Completion,
 
-    operation: union(enum) {
-        unmap: struct {
-            /// a ref of `caps.Vmem` is held and this mapping is marked as unmapping
-            /// to prevent it from being deallocated and this becoming a dangling pointer
-            mapping: *caps.Mapping,
-            /// a thread that called `unmap` and is waiting for the op to complete
-            thread: *caps.Thread,
-        },
-        remap: struct {
-            /// refs of `caps.Vmem`s are owned
-            mappings: []*caps.Vmem,
-            /// `caps.Frame` ref is owned, a page fault caused this frame to get
-            /// modified and it is currently in a transient state and will be unlocked
-            frame: *caps.Frame,
-            idx: u32,
-        },
-    },
-
+    // TODO: PCID
     pub const TlbRange = struct {
         start: addr.Virt,
         count: u32,
@@ -659,215 +655,122 @@ pub const TlbShootdown = struct {
         unmap: *caps.Thread,
     };
 
-    // TODO: PCID
-    pub const Target = union(enum) {
-        whole,
-        range: *caps.Mapping,
-    };
-
     pub fn initUnmap(
-        mapping: *caps.Mapping,
         thread: *caps.Thread,
     ) @This() {
         if (conf.LOG_TLB_SHOOTDOWNS) {
-            log.debug("tlb shootdown from unmap 0x{x} count={} size={t}", .{
-                mapping.start().raw, mapping.chunks, mapping.frame.chunk_size,
-            });
+            log.debug("tlb shootdown from unmap {*}", .{thread});
         }
-        caps.incCount(.tlb_shootdown, .{
-            .mapping = mapping,
-            .thread = thread,
-        });
-        return .{ .operation = .{ .unmap = .{
-            .mapping = mapping,
-            .thread = thread,
-        } } };
+        caps.incCount(.tlb_shootdown, .{ .unmap = thread });
+        return .{ .completion = .{ .unmap = thread } };
     }
 
     pub fn initRemap(
-        mappings: []*caps.Vmem,
-        frame: *caps.Frame,
-        idx: u32,
+        transient_frame: *caps.Frame,
     ) @This() {
         if (conf.LOG_TLB_SHOOTDOWNS) {
-            log.debug("tlb shootdown from remap {*} idx={}", .{
-                frame, idx,
-            });
+            log.debug("tlb shootdown from remap {*} idx={}", .{transient_frame});
         }
-        caps.incCount(.tlb_shootdown, .{
-            .mappings = mappings,
-            .frame = frame,
-            .idx = idx,
-        });
-        return .{ .operation = .{ .remap = .{
-            .mappings = mappings,
-            .frame = frame,
-            .idx = idx,
-        } } };
+        caps.incCount(.tlb_shootdown, .{ .transient_frame = transient_frame });
+        return .{ .completion = .{ .transient = transient_frame } };
     }
 
-    fn remapFlush(
-        self: *const @This(),
-        dont_lock_if: ?*caps.Vmem,
+    pub fn pushTlbFlush(
+        self: *@This(),
+        vaddr: addr.Virt,
+        count: u32,
+        size: abi.ChunkSize,
     ) void {
-        std.debug.assert(self.operation == .remap);
-        const remap = self.operation.remap;
-
-        const chunk_size = remap.frame.chunk_size;
-        var prev: ?*caps.Vmem = null;
-        for (remap.mappings) |vmem| {
-            // filter out duplicates
-            if (prev == vmem) continue;
-            prev = vmem;
-
-            if (dont_lock_if != vmem) vmem.lock.lock();
-            defer if (dont_lock_if != vmem) vmem.lock.unlock();
-
-            for (vmem.mappings.items) |mapping| {
-                if (mapping.frame != remap.frame) continue;
-
-                std.debug.assert(remap.idx >= mapping.frame_first_chunk);
-                std.debug.assert(remap.idx < mapping.frame_first_chunk + mapping.chunks);
-
-                vmem.hal_vmem.flushLocalTlb(
-                    chunk_size,
-                    mapping.getVaddr(),
-                );
-            }
+        if (self.tlb_ranges_len == 255) {
+            return;
         }
+
+        if (self.tlb_ranges_len == 0) {
+            self.forcePushTlbFlush(vaddr, count, size);
+            return;
+        }
+
+        const prev = &self.tlb_ranges[self.tlb_ranges_len - 1];
+
+        if (prev.chunk_size != size) {
+            self.forcePushTlbFlush(vaddr, count, size);
+            return;
+        }
+
+        if (vaddr.raw -| prev.start.raw != size.sizeBytes()) {
+            self.forcePushTlbFlush(vaddr, count, size);
+            return;
+        }
+
+        if (count +| prev.count >= 2048) {
+            self.tlb_ranges_len = 255;
+            return;
+        }
+
+        prev.count += count;
     }
 
-    fn remapFinish(
-        self: *const @This(),
-        dont_lock_if: ?*caps.Vmem,
-    ) ?*caps.Thread {
-        std.debug.assert(self.operation == .remap);
-        const remap = self.operation.remap;
-
-        const chunk_size = remap.frame.chunk_size;
-        var prev: ?*caps.Vmem = null;
-        for (remap.mappings) |vmem| {
-            // filter out duplicates
-            if (prev == vmem) continue;
-            prev = vmem;
-
-            if (dont_lock_if != vmem) vmem.lock.lock();
-            defer if (dont_lock_if != vmem) vmem.lock.unlock();
-
-            for (vmem.mappings.items) |mapping| {
-                if (mapping.frame != remap.frame) continue;
-
-                std.debug.assert(remap.idx >= mapping.frame_first_chunk);
-                std.debug.assert(remap.idx < mapping.frame_first_chunk + mapping.chunks);
-
-                vmem.hal_vmem.remove(
-                    chunk_size,
-                    mapping.getVaddr(),
-                );
-            }
-        }
-
-        defer {
-            for (remap.mappings) |vmem| vmem.deinit();
-            remap.frame.deinit();
-            caps.slab_allocator.allocator().free(remap.mappings);
-        }
-
-        remap.frame.lock.lock();
-        defer remap.frame.lock.unlock();
-        remap.frame.is_transient = false;
-
-        while (remap.frame.transient_sleep_queue.popFirstLocked(
-            &remap.frame.lock,
-            .running,
-        )) |sleeper| {
-            proc.ready(sleeper);
-        }
-
-        return null;
-    }
-
-    fn unmapFlush(
-        self: *const @This(),
-        dont_lock_if: ?*caps.Vmem,
+    fn forcePushTlbFlush(
+        self: *@This(),
+        vaddr: addr.Virt,
+        count: u32,
+        size: abi.ChunkSize,
     ) void {
-        std.debug.assert(self.operation == .unmap);
-        const unmap = self.operation.unmap;
-
-        const vaddr_mapping = unmap.mapping.start();
-        const chunk_size = unmap.mapping.frame.chunk_size;
-        const chunk_bytes = chunk_size.sizeBytes();
-        const vmem = unmap.mapping.vmem;
-
-        // NOTE: locking is not needed because it is illegal to remove
-        // or modify the mappings before the last tlb flush has ran (?)
-
-        _ = dont_lock_if;
-        // vmem.lock.lock();
-        // defer vmem.lock.unlock();
-
-        for (0..unmap.mapping.chunks) |chunk_idx| {
-            // already checked to be in bounds
-            const vaddr_chunk = vaddr_mapping.add(chunk_idx * chunk_bytes);
-            vmem.hal_vmem.flushLocalTlb(chunk_size, vaddr_chunk);
+        std.debug.assert(self.tlb_ranges_len != 255);
+        if (self.tlb_ranges_len == self.tlb_ranges.len) {
+            self.tlb_ranges_len = 255;
+            return;
         }
-    }
-
-    fn unmapFinish(
-        self: *const @This(),
-        dont_lock_if: ?*caps.Vmem,
-    ) *caps.Thread {
-        std.debug.assert(self.operation == .unmap);
-        const unmap = self.operation.unmap;
-
-        const vmem = unmap.mapping.vmem;
-        const vaddr_mapping = unmap.mapping.start();
-        const chunk_size = unmap.mapping.frame.chunk_size;
-        const chunk_bytes = chunk_size.sizeBytes();
-
-        defer vmem.deinit();
-        if (dont_lock_if != vmem) vmem.lock.lock();
-        defer if (dont_lock_if != vmem) vmem.lock.unlock();
-
-        for (0..unmap.mapping.chunks) |chunk_idx| {
-            // already checked to be in bounds
-            const vaddr_chunk = vaddr_mapping.add(chunk_idx * chunk_bytes);
-            vmem.hal_vmem.remove(chunk_size, vaddr_chunk);
-        }
-
-        const idx = unmap.mapping.vmem.find(unmap.mapping.start()).?;
-        const removed_mapping = vmem.mappings.orderedRemove(idx);
-        std.debug.assert(removed_mapping == unmap.mapping);
-        std.debug.assert(removed_mapping.target.unmapping);
-
-        return unmap.thread;
+        self.tlb_ranges[self.tlb_ranges_len] = .{
+            .start = vaddr,
+            .count = count,
+            .chunk_size = size,
+        };
+        self.tlb_ranges_len += 1;
     }
 
     pub fn deinit(
         self: *@This(),
-        dont_lock_if: ?*caps.Vmem,
     ) ?*caps.Thread {
         // log.debug("TLB (partial) flush", .{});
-        switch (self.operation) {
-            .remap => self.remapFlush(dont_lock_if),
-            .unmap => self.unmapFlush(dont_lock_if),
+        if (self.tlb_ranges_len == 255) {
+            arch.x86_64.flushTlb();
+        } else for (self.tlb_ranges[0..self.tlb_ranges_len]) |range| {
+            for (0..range.count) |i| {
+                arch.x86_64.flushTlbAddr(range.start.add(i * range.chunk_size.sizeBytes()).raw);
+            }
         }
-
         if (!self.refcnt.dec()) return null;
         caps.decCount(.tlb_shootdown);
         defer self.* = undefined;
 
-        return switch (self.operation) {
-            .remap => self.remapFinish(dont_lock_if),
-            .unmap => self.unmapFinish(dont_lock_if),
-        };
+        caps.HalVmem.freeLimbo(&self.page_table_limbo);
+
+        switch (self.completion) {
+            .transient => |frame| {
+                defer frame.deinit();
+                frame.lock.lock();
+                defer frame.lock.unlock();
+
+                frame.is_transient = false;
+                while (frame.transient_sleep_queue.popFirstLocked(
+                    &frame.lock,
+                    .running,
+                )) |sleeper| {
+                    proc.ready(sleeper);
+                }
+
+                return null;
+            },
+            .unmap => |thread| return thread,
+        }
     }
 
     pub fn flushAll() void {
         const locals = arch.cpuLocal();
         while (locals.tlb_shootdown_queue.tryPop()) |shootdown| {
             // log.debug("one TLB shootdown complete for {*}", .{shootdown});
-            if (shootdown.deinit(null)) |thread| {
+            if (shootdown.deinit()) |thread| {
                 // log.debug("TLB shootdowns complete for {*}", .{thread});
                 proc.ready(thread);
             }

@@ -194,8 +194,12 @@ pub fn init() !@This() {
     return self;
 }
 
-pub fn deinit(_: *const HalVmem) void {
+pub fn deinit(self: *const HalVmem) void {
     caps.decCount(.hal_vmem);
+
+    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
+    pml4.deinit(.level4);
+    freeTable(self.pml4);
 }
 
 pub fn switchTo(self: *@This()) void {
@@ -367,90 +371,6 @@ pub fn insert(
     );
 }
 
-/// disables a mapping but does not deallocate it yet,
-/// flushes local TLB but does not do remote TLB flushes
-pub fn disable(
-    self: *volatile @This(),
-    page_size: abi.ChunkSize,
-    vaddr: addr.Virt,
-) void {
-    if (conf.LOG_HAL_VMEM) {
-        log.debug("disable HalVmem mapping 0x{x} {t}", .{ vaddr.raw, page_size });
-    }
-
-    const levels = vaddr.parts.page.levels;
-    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
-
-    const pml3 = pml4.get(.level4, levels.level4) orelse
-        return;
-    std.debug.assert(pml3 != .frame);
-
-    const pml2 = pml3.next.get(.level3, levels.level3) orelse
-        return;
-    if (page_size == .@"1GiB") {
-        pml3.next.entries[levels.level3].present = false;
-        flushOne(.level3, vaddr, pml2);
-        return;
-    }
-    std.debug.assert(pml2 != .frame);
-
-    const pml1 = pml2.next.get(.level2, levels.level2) orelse
-        return;
-    if (page_size == .@"2MiB") {
-        pml2.next.entries[levels.level2].present = false;
-        flushOne(.level2, vaddr, pml1);
-        return;
-    }
-    std.debug.assert(pml1 != .frame);
-
-    const frame = pml1.next.get(.level1, levels.level1) orelse
-        return;
-    std.debug.assert(page_size == .@"4KiB");
-    std.debug.assert(frame == .frame);
-    pml1.next.entries[levels.level1].present = false;
-    flushOne(.level1, vaddr, frame);
-}
-
-/// flushes local TLB but does not do remote TLB flushes
-pub fn flushLocalTlb(
-    self: *volatile @This(),
-    page_size: abi.ChunkSize,
-    vaddr: addr.Virt,
-) void {
-    if (conf.LOG_HAL_VMEM) {
-        log.debug("flushLocalTlb HalVmem 0x{x} {t}", .{ vaddr.raw, page_size });
-    }
-
-    const levels = vaddr.parts.page.levels;
-    const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
-
-    const pml3 = pml4.get(.level4, levels.level4) orelse
-        return;
-    std.debug.assert(pml3 != .frame);
-
-    const pml2 = pml3.next.get(.level3, levels.level3) orelse
-        return;
-    if (page_size == .@"1GiB") {
-        flushOne(.level3, vaddr, pml2);
-        return;
-    }
-    std.debug.assert(pml2 != .frame);
-
-    const pml1 = pml2.next.get(.level2, levels.level2) orelse
-        return;
-    if (page_size == .@"2MiB") {
-        flushOne(.level2, vaddr, pml1);
-        return;
-    }
-    std.debug.assert(pml1 != .frame);
-
-    const frame = pml1.next.get(.level1, levels.level1) orelse
-        return;
-    std.debug.assert(page_size == .@"4KiB");
-    std.debug.assert(frame == .frame);
-    flushOne(.level1, vaddr, frame);
-}
-
 fn flushOne(
     comptime level: Level,
     vaddr_unaligned: addr.Virt,
@@ -477,10 +397,13 @@ pub fn remove(
     self: *volatile @This(),
     page_size: abi.ChunkSize,
     vaddr: addr.Virt,
+    tlb_shootdown: *caps.TlbShootdown,
 ) void {
     if (conf.LOG_HAL_VMEM) {
         log.debug("remove HalVmem mapping 0x{x} {t}", .{ vaddr.raw, page_size });
     }
+
+    std.debug.assert(vaddr.isAligned(page_size.sizeBytes()));
 
     const levels = vaddr.parts.page.levels;
     const pml4: *volatile PageTable = @ptrFromInt(self.pml4.toHhdm().raw);
@@ -488,40 +411,48 @@ pub fn remove(
     const pml3 = pml4.get(.level4, levels.level4) orelse
         return;
     std.debug.assert(pml3 != .frame);
-    // FIXME: deallocating tables safely is really complicated while
-    // avoiding allocations during page faults or unmaps
-    // defer pml4.deleteTableIfEmpty(levels.level4);
+    defer pml4.deleteTableIfEmpty(levels.level4, tlb_shootdown);
 
     const pml2 = pml3.next.get(.level3, levels.level3) orelse
         return;
     if (page_size == .@"1GiB") {
         // if it points to a real allocated page => deallocation is managed externally
         // if it points to the readonly giant table => it is never deallocated
-        pml3.next.entries[levels.level3] = .{};
+        if (pml2 == .frame) {
+            tlb_shootdown.pushTlbFlush(vaddr, 1, .@"1GiB");
+        } else {
+            tlb_shootdown.pushTlbFlush(vaddr, 512 * 512, .@"4KiB");
+        }
+        pml3.next.remove(levels.level3);
         return;
     }
-    // defer pml3.next.deleteTableIfEmpty(levels.level3);
+    defer pml3.next.deleteTableIfEmpty(levels.level3, tlb_shootdown);
     std.debug.assert(pml2 != .frame);
 
     const pml1 = pml2.next.get(.level2, levels.level2) orelse
         return;
-    // defer pml2.next.deleteTableIfEmpty(levels.level2);
     if (page_size == .@"2MiB") {
         // if it points to a real allocated page => deallocation is managed externally
         // if it points to the readonly huge table => it is never deallocated
-        pml2.next.entries[levels.level2] = .{};
+        if (pml1 == .frame) {
+            tlb_shootdown.pushTlbFlush(vaddr, 1, .@"2MiB");
+        } else {
+            tlb_shootdown.pushTlbFlush(vaddr, 512, .@"4KiB");
+        }
+        pml2.next.remove(levels.level2);
         return;
     }
+    defer pml2.next.deleteTableIfEmpty(levels.level2, tlb_shootdown);
     std.debug.assert(pml1 != .frame);
 
     const frame = pml1.next.get(.level1, levels.level1) orelse
         return;
-    // defer pml1.next.deleteTableIfEmpty(levels.level1);
     std.debug.assert(page_size == .@"4KiB");
     std.debug.assert(frame == .frame);
     // if it points to a real allocated page => deallocation is managed externally
     // if it points to the readonly page => it is never deallocated
-    pml1.next.entries[levels.level1] = .{};
+    tlb_shootdown.pushTlbFlush(vaddr, 1, .@"4KiB");
+    pml1.next.remove(levels.level1);
 }
 
 pub const Level = enum {
@@ -585,48 +516,71 @@ pub const PageTable = struct {
         next: *volatile PageTable,
     };
 
-    // const FreeToUse0 = packed struct(u10) {
-    //     _free_to_use1: u3,
-    //     _free_to_use0: u7,
-    // };
+    pub const PageTableGetPhysResult = union(enum) {
+        frame: struct {
+            paddr: addr.Phys,
+            flags: abi.sys.MapFlags,
+        },
+        next: addr.Phys,
+    };
 
-    // /// returns the old count
-    // pub fn fetchIncUsedEntryCount(
-    //     self: *volatile @This(),
-    // ) u10 {
-    //     var entry = self.entries[0];
-    //     const count: u10 = @bitCast(FreeToUse0{
-    //         ._free_to_use1 = entry._free_to_use1,
-    //         ._free_to_use0 = entry._free_to_use0,
-    //     });
-    //     std.debug.assert(count != 512);
-    //     const new_bits: FreeToUse0 = @bitCast(count + 1);
-    //     entry._free_to_use1 = new_bits._free_to_use1;
-    //     entry._free_to_use0 = new_bits._free_to_use0;
-    //     // FIXME: dirty and accessed bits might be lost here
-    //     // but those are not yet used in hiillos
-    //     self.entries[0] = entry;
-    //     return count;
-    // }
+    pub fn deinit(self: *volatile @This(), comptime level: Level) void {
+        if (self == readonly_zero_giant_page_table.toHhdm().toPtr(*volatile @This())) {
+            return;
+        }
+        if (self == readonly_zero_huge_page_table.toHhdm().toPtr(*volatile @This())) {
+            return;
+        }
 
-    // /// returns the old count
-    // pub fn fetchDecUsedEntryCount(
-    //     self: *volatile @This(),
-    // ) u10 {
-    //     var entry = self.entries[0];
-    //     const count: u10 = @bitCast(FreeToUse0{
-    //         ._free_to_use1 = entry._free_to_use1,
-    //         ._free_to_use0 = entry._free_to_use0,
-    //     });
-    //     std.debug.assert(count != 0);
-    //     const new_bits: FreeToUse0 = @bitCast(count - 1);
-    //     entry._free_to_use1 = new_bits._free_to_use1;
-    //     entry._free_to_use0 = new_bits._free_to_use0;
-    //     // FIXME: dirty and accessed bits might be lost here
-    //     // but those are not yet used in hiillos
-    //     self.entries[0] = entry;
-    //     return count;
-    // }
+        const limit = if (level == .level4) 256 else 512;
+        for (0..limit) |i| {
+            const next = self.getPhys(level, @intCast(i)) orelse
+                continue;
+            if (next == .frame) continue;
+            if (next.next.raw == level.readonlyPage().raw) continue;
+
+            if (level == .level1) unreachable;
+            const next_table: *volatile @This() =
+                @ptrFromInt(addr.physPageToVirt(next.next.parts.page));
+            next_table.deinit(level.deeper().?);
+        }
+    }
+
+    pub fn metadata(
+        self: *volatile @This(),
+    ) *TableMetadata {
+        return metaFromTable(addr.Virt.fromPtr(self).hhdmToPhys());
+    }
+
+    pub fn incUsedEntryCount(
+        self: *volatile @This(),
+    ) void {
+        const meta = self.metadata();
+        std.debug.assert(meta.present_entries <= 511);
+        meta.present_entries += 1;
+    }
+
+    pub fn decUsedEntryCount(
+        self: *volatile @This(),
+    ) void {
+        const meta = self.metadata();
+        std.debug.assert(meta.present_entries <= 512);
+        std.debug.assert(meta.present_entries != 0);
+        meta.present_entries -= 1;
+    }
+
+    pub fn usedEntryCount(
+        self: *volatile @This(),
+    ) usize {
+        const meta = self.metadata();
+        if (conf.IS_DEBUG) {
+            var actual_count: usize = 0;
+            for (self.entries) |entry| {
+                if (entry.present) actual_count += 1;
+            }
+        }
+        return meta.present_entries;
+    }
 
     pub fn getOrCreateTable(
         self: *volatile @This(),
@@ -670,11 +624,11 @@ pub const PageTable = struct {
         return get_result.next;
     }
 
-    pub fn get(
+    pub fn getPhys(
         self: *volatile @This(),
         comptime level: Level,
         i: u9,
-    ) ?PageTableGetResult {
+    ) ?PageTableGetPhysResult {
         const entry = self.entries[i];
 
         if (!entry.actually_present) {
@@ -688,7 +642,7 @@ pub const PageTable = struct {
             } };
         } else if (level != .level1) {
             const page = entry.page_index;
-            return .{ .next = @ptrFromInt(addr.physPageToVirt(page)) };
+            return .{ .next = .{ .parts = .{ .page = page } } };
         } else {
             const page = entry.page_index;
             return .{ .frame = .{
@@ -696,6 +650,23 @@ pub const PageTable = struct {
                 .flags = entry.getFlags(true),
             } };
         }
+    }
+
+    pub fn get(
+        self: *volatile @This(),
+        comptime level: Level,
+        i: u9,
+    ) ?PageTableGetResult {
+        const result = self.getPhys(level, i) orelse return null;
+        return switch (result) {
+            .frame => |frame| .{ .frame = .{
+                .paddr = frame.paddr,
+                .flags = frame.flags,
+            } },
+            .next => |next| .{ .next = @ptrFromInt(
+                addr.physPageToVirt(next.parts.page),
+            ) },
+        };
     }
 
     pub fn insertTable(
@@ -715,30 +686,20 @@ pub const PageTable = struct {
             table,
             .{ .write = true, .exec = true },
         );
-        // _ = self.fetchIncUsedEntryCount();
+        self.incUsedEntryCount();
         return @ptrFromInt(table.toHhdm().raw);
     }
 
     pub fn deleteTableIfEmpty(
         self: *volatile @This(),
         i: u9,
+        tlb_shootdown: *caps.TlbShootdown,
     ) void {
-        const entry = self.entries[i];
-        std.debug.assert(entry.actually_present);
-        std.debug.assert(!entry.huge_page_or_pat);
+        // the level does not really matter
+        const next = self.get(.level4, i).?.next;
+        if (next.usedEntryCount() != 0) return;
 
-        const next: *volatile @This() = @ptrFromInt(addr.physPageToVirt(entry.page_index));
-
-        for (next.entries) |sub_entry| {
-            if (sub_entry.actually_present) return;
-        }
-
-        // the entry was already marked not present,
-        // other CPUs were notified and they acknowledged,
-        // and relevant TLB entries from all CPUs were flushed
-        freeTable(.{ .parts = .{
-            .page = entry.page_index,
-        } });
+        tlb_shootdown.page_table_limbo.prepend(&next.metadata().node);
         self.entries[i] = .{};
     }
 
@@ -751,13 +712,7 @@ pub const PageTable = struct {
     ) void {
         const paddr_readonly = level.readonlyPage();
         const page_size_bytes = level.pageSize().sizeBytes();
-        const entry = self.entries[i];
         if (paddr_opt) |paddr| {
-            if (conf.IS_DEBUG) {
-                std.debug.assert(!entry.actually_present or
-                    entry.page_index == paddr_readonly.parts.page);
-            }
-
             std.debug.assert(paddr.isAligned(page_size_bytes));
             self.entries[i] = Entry.fromParts(
                 true,
@@ -766,10 +721,6 @@ pub const PageTable = struct {
                 flags,
             );
         } else {
-            if (conf.IS_DEBUG) {
-                std.debug.assert(!entry.actually_present);
-            }
-
             // the mapped *thing* might be a shared table
             self.entries[i] = Entry.fromParts(
                 false,
@@ -778,39 +729,14 @@ pub const PageTable = struct {
                 flags,
             );
         }
-        // _ = self.fetchIncUsedEntryCount();
-    }
-
-    pub fn disableRecurse(
-        self: *volatile @This(),
-        comptime level: Level,
-        i: u9,
-    ) void {
-        const result = self.get(level, i) orelse
-            return;
-        switch (result) {
-            .next => |next| {
-                const next_level = (comptime level.deeper()) orelse
-                    comptime unreachable;
-                for (0..512) |j| {
-                    next.disableRecurse(next_level, @intCast(j));
-                }
-            },
-            .frame => self.disable(i),
-        }
-    }
-
-    pub fn disable(
-        self: *volatile @This(),
-        i: u9,
-    ) void {
-        self.entries[i].present = false;
+        self.incUsedEntryCount();
     }
 
     pub fn remove(
         self: *volatile @This(),
         i: u9,
     ) void {
+        self.decUsedEntryCount();
         self.entries[i] = .{};
     }
 };
@@ -1007,6 +933,16 @@ pub fn freeTable(paddr: addr.Phys) void {
     table_pool_lock.lock();
     defer table_pool_lock.unlock();
     freeTableLocked(paddr);
+}
+
+pub fn freeLimbo(limbo: *std.SinglyLinkedList) void {
+    table_pool_lock.lock();
+    defer table_pool_lock.unlock();
+
+    while (limbo.popFirst()) |node| {
+        const meta: *TableMetadata = @fieldParentPtr("node", node);
+        freeTableLocked(tableFromMeta(meta));
+    }
 }
 
 fn freeTableLocked(paddr: addr.Phys) void {

@@ -401,17 +401,13 @@ pub const Vmem = struct {
             return Error.NotMapped;
         }
         const mapping = self.mappings.items[idx];
-        if (mapping.target.unmapping) {
-            self.lock.unlock();
-            return Error.NotMapped;
-        }
 
-        const shootdown = caps.slab_allocator
-            .allocator().create(caps.TlbShootdown) catch |err| {
-            self.lock.unlock();
-            return err;
-        };
-        mapping.target.unmapping = true;
+        // the `caps.TlbShootdown` holds a ref to this `caps.Thread`,
+        // keeping it alive, so the tlb shootdown itself cannot
+        // become a dangling pointer
+        thread.base.clone();
+        const shootdown = &thread.tlb_shootdown;
+        shootdown.* = .initUnmap(thread);
 
         const vaddr_mapping = mapping.start();
         const mapping_chunk_size = mapping.frame.chunk_size.sizeBytes();
@@ -422,16 +418,9 @@ pub const Vmem = struct {
         for (0..mapping.chunks) |chunk_idx| {
             // already checked to be in bounds
             const vaddr_chunk = vaddr_mapping.add(chunk_idx * mapping_chunk_size);
-            self.hal_vmem.disable(mapping.frame.chunk_size, vaddr_chunk);
+            self.hal_vmem.remove(mapping.frame.chunk_size, vaddr_chunk, shootdown);
         }
         self.lock.unlock();
-
-        self.base.clone();
-        shootdown.* = .{ .operation = .{ .unmap = .{
-            .mapping = mapping,
-            .thread = thread,
-        } } };
-        caps.incCount(.tlb_shootdown, .{});
 
         proc.switchFrom(trap, thread);
 
@@ -455,7 +444,7 @@ pub const Vmem = struct {
             );
         }
 
-        if (shootdown.deinit(null)) |this_thread| {
+        if (shootdown.deinit()) |this_thread| {
             @branchHint(.likely);
             std.debug.assert(this_thread == thread);
             proc.switchUndo(thread);
@@ -472,6 +461,7 @@ pub const Vmem = struct {
         self: *@This(),
         frame: *caps.Frame,
         idx: u32,
+        shootdown: *caps.TlbShootdown,
         dont_lock_if: ?*caps.Vmem,
     ) !void {
         // this function might or might not be ran on the
@@ -486,9 +476,10 @@ pub const Vmem = struct {
             std.debug.assert(idx >= mapping.frame_first_chunk);
             std.debug.assert(idx < mapping.frame_first_chunk + mapping.chunks);
 
-            self.hal_vmem.disable(
+            self.hal_vmem.remove(
                 chunk_size,
                 mapping.getVaddr(),
+                shootdown,
             );
         }
     }

@@ -35,7 +35,6 @@ pub const Mapping = struct {
         /// virtual address destination of the mapping
         /// `Vmem.mappings` is sorted by this
         page: u36,
-        unmapping: bool = false,
     },
 
     pub fn init(
