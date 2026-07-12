@@ -1308,8 +1308,14 @@ pub const Idt = extern struct {
 
                 if (conf.LOG_OBJ_STATS == .periodic and cpuLocal().id == 0) {
                     if (periodic_print_cooldown == 0) {
-                        caps.printCounts();
                         periodic_print_cooldown = periodic_print_cooldown_init;
+
+                        caps.printCounts();
+
+                        const used_pages = pmem.usedPages();
+                        log.debug("used pages: {} ({Bi:.4})", .{
+                            used_pages, @as(usize, used_pages) * 0x1000,
+                        });
                     }
                     periodic_print_cooldown -= 1;
                 }

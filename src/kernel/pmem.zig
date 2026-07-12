@@ -232,7 +232,9 @@ pub fn allocChunk(size: abi.ChunkSize) ?addr.Phys {
 
     if (debugAssertInitialized()) return null;
 
-    return allocChunkInner(size);
+    const result = allocChunkInner(size) orelse return null;
+    used_pages += size.sizePages();
+    return result;
 }
 
 fn allocChunkInner(size: abi.ChunkSize) ?addr.Phys {
@@ -277,6 +279,7 @@ pub fn deallocChunk(ptr: addr.Phys, size: abi.ChunkSize) void {
 
     if (debugAssertInitialized()) return;
 
+    used_pages -= size.sizePages();
     return deallocChunkInner(.check_double_frees, ptr, size);
 }
 
